@@ -47,21 +47,88 @@ return new class extends Migration
                 ->nullOnDelete();
         });
 
-        // SQLite compiles enum() to a plain varchar, so the new types work
-        // there without an ALTER; only MySQL needs the enum list extended.
+        // wallet_transactions.type gains the reversal types used by the
+        // approve -> reject credit-reversal path.
+        // SQLite compiles enum() to a CHECK constraint, so the table must be
+        // rebuilt there; only MySQL can extend a native ENUM in place.
+        $extendedTypes = [
+            'task_reward', 'referral_reward', 'withdrawal', 'withdrawal_reversal',
+            'campaign_funding', 'campaign_refund', 'admin_adjustment', 'bonus',
+            'task_reward_reversal', 'referral_reward_reversal',
+        ];
+
         if (DB::getDriverName() === 'mysql') {
-            DB::statement(
-                "ALTER TABLE `wallet_transactions` MODIFY COLUMN `type` ENUM(" .
-                "'task_reward','referral_reward','withdrawal','withdrawal_reversal'," .
-                "'campaign_funding','campaign_refund','admin_adjustment','bonus'," .
-                "'task_reward_reversal','referral_reward_reversal'" .
-                ") NOT NULL"
-            );
+            $this->setMysqlTransactionTypeEnum($extendedTypes);
+        } else {
+            $this->rebuildTransactionTypeEnum($extendedTypes);
         }
+    }
+
+    /**
+     * Shrink the wallet_transactions.type enum back to the original list.
+     */
+    protected function originalTransactionTypes(): array
+    {
+        return [
+            'task_reward', 'referral_reward', 'withdrawal', 'withdrawal_reversal',
+            'campaign_funding', 'campaign_refund', 'admin_adjustment', 'bonus',
+        ];
+    }
+
+    protected function setMysqlTransactionTypeEnum(array $types): void
+    {
+        $list = implode(',', array_map(fn ($t) => "'{$t}'", $types));
+        DB::statement("ALTER TABLE `wallet_transactions` MODIFY COLUMN `type` ENUM({$list}) NOT NULL");
+    }
+
+    /**
+     * SQLite cannot alter a CHECK constraint, so rebuild the table with the
+     * extended enum values, copying all rows and indexes across. No other
+     * table holds a foreign key to wallet_transactions, so the drop is safe.
+     */
+    protected function rebuildTransactionTypeEnum(array $types): void
+    {
+        $table = 'wallet_transactions';
+        $temp = $table . '_enum_rebuild';
+
+        Schema::create($temp, function (Blueprint $blueprint) use ($types) {
+            $blueprint->id();
+            $blueprint->foreignId('wallet_id')->constrained('wallets')->cascadeOnDelete();
+            $blueprint->enum('type', $types);
+            $blueprint->bigInteger('amount_cents');
+            $blueprint->bigInteger('balance_after_cents');
+            $blueprint->string('currency', 4)->default('USD');
+            $blueprint->string('reference_type')->nullable();
+            $blueprint->unsignedBigInteger('reference_id')->nullable();
+            $blueprint->string('description');
+            $blueprint->json('metadata_json')->nullable();
+            $blueprint->timestamp('created_at')->useCurrent();
+        });
+
+        $columns = [
+            'id', 'wallet_id', 'type', 'amount_cents', 'balance_after_cents',
+            'currency', 'reference_type', 'reference_id', 'description',
+            'metadata_json', 'created_at',
+        ];
+        $list = implode(',', array_map(fn ($c) => "\"{$c}\"", $columns));
+        DB::statement("INSERT INTO \"{$temp}\" ({$list}) SELECT {$list} FROM \"{$table}\"");
+
+        Schema::drop($table);
+        Schema::rename($temp, $table);
+
+        Schema::table($table, function (Blueprint $blueprint) {
+            $blueprint->index(['wallet_id', 'created_at']);
+            $blueprint->index(['reference_type', 'reference_id']);
+        });
     }
 
     public function down(): void
     {
+        // Reversal rows cannot survive the enum shrink below.
+        DB::table('wallet_transactions')
+            ->whereIn('type', ['task_reward_reversal', 'referral_reward_reversal'])
+            ->delete();
+
         Schema::table('task_submissions', function (Blueprint $table) {
             $table->dropForeign(['triggered_referral_id']);
             $table->dropColumn('triggered_referral_id');
@@ -81,12 +148,9 @@ return new class extends Migration
         });
 
         if (DB::getDriverName() === 'mysql') {
-            DB::statement(
-                "ALTER TABLE `wallet_transactions` MODIFY COLUMN `type` ENUM(" .
-                "'task_reward','referral_reward','withdrawal','withdrawal_reversal'," .
-                "'campaign_funding','campaign_refund','admin_adjustment','bonus'" .
-                ") NOT NULL"
-            );
+            $this->setMysqlTransactionTypeEnum($this->originalTransactionTypes());
+        } else {
+            $this->rebuildTransactionTypeEnum($this->originalTransactionTypes());
         }
     }
 

@@ -7,6 +7,7 @@ use App\Models\TaskAssignment;
 use App\Models\TaskSubmission;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Models\WalletTransaction;
 use App\Services\Wallet\WalletLedgerService;
 use Laravel\Sanctum\Sanctum;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -107,5 +108,66 @@ class PlatformApiTest extends TestCase
 
         $this->assertEquals('approved', $submission->fresh()->status);
         $this->assertEquals($initialBalance + $rewardCents, $contributor->wallet->fresh()->available_balance_cents);
+    }
+
+    public function test_double_approve_yields_single_credit(): void
+    {
+        $admin = User::where('email', 'admin@ebizearn.com')->first();
+        $submission = TaskSubmission::where('status', 'under_review')->first();
+        $this->assertNotNull($submission);
+
+        $contributor = $submission->user;
+        $initialBalance = $contributor->wallet->available_balance_cents;
+        $rewardCents = $submission->task->reward_cents;
+
+        Sanctum::actingAs($admin);
+
+        $payload = [
+            'decision' => 'approved',
+            'notes' => 'Proof verified thoroughly against official campaign criteria.',
+        ];
+
+        $this->postJson("/api/v1/admin/submissions/{$submission->id}/decision", $payload)
+            ->assertStatus(200);
+
+        // Repeating the same decision must be an idempotent no-op, never a second credit.
+        $this->postJson("/api/v1/admin/submissions/{$submission->id}/decision", $payload)
+            ->assertStatus(200);
+
+        $this->assertEquals('approved', $submission->fresh()->status);
+        $this->assertEquals($initialBalance + $rewardCents, $contributor->wallet->fresh()->available_balance_cents);
+        $this->assertEquals(1, WalletTransaction::where('wallet_id', $contributor->wallet->id)
+            ->where('type', 'task_reward')
+            ->where('reference_type', TaskSubmission::class)
+            ->where('reference_id', $submission->id)
+            ->count());
+    }
+
+    public function test_reject_after_approve_reverses_credit(): void
+    {
+        $admin = User::where('email', 'admin@ebizearn.com')->first();
+        $submission = TaskSubmission::where('status', 'under_review')->first();
+        $this->assertNotNull($submission);
+
+        $contributor = $submission->user;
+        $initialBalance = $contributor->wallet->available_balance_cents;
+
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/admin/submissions/{$submission->id}/decision", [
+            'decision' => 'approved',
+            'notes' => 'Proof verified thoroughly against official campaign criteria.',
+        ])->assertStatus(200);
+
+        $this->postJson("/api/v1/admin/submissions/{$submission->id}/decision", [
+            'decision' => 'rejected',
+            'notes' => 'Re-examined proof; does not meet the campaign criteria.',
+        ])->assertStatus(200);
+
+        $this->assertEquals('rejected', $submission->fresh()->status);
+        $this->assertEquals($initialBalance, $contributor->wallet->fresh()->available_balance_cents);
+        $this->assertEquals(1, WalletTransaction::where('wallet_id', $contributor->wallet->id)
+            ->where('type', 'task_reward_reversal')
+            ->count());
     }
 }

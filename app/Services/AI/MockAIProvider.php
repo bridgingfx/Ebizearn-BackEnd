@@ -2,9 +2,17 @@
 
 namespace App\Services\AI;
 
-use App\Models\SubmissionFile;
 use App\Models\TaskSubmission;
 
+/**
+ * Pre-launch placeholder AI provider.
+ *
+ * IMPORTANT: every value returned here is a hard-coded heuristic, NOT real
+ * AI analysis. All scores (e.g. the 93% confidence) are fabricated
+ * placeholders. API payloads built from these results MUST carry
+ * ai_simulated=true and the "Simulated heuristic (pre-launch)" label — see
+ * VerificationService::processNewSubmission().
+ */
 class MockAIProvider implements AIProviderInterface
 {
     public function analyzeSubmission(TaskSubmission $submission): array
@@ -34,11 +42,11 @@ class MockAIProvider implements AIProviderInterface
             $suggestedDecision = 'reject';
             $summary = 'Incomplete submission: no proof file, URL, or textual confirmation provided.';
         } elseif ($hasFile) {
-            $summary = 'Proof screenshot verified: valid resolution, timestamp matches campaign window, visual content corresponds with campaign guidelines (authenticity index 94.2%). No duplicate image hash found.';
+            $summary = 'Proof file received: presence, basic format and size checks applied. Visual content has NOT been analyzed by real AI (pre-launch heuristic) — duplicate image hashing is not performed; URL-level duplicate checks run separately in the fraud service.';
         } elseif ($hasUrl) {
-            $summary = 'Live link validated: URL reachable, destination metadata and campaign tags verified against target instructions.';
+            $summary = 'URL provided: recorded for reviewer verification. Reachability and metadata checks are not automatically performed in pre-launch mode.';
         } else {
-            $summary = 'Text response analyzed: relevant keywords and confirmation criteria met with high semantic similarity.';
+            $summary = 'Text response provided: recorded for reviewer verification. Automated semantic scoring is not active in pre-launch mode.';
         }
 
         return [
@@ -52,8 +60,9 @@ class MockAIProvider implements AIProviderInterface
             'analysis_summary' => $summary,
             'raw_payload' => [
                 'provider' => 'mock_vision_ai_v2',
+                'simulated' => true,
                 'latency_ms' => 342,
-                'model' => 'biznetwork-vision-guard-1.0',
+                'model' => 'biznetwork-vision-guard-1.0 (placeholder — no real model runs)',
                 'tags_detected' => ['social_post', 'verified_engagement', 'brand_mention'],
             ],
         ];

@@ -21,10 +21,13 @@ class AiVerificationResult extends Model
         'suggested_decision',
         'analysis_summary',
         'raw_payload_json',
+        'ai_simulated',
+        'ai_label',
     ];
 
     protected $casts = [
         'raw_payload_json' => 'array',
+        'ai_simulated' => 'boolean',
         'confidence_score' => 'integer',
         'risk_score' => 'integer',
         'duplicate_risk' => 'integer',

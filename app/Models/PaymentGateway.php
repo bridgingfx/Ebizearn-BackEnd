@@ -17,14 +17,13 @@ class PaymentGateway extends Model
 
     protected $appends = ['has_credentials'];
 
-    protected function casts(): array
-    {
-        return [
-            'credentials' => 'encrypted:array',
-            'is_active' => 'boolean',
-            'last_tested_at' => 'datetime',
-        ];
-    }
+    // NOTE: Laravel 10.50 does not support the model `casts()` method form
+    // (Laravel 11+ only), so casts are declared as a property.
+    protected $casts = [
+        'credentials' => 'encrypted:array',
+        'is_active' => 'boolean',
+        'last_tested_at' => 'datetime',
+    ];
 
     public function getHasCredentialsAttribute(): bool
     {

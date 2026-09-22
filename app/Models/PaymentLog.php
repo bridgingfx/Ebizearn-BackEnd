@@ -21,10 +21,10 @@ class PaymentLog extends Model
         'metadata_json',
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'metadata_json' => 'array',
-        ];
-    }
+    // NOTE: Laravel 10.50 does not support the model `casts()` method form
+    // (Laravel 11+ only), so casts are declared as a property. Without this,
+    // array metadata on payment logs crashes the log-only payout path.
+    protected $casts = [
+        'metadata_json' => 'array',
+    ];
 }

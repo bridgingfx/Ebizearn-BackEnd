@@ -326,54 +326,61 @@ class DatabaseSeeder extends Seeder
         }
 
         // 8. Create Live Submissions in Verification Queue (for Admin Demo)
+        // firstOrCreate everywhere: a re-seed must not duplicate demo rows or
+        // trip the unique(task_id, user_id) money-safety constraints.
         if (!empty($createdTasks)) {
             $sampleTask = $createdTasks[0]; // FB post task ($0.40)
 
-            $assignment = TaskAssignment::create([
-                'task_id' => $sampleTask->id,
-                'user_id' => $sarah->id,
-                'status' => 'submitted',
-                'started_at' => now()->subMinutes(25),
-                'completed_at' => now()->subMinutes(5),
-            ]);
+            $assignment = TaskAssignment::firstOrCreate(
+                ['task_id' => $sampleTask->id, 'user_id' => $sarah->id],
+                [
+                    'status' => 'submitted',
+                    'started_at' => now()->subMinutes(25),
+                    'completed_at' => now()->subMinutes(5),
+                ]
+            );
 
-            $submission = TaskSubmission::create([
-                'task_id' => $sampleTask->id,
-                'user_id' => $sarah->id,
-                'assignment_id' => $assignment->id,
-                'status' => 'under_review',
-                'proof_data_json' => [
-                    'url' => 'https://facebook.com/groups/uaetechentrepreneurs/permalink/982341908234/',
-                    'note' => 'Posted in UAE Tech Entrepreneurs (45k members). Followed all hashtag rules.',
-                    'device' => 'iPhone 15 Pro, iOS 18',
-                    'location' => 'Dubai, UAE',
-                ],
-            ]);
+            $submission = TaskSubmission::firstOrCreate(
+                ['task_id' => $sampleTask->id, 'user_id' => $sarah->id],
+                [
+                    'assignment_id' => $assignment->id,
+                    'status' => 'under_review',
+                    'proof_data_json' => [
+                        'url' => 'https://facebook.com/groups/uaetechentrepreneurs/permalink/982341908234/',
+                        'note' => 'Posted in UAE Tech Entrepreneurs (45k members). Followed all hashtag rules.',
+                        'device' => 'iPhone 15 Pro, iOS 18',
+                        'location' => 'Dubai, UAE',
+                    ],
+                ]
+            );
 
-            SubmissionFile::create([
-                'submission_id' => $submission->id,
-                'file_type' => 'screenshot',
-                'file_path' => 'proofs/fb_post_screenshot_demo.png',
-                'file_url' => 'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=800',
-                'file_size_bytes' => 1048576,
-                'mime_type' => 'image/png',
-            ]);
+            SubmissionFile::firstOrCreate(
+                ['submission_id' => $submission->id, 'file_path' => 'proofs/fb_post_screenshot_demo.png'],
+                [
+                    'file_type' => 'screenshot',
+                    'file_url' => 'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=800',
+                    'file_size_bytes' => 1048576,
+                    'mime_type' => 'image/png',
+                ]
+            );
 
-            AiVerificationResult::create([
-                'submission_id' => $submission->id,
-                'confidence_score' => 93,
-                'risk_score' => 7,
-                'duplicate_risk' => 4,
-                'proof_quality' => 95,
-                'content_match' => 96,
-                'policy_match' => 99,
-                'suggested_decision' => 'approve',
-                'analysis_summary' => 'Proof screenshot matches required Facebook group post timestamp, resolution 1170x2532, visual text matches campaign guidelines (authenticity index 94.2%). No duplicate image hash found.',
-                'raw_payload_json' => [
-                    'provider' => 'biznetwork_vision_ai_v2',
-                    'tags' => ['facebook', 'clean_post', 'verified_link'],
-                ],
-            ]);
+            AiVerificationResult::firstOrCreate(
+                ['submission_id' => $submission->id],
+                [
+                    'confidence_score' => 93,
+                    'risk_score' => 7,
+                    'duplicate_risk' => 4,
+                    'proof_quality' => 95,
+                    'content_match' => 96,
+                    'policy_match' => 99,
+                    'suggested_decision' => 'approve',
+                    'analysis_summary' => 'Proof screenshot matches required Facebook group post timestamp, resolution 1170x2532, visual text matches campaign guidelines (authenticity index 94.2%). No duplicate image hash found.',
+                    'raw_payload_json' => [
+                        'provider' => 'biznetwork_vision_ai_v2',
+                        'tags' => ['facebook', 'clean_post', 'verified_link'],
+                    ],
+                ]
+            );
         }
     }
 }

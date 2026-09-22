@@ -33,13 +33,12 @@ class User extends Authenticatable
         'remember_token',
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-        ];
-    }
+    // NOTE: Laravel 10.50 does not support the model `casts()` method form
+    // (Laravel 11+ only), so casts are declared as a property.
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+    ];
 
     protected static function booted(): void
     {

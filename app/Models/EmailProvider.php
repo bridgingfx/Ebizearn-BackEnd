@@ -17,14 +17,13 @@ class EmailProvider extends Model
 
     protected $appends = ['has_secret'];
 
-    protected function casts(): array
-    {
-        return [
-            'secret' => 'encrypted',
-            'is_active' => 'boolean',
-            'last_tested_at' => 'datetime',
-        ];
-    }
+    // NOTE: Laravel 10.50 does not support the model `casts()` method form
+    // (Laravel 11+ only), so casts are declared as a property.
+    protected $casts = [
+        'secret' => 'encrypted',
+        'is_active' => 'boolean',
+        'last_tested_at' => 'datetime',
+    ];
 
     public function getHasSecretAttribute(): bool
     {
