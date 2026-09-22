@@ -2,16 +2,23 @@
 
 use App\Http\Controllers\Api\V1\AdminEmailController;
 use App\Http\Controllers\Api\V1\AdminPaymentController;
+use App\Http\Controllers\Api\V1\AdminReferralController;
 use App\Http\Controllers\Api\V1\AdminSystemController;
+use App\Http\Controllers\Api\V1\AdminTaskController;
 use App\Http\Controllers\Api\V1\AdminVerificationController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\BusinessCampaignController;
+use App\Http\Controllers\Api\V1\BusinessTaskController;
+use App\Http\Controllers\Api\V1\CampaignWizardController;
 use App\Http\Controllers\Api\V1\ConfigController;
 use App\Http\Controllers\Api\V1\Ops\OpsAdminController;
 use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
+use App\Http\Controllers\Api\V1\Ops\OpsTaskTypeController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\ReferralController;
+use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\TaskController;
+use App\Http\Controllers\Api\V1\TaskTypeController;
 use App\Http\Controllers\Api\V1\WalletController;
 use Illuminate\Support\Facades\Route;
 
@@ -20,6 +27,10 @@ Route::prefix('v1')->group(function () {
     // 1. Public Configuration & Metadata
     Route::get('/config/brand', [ConfigController::class, 'brandConfig']);
     Route::get('/task-categories', [ConfigController::class, 'categories']);
+
+    // Phase 4 (public): task-type catalog with proof contracts and
+    // enforceable reward bands.
+    Route::get('/task-types', [TaskTypeController::class, 'index']);
 
     // 2. Public Authentication
     Route::prefix('auth')->group(function () {
@@ -65,6 +76,8 @@ Route::prefix('v1')->group(function () {
         Route::middleware('role:contributor')->prefix('wallet')->group(function () {
             Route::get('/', [WalletController::class, 'index']);
             Route::get('/transactions', [WalletController::class, 'transactions']);
+            // Phase 7: breakdown computed from the real ledger + submissions
+            Route::get('/breakdown', [WalletController::class, 'breakdown']);
             Route::post('/withdraw', [WalletController::class, 'withdraw']);
         });
 
@@ -77,6 +90,27 @@ Route::prefix('v1')->group(function () {
             Route::patch('/campaigns/{id}/status', [BusinessCampaignController::class, 'updateStatus']);
             Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund']);
             Route::get('/submissions', [BusinessCampaignController::class, 'submissions']);
+
+            // ==============================================================
+            // Phase 9 — CAMPAIGN WIZARD (Worker C): preview -> draft -> launch.
+            // Tenant-scoped: a business touches only its own campaigns.
+            // ==============================================================
+            Route::post('/campaigns/wizard/preview', [CampaignWizardController::class, 'preview']);
+            Route::post('/campaigns/wizard/draft', [CampaignWizardController::class, 'draft']);
+            Route::post('/campaigns/{id}/launch', [CampaignWizardController::class, 'launch']);
+
+            // ==============================================================
+            // Phase 4/13 — BUSINESS TASK CRUD (Worker C): strictly own-tenant
+            // via TaskPolicy; rewards band-validated (Phase 12).
+            // ==============================================================
+            Route::get('/tasks', [BusinessTaskController::class, 'index']);
+            Route::post('/tasks', [BusinessTaskController::class, 'store']);
+            Route::get('/tasks/{id}', [BusinessTaskController::class, 'show']);
+            Route::patch('/tasks/{id}', [BusinessTaskController::class, 'update']);
+            Route::delete('/tasks/{id}', [BusinessTaskController::class, 'destroy']);
+
+            // Phase 9 — basic business analytics from REAL aggregates.
+            Route::get('/analytics', [BusinessTaskController::class, 'analytics']);
         });
 
         // Super Admin only: email providers, templates, logs
@@ -113,6 +147,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts']);
             Route::get('/payouts', [AdminVerificationController::class, 'payouts']);
             Route::post('/payouts/{id}/process', [AdminVerificationController::class, 'processPayout']);
+            Route::get('/referrals/overview', [AdminReferralController::class, 'overview']); // Phase 11: read-only referral overview
 
             // Super Admin Controls
             Route::get('/feature-flags', [AdminSystemController::class, 'featureFlags']);
@@ -123,6 +158,34 @@ Route::prefix('v1')->group(function () {
             Route::get('/users', [AdminSystemController::class, 'users']);
             Route::patch('/users/{id}/status', [AdminSystemController::class, 'updateUserStatus']);
             Route::get('/health', [AdminSystemController::class, 'health']);
+        });
+
+        // ==================================================================
+        // Phase 4/6 — STAFF TASK MANAGEMENT + MODERATOR VERIFICATION (Worker C)
+        // Moderators, admins and super-admins share these via the granular
+        // permission gate (EnsurePermission): review_submissions for the
+        // queue/decisions, manage_task_templates for task CRUD.
+        // ==================================================================
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:review_submissions'])->prefix('moderator')->group(function () {
+            Route::get('/verification-queue', [AdminVerificationController::class, 'verificationQueue']);
+            Route::get('/submissions/{id}', [AdminVerificationController::class, 'submissionDetail']);
+            Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
+            Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts']);
+        });
+
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:manage_task_templates'])->prefix('staff')->group(function () {
+            Route::get('/tasks', [AdminTaskController::class, 'index']);
+            Route::post('/tasks', [AdminTaskController::class, 'store']);
+            Route::patch('/tasks/{id}', [AdminTaskController::class, 'update']);
+            Route::delete('/tasks/{id}', [AdminTaskController::class, 'destroy']);
+
+            // Phase 9 — STAFF CAMPAIGN MANAGEMENT (Worker C): cross-tenant
+            // list/show, pause/resume/cancel with escrow release, safe
+            // delete (drafts only, never once money moved).
+            Route::get('/campaigns', [StaffCampaignController::class, 'index']);
+            Route::get('/campaigns/{id}', [StaffCampaignController::class, 'show']);
+            Route::patch('/campaigns/{id}/status', [StaffCampaignController::class, 'updateStatus']);
+            Route::delete('/campaigns/{id}', [StaffCampaignController::class, 'destroy']);
         });
 
         // ==================================================================
@@ -157,6 +220,11 @@ Route::prefix('v1')->group(function () {
             // Platform settings + fraud rules (group=fraud)
             Route::get('/platform-settings', [OpsSettingsController::class, 'platformSettings']);
             Route::patch('/platform-settings', [OpsSettingsController::class, 'updatePlatformSettings']);
+
+            // Phase 4/12 (ops, Worker C): task types — bands, allowed flag,
+            // proof contracts, retention, fraud rules. Every change audited.
+            Route::get('/task-types', [OpsTaskTypeController::class, 'index']);
+            Route::patch('/task-types/{key}', [OpsTaskTypeController::class, 'update']);
 
             // Audit log (append-only; read only)
             Route::get('/audit-logs', [OpsSettingsController::class, 'auditLogs']);

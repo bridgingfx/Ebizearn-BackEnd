@@ -8,6 +8,8 @@ use App\Models\Campaign;
 use App\Models\Task;
 use App\Models\TaskSubmission;
 use App\Models\Wallet;
+use App\Services\TaskTypes\RewardBandService;
+use App\Services\TaskTypes\RewardBandViolationException;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
@@ -113,6 +115,7 @@ class BusinessCampaignController extends Controller
             'description' => 'required|string',
             'category_id' => 'required|exists:task_categories,id',
             'reward_per_task_cents' => 'required|integer|min:20', // Min $0.20
+            'task_type_key' => 'required|string|exists:task_types,key',
             'target_contributors_count' => 'required|integer|min:5',
             'instructions_markdown' => 'required|string',
             'proof_requirements_json' => 'nullable|array',
@@ -128,6 +131,19 @@ class BusinessCampaignController extends Controller
                 'message' => 'Validation error',
                 'errors' => $validator->errors(),
             ], 422);
+        }
+
+        // Phase 4/12: every campaign task carries a type contract — the
+        // reward must sit inside the type's band, otherwise an honest 422
+        // names the band. There is no untyped bypass.
+        try {
+            $bands = new RewardBandService();
+            $type = $bands->resolveType($request->input('task_type_key'));
+            $bands->assertWithinBand($type, (int) $request->input('reward_per_task_cents'));
+        } catch (RewardBandViolationException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         }
 
         $validated = $validator->validated();
@@ -156,7 +172,7 @@ class BusinessCampaignController extends Controller
         }
 
         try {
-            $campaign = DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $ownerWallet) {
+            $campaign = DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $ownerWallet, $type) {
                 $camp = Campaign::create([
                     'uuid' => (string) Str::uuid(),
                     'business_id' => $business->id,
@@ -207,13 +223,17 @@ class BusinessCampaignController extends Controller
                     );
                 }
 
-                // Create initial active Task pool
+                // Create initial active Task pool — carries the type contract
+                // (band-validated above): proof requirements and retention.
                 Task::create([
                     'uuid' => (string) Str::uuid(),
                     'campaign_id' => $camp->id,
                     'category_id' => $camp->category_id,
+                    'task_type_id' => $type->id,
                     'title' => $camp->title,
                     'reward_cents' => $rewardPerTask,
+                    'proof_required_json' => $type->proof_required_json,
+                    'retention_days' => $type->retention_period_days,
                     'estimated_minutes' => 5,
                     'difficulty' => 'easy',
                     'status' => 'available',

@@ -24,11 +24,18 @@ class TaskSubmission extends Model
         'reviewer_id',
         'reviewed_at',
         'review_notes',
+        // Phase 6: verification evidence
+        'proof_hash',
+        'device_fingerprint',
+        'review_reason_code',
+        'triggered_referral_reward_ids_json',
+        'verification_stage',
     ];
 
     protected $casts = [
         'proof_data_json' => 'array',
         'reviewed_at' => 'datetime',
+        'triggered_referral_reward_ids_json' => 'array',
     ];
 
     protected static function booted(): void

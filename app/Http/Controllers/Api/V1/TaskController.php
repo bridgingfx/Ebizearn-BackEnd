@@ -10,6 +10,8 @@ use App\Models\TaskAssignment;
 use App\Models\TaskSubmission;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Services\Fraud\FraudAnalysisService;
+use App\Services\Fraud\FraudRejectionException;
 use App\Services\Verification\VerificationService;
 use Exception;
 use Illuminate\Database\QueryException;
@@ -21,7 +23,8 @@ use Illuminate\Support\Facades\Validator;
 class TaskController extends Controller
 {
     public function __construct(
-        protected VerificationService $verificationService = new VerificationService()
+        protected VerificationService $verificationService = new VerificationService(),
+        protected FraudAnalysisService $fraudService = new FraudAnalysisService()
     ) {}
 
     /**
@@ -262,15 +265,37 @@ class TaskController extends Controller
             'user_agent' => $request->userAgent(),
         ];
 
+        // Phase 6 hard screens BEFORE the row exists: missing proof
+        // requirements, wrong URL domain vs the task platform, and duplicate
+        // proof hashes (per campaign) are rejected here with honest codes.
+        $task->load('taskType');
+
+        try {
+            $screens = $this->fraudService->screenProofOrReject($task, [
+                'url' => $request->input('proof_url'),
+                'screenshot' => $request->input('proof_screenshot'),
+                'text_answer' => $request->input('text_answer'),
+            ], $request);
+        } catch (FraudRejectionException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'reason_code' => $e->reasonCode,
+            ], $e->httpStatus);
+        }
+
         $submission = null;
 
         try {
-            $submission = DB::transaction(function () use ($task, $user, $assignment, $proofData, $request) {
+            $submission = DB::transaction(function () use ($task, $user, $assignment, $proofData, $screens, $request) {
                 $sub = TaskSubmission::create([
                     'task_id' => $task->id,
                     'user_id' => $user->id,
                     'assignment_id' => $assignment->id,
-                    'status' => 'under_review',
+                    'status' => 'submitted',
+                    'verification_stage' => 'received',
+                    'proof_hash' => $screens['proof_hash'],
+                    'device_fingerprint' => $screens['device_fingerprint'],
                     'proof_data_json' => $proofData,
                 ]);
 
@@ -307,8 +332,10 @@ class TaskController extends Controller
             throw $e;
         }
 
-        // Run AI Pre-Check & Fraud Analysis
-        $aiResult = $this->verificationService->processNewSubmission($submission);
+        // Phase 6: run the system screening stage (submitted -> checking ->
+        // under_review). The heuristic NEVER auto-approves — the submission
+        // always lands in the moderator queue with flags/scores attached.
+        $aiResult = $this->verificationService->screenSubmission($submission);
 
         return response()->json([
             'success' => true,

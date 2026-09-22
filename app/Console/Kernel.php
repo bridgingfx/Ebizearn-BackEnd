@@ -16,6 +16,9 @@ class Kernel extends ConsoleKernel
         // a real expiry (config/sanctum.php). Tokens expired >24h ago are safe
         // to delete; this does not affect live sessions.
         $schedule->command('sanctum:prune-expired --hours=24')->daily();
+
+        // Task-reward retention: matured pending holds become available.
+        $schedule->command('retention:release')->daily();
     }
 
     /**

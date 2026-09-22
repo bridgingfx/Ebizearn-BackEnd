@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Models\WithdrawalRule;
+use App\Services\Wallet\WalletBreakdownService;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
@@ -15,7 +16,8 @@ use Illuminate\Support\Facades\Validator;
 class WalletController extends Controller
 {
     public function __construct(
-        protected WalletLedgerService $ledgerService = new WalletLedgerService()
+        protected WalletLedgerService $ledgerService = new WalletLedgerService(),
+        protected WalletBreakdownService $breakdownService = new WalletBreakdownService()
     ) {}
 
     /**
@@ -33,9 +35,23 @@ class WalletController extends Controller
             'success' => true,
             'data' => [
                 'wallet' => $wallet,
+                // Phase 7: every figure computed from the real ledger +
+                // submission states — no stored denormalized balances.
+                'breakdown' => $this->breakdownService->breakdown($user),
                 // Phase 2: DB-backed, Super-Admin-selectable ($10/$25/$50/$100).
                 'min_withdrawal_cents' => WithdrawalRule::currentMinCents(),
             ],
+        ]);
+    }
+
+    /**
+     * Phase 7: wallet breakdown as its own endpoint.
+     */
+    public function breakdown(Request $request): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $this->breakdownService->breakdown($request->user()),
         ]);
     }
 

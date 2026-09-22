@@ -6,6 +6,7 @@ use App\Models\AiVerificationResult;
 use App\Models\AuditLog;
 use App\Models\Campaign;
 use App\Models\Referral;
+use App\Models\ReferralReward;
 use App\Models\TaskAssignment;
 use App\Models\TaskSubmission;
 use App\Models\User;
@@ -14,7 +15,9 @@ use App\Models\WalletTransaction;
 use App\Services\AI\AIProviderInterface;
 use App\Services\AI\ManualAIProvider;
 use App\Services\AI\MockAIProvider;
+use App\Services\Audit\AuditLogger;
 use App\Services\Fraud\FraudAnalysisService;
+use App\Services\Referral\ReferralService;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Support\Facades\DB;
@@ -22,16 +25,38 @@ use Illuminate\Support\Facades\DB;
 class VerificationService
 {
     /**
-     * Forward-only status machine for reviewer decisions. Anything not listed
-     * here is rejected, with two deliberate exceptions handled in
-     * recordDecision(): repeating the same decision is an idempotent no-op,
-     * and approved -> rejected reverses the ledger credit instead of
-     * double-crediting on a later re-approval.
+     * Phase 6: forward-only verification state machine.
+     *
+     * submitted -> checking (system/heuristic + fraud screens) ->
+     * under_review (moderator review — REQUIRED; the heuristic NEVER
+     * auto-approves) -> approved | rejected | action_required.
+     *
+     * approved -> rejected is the deliberate reversal path (compensating
+     * ledger entries, never deletes). Anything else is rejected.
      */
     private const ALLOWED_TRANSITIONS = [
-        'submitted' => ['approved', 'rejected', 'action_required'],
+        'submitted' => ['checking', 'rejected'],
+        'checking' => ['under_review', 'rejected'],
         'under_review' => ['approved', 'rejected', 'action_required'],
         'action_required' => ['approved', 'rejected'],
+    ];
+
+    /**
+     * Mandatory reason codes for every reviewer decision. The API requires
+     * one; it is stored on the submission and in the audit log.
+     */
+    public const REASON_CODES = [
+        'approved' => ['verified', 'meets_requirements'],
+        'rejected' => [
+            'duplicate_proof',
+            'fake_submission',
+            'wrong_url',
+            'missing_requirements',
+            'multiple_accounts',
+            'policy_violation',
+            'other',
+        ],
+        'action_required' => ['needs_better_proof', 'needs_clarification'],
     ];
 
     /**
@@ -107,19 +132,72 @@ class VerificationService
     }
 
     /**
-     * Admin/Reviewer executes a decision with mandatory reasoning and atomic balance credit.
+     * Run the system screening stage for a fresh submission:
+     * submitted -> checking (AI pre-check + fraud screens) -> under_review.
+     *
+     * The heuristic NEVER auto-approves — every submission lands in the
+     * moderator queue; the screens only attach flags/scores. Idempotent:
+     * re-running on an already-screened submission only refreshes the AI
+     * result row.
+     */
+    public function screenSubmission(TaskSubmission $submission): AiVerificationResult
+    {
+        return DB::transaction(function () use ($submission) {
+            $locked = TaskSubmission::where('id', $submission->id)->lockForUpdate()->firstOrFail();
+
+            if ($locked->status === 'submitted') {
+                $locked->update(['status' => 'checking', 'verification_stage' => 'checking']);
+            }
+
+            $result = $this->processNewSubmission($locked);
+
+            if (in_array($locked->status, ['submitted', 'checking'], true)) {
+                $locked->update(['status' => 'under_review', 'verification_stage' => 'moderator_review']);
+            }
+
+            AuditLog::create([
+                'actor_id' => null,
+                'action' => 'submission.screened',
+                'entity_type' => TaskSubmission::class,
+                'entity_id' => $locked->id,
+                'before_state_json' => ['status' => 'submitted'],
+                'after_state_json' => [
+                    'status' => $locked->fresh()->status,
+                    'suggested_decision' => $result->suggested_decision,
+                    'risk_score' => $result->risk_score,
+                    'ai_simulated' => $result->ai_simulated,
+                ],
+                'created_at' => now(),
+            ]);
+
+            return $result;
+        });
+    }
+
+    /**
+     * Admin/Reviewer executes a decision with a mandatory reason code and
+     * atomic balance credit.
      */
     public function recordDecision(
         TaskSubmission $submission,
         User $reviewer,
         string $decision, // 'approved', 'rejected', 'action_required'
+        string $reasonCode,
         string $notes
     ): TaskSubmission {
         if (!in_array($decision, ['approved', 'rejected', 'action_required'], true)) {
             throw new Exception('Invalid decision option.');
         }
 
-        return DB::transaction(function () use ($submission, $reviewer, $decision, $notes) {
+        $validCodes = self::REASON_CODES[$decision] ?? [];
+        if (!in_array($reasonCode, $validCodes, true)) {
+            throw new Exception(
+                "Invalid reason code '{$reasonCode}' for decision '{$decision}'. " .
+                'Valid codes: ' . implode(', ', $validCodes) . '.'
+            );
+        }
+
+        return DB::transaction(function () use ($submission, $reviewer, $decision, $reasonCode, $notes) {
             $lockedSubmission = TaskSubmission::where('id', $submission->id)->lockForUpdate()->firstOrFail();
             $from = $lockedSubmission->status;
 
@@ -128,11 +206,20 @@ class VerificationService
                 return $lockedSubmission->fresh();
             }
 
+            // Legacy/unscreened rows (e.g. created before the checking stage
+            // existed): run the screens first, still forward-only.
+            if ($from === 'submitted') {
+                $lockedSubmission->update(['status' => 'checking', 'verification_stage' => 'checking']);
+                $this->processNewSubmission($lockedSubmission);
+                $lockedSubmission->update(['status' => 'under_review', 'verification_stage' => 'moderator_review']);
+                $from = 'under_review';
+            }
+
             // Reject-after-approve: reverse the ledger credit instead of silently
             // skipping (which previously allowed approve -> reject -> approve to
             // double-credit).
             if ($from === 'approved' && $decision === 'rejected') {
-                return $this->reverseApproval($lockedSubmission, $reviewer, $notes);
+                return $this->reverseApproval($lockedSubmission, $reviewer, $reasonCode, $notes);
             }
 
             if (!isset(self::ALLOWED_TRANSITIONS[$from]) || !in_array($decision, self::ALLOWED_TRANSITIONS[$from], true)) {
@@ -143,8 +230,10 @@ class VerificationService
 
             $lockedSubmission->update([
                 'status' => $decision,
+                'verification_stage' => 'decided',
                 'reviewer_id' => $reviewer->id,
                 'reviewed_at' => now(),
+                'review_reason_code' => $reasonCode,
                 'review_notes' => $notes,
             ]);
 
@@ -211,6 +300,29 @@ class VerificationService
             ['task_id' => $task->id, 'campaign_id' => $task->campaign_id]
         );
 
+        // 1b. Retention: approved rewards enter PENDING, not available, when
+        // the task carries a retention period (task-level override, else the
+        // task type's retention_period_days). The retention:release command
+        // moves matured holds to available. Legacy tasks (retention 0) keep
+        // the direct-to-available behaviour.
+        $retentionDays = (int) ($task->retention_days ?? $task->taskType?->retention_period_days ?? 0);
+
+        if ($retentionDays > 0) {
+            $this->walletService->hold(
+                $wallet,
+                $rewardCents,
+                'retention_hold',
+                "Retention hold ({$retentionDays}d) — submission #{$submission->id}",
+                TaskSubmission::class,
+                $submission->id,
+                [
+                    'release_at' => now()->addDays($retentionDays)->toIso8601String(),
+                    'retention_days' => $retentionDays,
+                ],
+                "retention-hold-{$submission->id}"
+            );
+        }
+
         // 2. Settle the business escrow hold for this reward. Soft-settle: on
         // campaigns launched before the funding gate, the hold may not cover
         // the full reward — settle what is held and record the shortfall in
@@ -252,19 +364,93 @@ class VerificationService
             $profile->increment('completed_tasks_count');
         }
 
-        // 5. Check Referral Qualification (row-locked against concurrent payouts)
-        $referral = $this->checkReferralQualification($submission->user, $submission);
-        if ($referral) {
-            $submission->update(['triggered_referral_id' => $referral->id]);
+        // 5. Affiliate qualification (Phase 8, three-level ledger): on the
+        // contributor's FIRST approved task, pay every pending referral level
+        // (L1/L2/L3) via ReferralService::qualifyAndReward(). It pays only
+        // 'pending' rows, locks them, and is idempotent — a retry or a
+        // concurrent first-approval can never double-pay.
+        $triggeredRewardIds = $this->payReferralRewards($submission);
+        if (!empty($triggeredRewardIds)) {
+            $submission->update(['triggered_referral_reward_ids_json' => $triggeredRewardIds]);
+
+            // Back-compat observability: keep the L1 referral row id on the
+            // legacy column.
+            $l1 = Referral::where('referred_user_id', $submission->user_id)
+                ->where('level', 1)
+                ->first();
+            if ($l1) {
+                $submission->update(['triggered_referral_id' => $l1->id]);
+            }
         }
+    }
+
+    /**
+     * Pay the referee's pending referral levels on their FIRST task approval.
+     *
+     * The pending referral rows are locked BEFORE calling qualifyAndReward,
+     * so attribution is exact: the ReferralReward ids recorded on the
+     * submission are precisely the levels THIS approval paid. A concurrent
+     * first-approval blocks on the same locks and finds no pending rows, so
+     * it pays (and records) nothing.
+     *
+     * @return int[] ReferralReward ids paid by this approval
+     */
+    protected function payReferralRewards(TaskSubmission $submission): array
+    {
+        $contributor = $submission->user;
+
+        if (!config('referrals.require_first_task_approved', true)) {
+            return [];
+        }
+
+        // First-approval gate: the submission was already flipped to
+        // 'approved' by the caller, so exactly one approved row means this is
+        // the contributor's first.
+        $approvedCount = TaskSubmission::where('user_id', $contributor->id)
+            ->where('status', 'approved')
+            ->count();
+
+        if ($approvedCount !== 1) {
+            return [];
+        }
+
+        return DB::transaction(function () use ($contributor) {
+            $pendingIds = Referral::where('referred_user_id', $contributor->id)
+                ->where('status', 'pending')
+                ->lockForUpdate()
+                ->pluck('id')
+                ->all();
+
+            if (empty($pendingIds)) {
+                return [];
+            }
+
+            (new ReferralService($this->walletService))->qualifyAndReward($contributor, 'first_task_approved');
+
+            // Rows that flipped pending -> rewarded while we held the locks
+            // were paid by this approval — no more, no less.
+            $flipped = Referral::whereIn('id', $pendingIds)
+                ->where('status', 'rewarded')
+                ->pluck('id')
+                ->all();
+
+            if (empty($flipped)) {
+                return [];
+            }
+
+            return ReferralReward::whereIn('referral_id', $flipped)
+                ->pluck('id')
+                ->all();
+        });
     }
 
     /**
      * Reject-after-approve path: unwind everything the approval did —
      * reverse the contributor's task_reward credit, restore the campaign pool,
-     * roll back stats, and reverse a referral reward if this approval paid one.
+     * roll back stats, and reverse the multi-level referral rewards if this
+     * approval paid them (compensating ledger entries, never deletes).
      */
-    protected function reverseApproval(TaskSubmission $submission, User $reviewer, string $notes): TaskSubmission
+    protected function reverseApproval(TaskSubmission $submission, User $reviewer, string $reasonCode, string $notes): TaskSubmission
     {
         $beforeState = $submission->toArray();
         $task = $submission->task;
@@ -289,19 +475,42 @@ class VerificationService
                 : null;
 
             if ($original) {
-                $reversal = $this->walletService->reverseCredit(
-                    $wallet,
-                    $original,
-                    "Submission #{$submission->id} rejected after approval"
-                );
+                // A retained reward never reached available: cancel any
+                // outstanding retention hold, which fully unwinds the
+                // credit+hold (pending and lifetime back to pre-approval).
+                // Only when NO hold is outstanding (legacy task with no
+                // retention, or retention already matured and released) do
+                // we reverse the credit from available as before.
+                $holds = WalletTransaction::where('wallet_id', $wallet->id)
+                    ->where('type', 'retention_hold')
+                    ->where('reference_type', TaskSubmission::class)
+                    ->where('reference_id', $submission->id)
+                    ->get();
 
-                // Return the clawed-back funds to the campaign escrow pool so
-                // the pending hold keeps covering the restored budget below.
-                // (Only on a fresh reversal — reverseCredit is idempotent.)
-                if ($reversal->wasRecentlyCreated && $campaign && $campaign->business) {
-                    $reversedCents = (int) ($reversal->metadata_json['reversed_amount_cents'] ?? 0);
+                $retained = false;
+                $cancelledCents = 0;
 
-                    if ($reversedCents > 0) {
+                foreach ($holds as $holdTx) {
+                    $result = $this->walletService->cancelRetentionHold(
+                        $wallet,
+                        $holdTx,
+                        "Submission #{$submission->id} rejected after approval"
+                    );
+
+                    if ($result->type === 'retention_hold_cancel') {
+                        $retained = true;
+
+                        if ($result->wasRecentlyCreated) {
+                            $cancelledCents += (int) ($result->metadata_json['cancelled_amount_cents'] ?? 0);
+                        }
+                    }
+                }
+
+                if ($retained) {
+                    // Return the unwound funds to the campaign escrow pool
+                    // (fresh cancellation only — cancelRetentionHold is
+                    // idempotent, so a retried reversal adds nothing).
+                    if ($cancelledCents > 0 && $campaign && $campaign->business) {
                         $businessWallet = Wallet::firstOrCreate(
                             ['user_id' => $campaign->business->owner_id],
                             ['currency' => 'USD', 'available_balance_cents' => 0]
@@ -309,12 +518,41 @@ class VerificationService
 
                         $this->walletService->restoreEscrow(
                             $businessWallet,
-                            $reversedCents,
-                            "Escrow restored — reversal of submission #{$submission->id}",
+                            $cancelledCents,
+                            "Escrow restored — retention cancelled for submission #{$submission->id}",
                             TaskSubmission::class,
                             $submission->id,
                             ['campaign_id' => $campaign->id]
                         );
+                    }
+                } else {
+                    $reversal = $this->walletService->reverseCredit(
+                        $wallet,
+                        $original,
+                        "Submission #{$submission->id} rejected after approval"
+                    );
+
+                    // Return the clawed-back funds to the campaign escrow pool so
+                    // the pending hold keeps covering the restored budget below.
+                    // (Only on a fresh reversal — reverseCredit is idempotent.)
+                    if ($reversal->wasRecentlyCreated && $campaign && $campaign->business) {
+                        $reversedCents = (int) ($reversal->metadata_json['reversed_amount_cents'] ?? 0);
+
+                        if ($reversedCents > 0) {
+                            $businessWallet = Wallet::firstOrCreate(
+                                ['user_id' => $campaign->business->owner_id],
+                                ['currency' => 'USD', 'available_balance_cents' => 0]
+                            );
+
+                            $this->walletService->restoreEscrow(
+                                $businessWallet,
+                                $reversedCents,
+                                "Escrow restored — reversal of submission #{$submission->id}",
+                                TaskSubmission::class,
+                                $submission->id,
+                                ['campaign_id' => $campaign->id]
+                            );
+                        }
                     }
                 }
             }
@@ -332,41 +570,72 @@ class VerificationService
             }
         }
 
-        // 4. Reverse the referral reward if THIS approval triggered it.
-        if ($submission->triggered_referral_id) {
-            $referral = Referral::where('id', $submission->triggered_referral_id)->lockForUpdate()->first();
+        // 4. Reverse the multi-level referral rewards THIS approval paid.
+        // Compensating ledger entries only — rows are never deleted.
+        // - reward row: 'rewarded' -> 'reversed' (idempotent: a retried
+        //   reversal skips non-rewarded rows, so it can never double-reverse);
+        // - referral row: back to 'pending' with qualified_at cleared, so a
+        //   future qualifying approval pays the level again as a FRESH
+        //   ledger credit (see ReferralService::payLevel's re-payment guard).
+        $triggeredRewardIds = $submission->triggered_referral_reward_ids_json ?? [];
 
-            if ($referral && $referral->status === 'rewarded') {
-                $referrerWallet = Wallet::firstOrCreate(
-                    ['user_id' => $referral->referrer_id],
-                    ['currency' => 'USD', 'available_balance_cents' => 0]
-                );
-
-                $referralCredit = WalletTransaction::where('wallet_id', $referrerWallet->id)
-                    ->where('type', 'referral_reward')
-                    ->where('reference_type', Referral::class)
-                    ->where('reference_id', $referral->id)
-                    ->latest('id')
-                    ->first();
-
-                if ($referralCredit) {
-                    $this->walletService->reverseCredit(
-                        $referrerWallet,
-                        $referralCredit,
-                        "Referral #{$referral->id} unqualified — submission #{$submission->id} rejected after approval"
-                    );
-                }
-
-                $referral->update(['status' => 'pending', 'qualified_at' => null]);
+        foreach (ReferralReward::whereIn('id', $triggeredRewardIds)->lockForUpdate()->get() as $reward) {
+            if ($reward->status !== ReferralReward::STATUS_REWARDED) {
+                continue;
             }
+
+            $referrerWallet = Wallet::firstOrCreate(
+                ['user_id' => $reward->referrer_id],
+                ['currency' => 'USD', 'available_balance_cents' => 0]
+            );
+
+            $originalTx = $reward->wallet_transaction_id
+                ? WalletTransaction::where('id', $reward->wallet_transaction_id)->first()
+                : null;
+
+            $originalTx ??= WalletTransaction::where('reference_type', ReferralReward::class)
+                ->where('reference_id', $reward->id)
+                ->where('type', 'referral_reward')
+                ->latest('id')
+                ->first();
+
+            if ($originalTx) {
+                $this->walletService->reverseCredit(
+                    $referrerWallet,
+                    $originalTx,
+                    "Referral L{$reward->level} reversed — submission #{$submission->id} rejected after approval"
+                );
+            }
+
+            $reward->update(['status' => ReferralReward::STATUS_REVERSED]);
+
+            Referral::where('id', $reward->referral_id)
+                ->update(['status' => 'pending', 'qualified_at' => null]);
+
+            AuditLogger::log(
+                null,
+                'referral.reversed',
+                ReferralReward::class,
+                $reward->id,
+                [
+                    'referrer_id' => $reward->referrer_id,
+                    'referred_user_id' => $reward->referred_user_id,
+                    'level' => $reward->level,
+                    'amount_cents' => $reward->amount_cents,
+                    'trigger' => "submission #{$submission->id} rejected after approval",
+                ]
+            );
         }
 
         $submission->update([
             'status' => 'rejected',
+            'verification_stage' => 'decided',
             'reviewer_id' => $reviewer->id,
             'reviewed_at' => now(),
+            'review_reason_code' => $reasonCode,
             'review_notes' => $notes,
             'triggered_referral_id' => null,
+            'triggered_referral_reward_ids_json' => [],
         ]);
 
         if ($submission->assignment_id) {
@@ -422,49 +691,5 @@ class VerificationService
             'user_agent' => request()->userAgent(),
             'created_at' => now(),
         ]);
-    }
-
-    /**
-     * Qualify referral reward upon legitimate task completion.
-     * The pending referral row is locked so concurrent approvals of the same
-     * contributor's submissions cannot double-pay the referrer.
-     *
-     * @return Referral|null the referral that was paid, if any
-     */
-    protected function checkReferralQualification(User $contributor, TaskSubmission $submission): ?Referral
-    {
-        $referral = Referral::where('referred_user_id', $contributor->id)
-            ->where('status', 'pending')
-            ->lockForUpdate()
-            ->first();
-
-        if (!$referral) {
-            return null;
-        }
-
-        $referral->update([
-            'status' => 'qualified',
-            'qualified_at' => now(),
-        ]);
-
-        // Credit referrer wallet
-        $referrerWallet = Wallet::firstOrCreate(
-            ['user_id' => $referral->referrer_id],
-            ['currency' => 'USD', 'available_balance_cents' => 0]
-        );
-
-        $this->walletService->credit(
-            $referrerWallet,
-            (int) $referral->reward_cents,
-            'referral_reward',
-            "Referral bonus for friend completing first verified task",
-            Referral::class,
-            $referral->id,
-            ['triggered_by_submission_id' => $submission->id, 'referred_user_id' => $contributor->id]
-        );
-
-        $referral->update(['status' => 'rewarded']);
-
-        return $referral;
     }
 }

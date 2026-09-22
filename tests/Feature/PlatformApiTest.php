@@ -100,6 +100,7 @@ class PlatformApiTest extends TestCase
 
         $response = $this->postJson("/api/v1/admin/submissions/{$submission->id}/decision", [
             'decision' => 'approved',
+            'reason_code' => 'verified',
             'notes' => 'Proof verified thoroughly against official campaign criteria.',
         ]);
 
@@ -124,6 +125,7 @@ class PlatformApiTest extends TestCase
 
         $payload = [
             'decision' => 'approved',
+            'reason_code' => 'verified',
             'notes' => 'Proof verified thoroughly against official campaign criteria.',
         ];
 
@@ -156,11 +158,13 @@ class PlatformApiTest extends TestCase
 
         $this->postJson("/api/v1/admin/submissions/{$submission->id}/decision", [
             'decision' => 'approved',
+            'reason_code' => 'verified',
             'notes' => 'Proof verified thoroughly against official campaign criteria.',
         ])->assertStatus(200);
 
         $this->postJson("/api/v1/admin/submissions/{$submission->id}/decision", [
             'decision' => 'rejected',
+            'reason_code' => 'fake_submission',
             'notes' => 'Re-examined proof; does not meet the campaign criteria.',
         ])->assertStatus(200);
 

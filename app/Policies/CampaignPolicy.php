@@ -29,6 +29,22 @@ class CampaignPolicy
         return $this->owns($user, $campaign);
     }
 
+    /**
+     * Phase 9: only the owning business may launch its draft.
+     */
+    public function launch(User $user, Campaign $campaign): bool
+    {
+        return $this->owns($user, $campaign);
+    }
+
+    /**
+     * Phase 9: only the owning business may top up its campaign.
+     */
+    public function fund(User $user, Campaign $campaign): bool
+    {
+        return $this->owns($user, $campaign);
+    }
+
     private function owns(User $user, Campaign $campaign): bool
     {
         $business = $user->business;

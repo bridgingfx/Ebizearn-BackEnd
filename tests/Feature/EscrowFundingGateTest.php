@@ -32,6 +32,7 @@ class EscrowFundingGateTest extends TestCase
             'title' => 'Escrow Gate Test Campaign',
             'description' => 'A campaign that must not go active without funding.',
             'category_id' => $category->id,
+            'task_type_key' => 'survey', // band 20–200¢ covers the $1.00 reward below
             'reward_per_task_cents' => 100, // $1.00
             'target_contributors_count' => 5,
             'instructions_markdown' => 'Do the thing.',

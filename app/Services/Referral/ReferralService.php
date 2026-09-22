@@ -177,11 +177,25 @@ class ReferralService
             // Retry guard: if a previous attempt credited the ledger but
             // crashed before marking the reward, reuse that entry instead of
             // writing a second one.
+            //
+            // Phase 6 addition (Worker C): when the previous credit was
+            // legitimately REVERSED (reject-after-approve writes a
+            // referral_reward_reversal entry against it), the reversal proves
+            // the money was taken back — so this re-qualification writes a
+            // FRESH credit instead of resurrecting the reversed one. The old
+            // credit stays in history; nothing is ever deleted.
             $existingTx = WalletTransaction::where('reference_type', ReferralReward::class)
                 ->where('reference_id', $reward->id)
+                ->where('type', 'referral_reward')
+                ->latest('id')
                 ->first();
 
-            if (!$existingTx) {
+            $wasReversed = $existingTx && WalletTransaction::where('reference_type', WalletTransaction::class)
+                ->where('reference_id', $existingTx->id)
+                ->where('type', 'referral_reward_reversal')
+                ->exists();
+
+            if (!$existingTx || $wasReversed) {
                 $wallet = Wallet::firstOrCreate(
                     ['user_id' => $referral->referrer_id],
                     ['currency' => 'USD', 'available_balance_cents' => 0]

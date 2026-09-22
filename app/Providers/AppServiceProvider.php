@@ -24,6 +24,7 @@ class AppServiceProvider extends ServiceProvider
         // Phase 13: explicit authorization policies (this project has no
         // AuthServiceProvider; policies are registered on the Gate here).
         Gate::policy(\App\Models\Campaign::class, \App\Policies\CampaignPolicy::class);
+        Gate::policy(\App\Models\Task::class, \App\Policies\TaskPolicy::class);
         Gate::policy(\App\Models\Wallet::class, \App\Policies\WalletPolicy::class);
     }
 }

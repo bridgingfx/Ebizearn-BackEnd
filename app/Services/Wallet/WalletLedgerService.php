@@ -223,6 +223,73 @@ class WalletLedgerService
     }
 
     /**
+     * Cancel an outstanding retention hold: the held reward never reached
+     * the wallet owner, so it leaves pending (and lifetime earnings) without
+     * touching available. Used when a retention-held task reward is reversed
+     * before the retention period matured.
+     *
+     * Idempotent: a hold that was already released or cancelled returns the
+     * existing release/cancel entry, so a retried reversal can never
+     * double-unwind.
+     */
+    public function cancelRetentionHold(Wallet $wallet, WalletTransaction $holdTx, string $reason): WalletTransaction
+    {
+        if ($holdTx->type !== 'retention_hold') {
+            throw new Exception('Only retention_hold transactions can be cancelled.');
+        }
+
+        return $this->withIdempotency(
+            "retention-cancel-{$holdTx->id}",
+            'wallet.cancel_retention_hold',
+            $wallet->user_id,
+            ['wallet_id' => $wallet->id, 'hold_tx_id' => $holdTx->id],
+            function () use ($wallet, $holdTx, $reason) {
+                return DB::transaction(function () use ($wallet, $holdTx, $reason) {
+                    $lockedWallet = Wallet::where('id', $wallet->id)->lockForUpdate()->firstOrFail();
+
+                    if ((int) $lockedWallet->id !== (int) $holdTx->wallet_id) {
+                        throw new Exception('Hold wallet does not match.');
+                    }
+
+                    // Already released or cancelled: return the existing entry.
+                    $existing = WalletTransaction::where('wallet_id', $lockedWallet->id)
+                        ->whereIn('type', ['retention_release', 'retention_hold_cancel'])
+                        ->where('metadata_json->hold_transaction_id', $holdTx->id)
+                        ->first();
+
+                    if ($existing) {
+                        return $existing;
+                    }
+
+                    $cancel = min($lockedWallet->pending_balance_cents, abs((int) $holdTx->amount_cents));
+
+                    $lockedWallet->decrement('pending_balance_cents', $cancel);
+                    $lockedWallet->decrement(
+                        'lifetime_earnings_cents',
+                        min($lockedWallet->lifetime_earnings_cents, $cancel)
+                    );
+
+                    return WalletTransaction::create([
+                        'wallet_id' => $lockedWallet->id,
+                        'type' => 'retention_hold_cancel',
+                        'amount_cents' => -$cancel,
+                        'balance_after_cents' => $lockedWallet->available_balance_cents,
+                        'currency' => $lockedWallet->currency,
+                        'reference_type' => $holdTx->reference_type,
+                        'reference_id' => $holdTx->reference_id,
+                        'description' => "Cancelled retention hold #{$holdTx->id}: {$reason}",
+                        'metadata_json' => [
+                            'hold_transaction_id' => $holdTx->id,
+                            'cancelled_amount_cents' => $cancel,
+                        ],
+                        'created_at' => now(),
+                    ]);
+                });
+            }
+        );
+    }
+
+    /**
      * Settle escrowed funds when a held reward is actually settled: reduces
      * the pending (held) balance without returning it to available — the money
      * leaves the business's custody and is credited to the contributor's wallet

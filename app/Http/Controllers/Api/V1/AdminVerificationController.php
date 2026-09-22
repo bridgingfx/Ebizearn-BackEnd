@@ -121,12 +121,16 @@ class AdminVerificationController extends Controller
     }
 
     /**
-     * Admin executes Approve / Reject / Action Required decision with reason.
+     * Admin executes Approve / Reject / Action Required decision with a
+     * MANDATORY reason code (Phase 6) and reviewer notes.
      */
     public function recordDecision(Request $request, string $id): JsonResponse
     {
+        $decision = $request->input('decision');
+
         $validator = Validator::make($request->all(), [
             'decision' => 'required|in:approved,rejected,action_required',
+            'reason_code' => 'required|string',
             'notes' => 'required|string|min:3|max:1000',
         ]);
 
@@ -138,19 +142,31 @@ class AdminVerificationController extends Controller
             ], 422);
         }
 
+        // Reason code must come from the catalog for the chosen decision —
+        // a 422 names the valid codes instead of failing silently.
+        $validCodes = VerificationService::REASON_CODES[$decision] ?? [];
+        if (!in_array($request->input('reason_code'), $validCodes, true)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Invalid reason code '{$request->input('reason_code')}' for decision '{$decision}'.",
+                'valid_reason_codes' => $validCodes,
+            ], 422);
+        }
+
         $submission = TaskSubmission::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
 
         try {
             $updated = $this->verificationService->recordDecision(
                 $submission,
                 $request->user(),
-                $request->input('decision'),
+                $decision,
+                $request->input('reason_code'),
                 $request->input('notes')
             );
 
             return response()->json([
                 'success' => true,
-                'message' => "Submission has been marked as {$request->input('decision')}.",
+                'message' => "Submission has been marked as {$decision}.",
                 'data' => $updated->load(['task', 'user.wallet', 'reviewer', 'aiResult']),
             ]);
         } catch (Exception $e) {

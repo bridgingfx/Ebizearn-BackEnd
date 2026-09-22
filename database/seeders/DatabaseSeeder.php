@@ -17,6 +17,7 @@ use App\Models\Task;
 use App\Models\TaskAssignment;
 use App\Models\TaskCategory;
 use App\Models\TaskSubmission;
+use App\Models\TaskType;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
@@ -393,6 +394,23 @@ class DatabaseSeeder extends Seeder
         $this->seedCountries();
         $this->seedWithdrawalRules();
         $this->seedPlatformSettings();
+        $this->seedTaskTypes();
+    }
+
+    /**
+     * Phase 4: task-type catalog with reward bands (Phase 12).
+     * Additive and idempotent: updateOrCreate on the unique key, so a
+     * re-seed never duplicates rows and never clobbers Super-Admin edits to
+     * bands made through the ops API... except band defaults ARE re-applied
+     * here — deliberate: the seeder owns the canonical defaults, the ops API
+     * owns runtime changes. (Re-seeding resets bands to defaults; production
+     * never re-seeds.)
+     */
+    protected function seedTaskTypes(): void
+    {
+        foreach (TaskType::defaults() as $key => $attributes) {
+            TaskType::updateOrCreate(['key' => $key], $attributes);
+        }
     }
 
     /**
@@ -420,7 +438,9 @@ class DatabaseSeeder extends Seeder
         }
 
         $grants = [
-            'moderator' => [Permission::REVIEW_SUBMISSIONS, Permission::HANDLE_DISPUTES],
+            // Phase 4: moderators create tasks (manage_task_templates) and
+            // review submissions — the staff API gates on these permissions.
+            'moderator' => [Permission::REVIEW_SUBMISSIONS, Permission::HANDLE_DISPUTES, Permission::MANAGE_TASK_TEMPLATES],
             'admin' => [
                 Permission::REVIEW_SUBMISSIONS,
                 Permission::MANAGE_CAMPAIGNS,

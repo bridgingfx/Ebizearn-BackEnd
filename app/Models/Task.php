@@ -17,6 +17,7 @@ class Task extends Model
         'uuid',
         'campaign_id',
         'category_id',
+        'task_type_id',
         'title',
         'reward_cents',
         'estimated_minutes',
@@ -24,6 +25,15 @@ class Task extends Model
         'status',
         'slots_total',
         'slots_taken',
+        // Phase 4: task-type contract fields
+        'platform',
+        'country_code',
+        'instructions',
+        'proof_required_json',
+        'retention_days',
+        'fraud_rules_json',
+        'company_name',
+        'company_logo_url',
     ];
 
     protected $casts = [
@@ -31,6 +41,10 @@ class Task extends Model
         'estimated_minutes' => 'integer',
         'slots_total' => 'integer',
         'slots_taken' => 'integer',
+        'task_type_id' => 'integer',
+        'proof_required_json' => 'array',
+        'retention_days' => 'integer',
+        'fraud_rules_json' => 'array',
     ];
 
     protected static function booted(): void
@@ -50,6 +64,14 @@ class Task extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(TaskCategory::class, 'category_id');
+    }
+
+    /**
+     * Phase 4: the task-type contract (bands, proof rules, platforms).
+     */
+    public function taskType(): BelongsTo
+    {
+        return $this->belongsTo(TaskType::class, 'task_type_id');
     }
 
     public function assignments(): HasMany
