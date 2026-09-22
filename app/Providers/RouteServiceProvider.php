@@ -75,5 +75,16 @@ class RouteServiceProvider extends ServiceProvider
         RateLimiter::for('ops', function (Request $request) {
             return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
         });
+
+        // Public demo-request form: cheap to abuse for spam / DB bloat, so
+        // cap it at 10 submissions/min per IP with a friendly 429 payload.
+        RateLimiter::for('demo-requests', function (Request $request) {
+            return Limit::perMinute(10)->by($request->ip())->response(function (Request $request) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Too many demo requests. Please wait and try again.',
+                ], 429);
+            });
+        });
     }
 }

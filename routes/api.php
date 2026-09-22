@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\BusinessCampaignController;
 use App\Http\Controllers\Api\V1\BusinessTaskController;
 use App\Http\Controllers\Api\V1\CampaignWizardController;
 use App\Http\Controllers\Api\V1\ConfigController;
+use App\Http\Controllers\Api\V1\DemoRequestController;
 use App\Http\Controllers\Api\V1\Ops\OpsAdminController;
 use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
 use App\Http\Controllers\Api\V1\Ops\OpsTaskTypeController;
@@ -43,6 +44,10 @@ Route::prefix('v1')->group(function () {
     // 3. Public Marketplace Preview
     Route::get('/tasks', [TaskController::class, 'index']);
     Route::get('/tasks/{id}', [TaskController::class, 'show']);
+
+    // Public demo request form — rate-limited, stored as real DB rows.
+    Route::post('/demo-requests', [DemoRequestController::class, 'store'])
+        ->middleware('throttle:demo-requests');
 
     // 4. Protected Routes
     Route::middleware('auth:sanctum')->group(function () {
@@ -158,6 +163,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/users', [AdminSystemController::class, 'users']);
             Route::patch('/users/{id}/status', [AdminSystemController::class, 'updateUserStatus']);
             Route::get('/health', [AdminSystemController::class, 'health']);
+
+            // Demo-request triage (public submissions, admin read only)
+            Route::get('/demo-requests', [DemoRequestController::class, 'index']);
         });
 
         // ==================================================================

@@ -44,6 +44,20 @@ class TaskTypeRewardBandTest extends TestCase
         ]);
     }
 
+    protected function makeSuperAdmin(): User
+    {
+        // Superadmins are no longer seeded (created only via
+        // `php artisan superadmin:create`), so tests create their own.
+        return User::create([
+            'name' => 'Super Admin',
+            'email' => 'superadmin-' . Str::random(6) . '@example.com',
+            'password' => Hash::make('password123'),
+            'role' => 'superadmin',
+            'status' => 'active',
+            'email_verified_at' => now(),
+        ]);
+    }
+
     protected function makeBusiness(string $email): User
     {
         $user = User::create([
@@ -209,7 +223,7 @@ class TaskTypeRewardBandTest extends TestCase
 
     public function test_ops_superadmin_updates_band_and_it_takes_effect(): void
     {
-        $superadmin = User::where('email', 'superadmin@ebizearn.com')->firstOrFail();
+        $superadmin = $this->makeSuperAdmin();
         $admin = User::where('email', 'admin@ebizearn.com')->firstOrFail();
         $campaign = $this->makeCampaign($this->makeBusiness('band-biz7@example.com')->business);
 
@@ -240,7 +254,7 @@ class TaskTypeRewardBandTest extends TestCase
 
     public function test_ops_band_update_rejects_min_above_max(): void
     {
-        $superadmin = User::where('email', 'superadmin@ebizearn.com')->firstOrFail();
+        $superadmin = $this->makeSuperAdmin();
 
         Sanctum::actingAs($superadmin);
 

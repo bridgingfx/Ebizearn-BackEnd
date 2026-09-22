@@ -148,24 +148,16 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        // 6. Admin & Super Admin Users
+        // 6. Admin User
+        // NOTE: no superadmin is seeded here. Super-admin accounts are created
+        // ONLY manually via `php artisan superadmin:create` — never with a
+        // known default password.
         $admin = User::updateOrCreate(
             ['email' => 'admin@ebizearn.com'],
             [
                 'name' => 'Platform Moderator',
                 'password' => Hash::make('password123'),
                 'role' => 'admin',
-                'status' => 'active',
-                'email_verified_at' => now(),
-            ]
-        );
-
-        $superAdmin = User::updateOrCreate(
-            ['email' => 'superadmin@ebizearn.com'],
-            [
-                'name' => 'Chief Technology Officer',
-                'password' => Hash::make('password123'),
-                'role' => 'superadmin',
                 'status' => 'active',
                 'email_verified_at' => now(),
             ]

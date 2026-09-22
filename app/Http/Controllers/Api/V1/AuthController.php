@@ -132,6 +132,7 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
             'password' => 'required|string',
+            'portal' => 'nullable|in:contributor,business,moderator,superadmin',
         ]);
 
         if ($validator->fails()) {
@@ -155,6 +156,26 @@ class AuthController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Your account has been suspended for compliance review. Contact support@ebizearn.com.',
+            ], 403);
+        }
+
+        // Portal separation (server-side, never frontend-only): when the
+        // sign-in request names a portal, the user's role must belong to
+        // that portal. This runs BEFORE any token revocation or minting so
+        // a portal mismatch never destroys existing sessions and never
+        // issues a token for the wrong portal.
+        $portalRoles = [
+            'contributor' => ['contributor'],
+            'business' => ['business'],
+            'moderator' => ['moderator'],
+            'superadmin' => ['superadmin'],
+        ];
+
+        $portal = $request->input('portal');
+        if ($portal !== null && $portal !== '' && !in_array($user->role, $portalRoles[$portal], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => "This account does not belong to the {$portal} portal. Please use the correct sign-in.",
             ], 403);
         }
 
