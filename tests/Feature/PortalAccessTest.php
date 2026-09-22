@@ -27,7 +27,7 @@ class PortalAccessTest extends TestCase
             'uuid' => (string) Str::uuid(),
             'name' => ucfirst($role) . ' User',
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => $role,
             'status' => 'active',
             'email_verified_at' => now(),
@@ -67,7 +67,7 @@ class PortalAccessTest extends TestCase
 
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'portal-login@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'portal' => 'business',
         ]);
 
@@ -95,7 +95,7 @@ class PortalAccessTest extends TestCase
 
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'portal-match@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'portal' => 'contributor',
         ]);
 
@@ -110,7 +110,7 @@ class PortalAccessTest extends TestCase
 
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'portal-noparam@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
         ]);
 
         $response->assertStatus(200);
@@ -123,7 +123,7 @@ class PortalAccessTest extends TestCase
 
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'portal-badval@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'portal' => 'owner',
         ]);
 
@@ -138,7 +138,7 @@ class PortalAccessTest extends TestCase
      * the first authenticated user, so cross-role requests must live in
      * separate methods to get a fresh guard per role.
      */
-    protected function loginAndGetToken(string $email, string $password = 'password123'): string
+    protected function loginAndGetToken(string $email, string $password = 'V3r1fy!Strong'): string
     {
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => $email,

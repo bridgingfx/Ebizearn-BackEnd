@@ -35,7 +35,7 @@ class ReferralLedgerTest extends TestCase
         $payload = [
             'name' => $name,
             'email' => $email,
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
         ];
 
@@ -46,7 +46,12 @@ class ReferralLedgerTest extends TestCase
         $response = $this->postJson('/api/v1/auth/register', $payload);
         $response->assertStatus(201);
 
-        return User::where('email', $email)->firstOrFail();
+        // Round 2: referral rewards require a verified email, so the test
+        // user verifies in setup (mirrors a real user clicking the link).
+        $user = User::where('email', $email)->firstOrFail();
+        $user->forceFill(['email_verified_at' => now()])->save();
+
+        return $user;
     }
 
     public function test_registration_builds_three_level_chain(): void

@@ -52,7 +52,7 @@ class VerificationStateMachineTest extends TestCase
         $user = User::create([
             'name' => 'Contributor ' . $email,
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'contributor',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -67,7 +67,7 @@ class VerificationStateMachineTest extends TestCase
         $user = User::create([
             'name' => 'Biz ' . $email,
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'business',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -164,13 +164,17 @@ class VerificationStateMachineTest extends TestCase
 
     protected function registerContributor(string $name, string $email, ?string $refCode = null): User
     {
-        $payload = ['name' => $name, 'email' => $email, 'password' => 'password123', 'role' => 'contributor'];
+        $payload = ['name' => $name, 'email' => $email, 'password' => 'V3r1fy!Strong', 'role' => 'contributor'];
         if ($refCode) {
             $payload['referral_code'] = $refCode;
         }
         $this->postJson('/api/v1/auth/register', $payload)->assertStatus(201);
 
-        return User::where('email', $email)->firstOrFail();
+        // Round 2: task submit is email-gated — verify in setup.
+        $user = User::where('email', $email)->firstOrFail();
+        $user->forceFill(['email_verified_at' => now()])->save();
+
+        return $user;
     }
 
     // ------------------------------------------------------------------

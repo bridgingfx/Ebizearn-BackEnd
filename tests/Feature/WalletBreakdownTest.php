@@ -46,7 +46,7 @@ class WalletBreakdownTest extends TestCase
         $user = User::create([
             'name' => 'U ' . $email,
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => $role,
             'status' => 'active',
             'email_verified_at' => now(),

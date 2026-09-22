@@ -52,6 +52,7 @@ class RouteServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by($key)->response(function (Request $request) {
                 return response()->json([
                     'success' => false,
+                    'code' => 'rate_limited',
                     'message' => 'Too many login attempts. Please wait and try again.',
                 ], 429);
             });
@@ -65,6 +66,7 @@ class RouteServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by($key)->response(function (Request $request) {
                 return response()->json([
                     'success' => false,
+                    'code' => 'rate_limited',
                     'message' => 'Too many password-reset requests. Please wait and try again.',
                 ], 429);
             });
@@ -76,12 +78,51 @@ class RouteServiceProvider extends ServiceProvider
             return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
         });
 
+        // Round 2 — public registration: 5 attempts/min per IP. Keyed on IP
+        // (no email normalization possible before validation); the strong
+        // password rule + email verification gate sit behind this.
+        RateLimiter::for('register', function (Request $request) {
+            return Limit::perMinute(5)->by($request->ip())->response(function (Request $request) {
+                return response()->json([
+                    'success' => false,
+                    'code' => 'rate_limited',
+                    'message' => 'Too many registration attempts. Please wait and try again.',
+                ], 429);
+            });
+        });
+
+        // Round 2 — social login: 10 attempts/min per IP. Slightly looser
+        // than password login because the ID token itself is the credential,
+        // but still bounded against token-replay probing.
+        RateLimiter::for('social-login', function (Request $request) {
+            return Limit::perMinute(10)->by($request->ip())->response(function (Request $request) {
+                return response()->json([
+                    'success' => false,
+                    'code' => 'rate_limited',
+                    'message' => 'Too many social sign-in attempts. Please wait and try again.',
+                ], 429);
+            });
+        });
+
+        // Round 2 — verification-email resend: 3/min per authenticated user
+        // (falls back to IP for safety). Bounds SMTP budget burn.
+        RateLimiter::for('email-resend', function (Request $request) {
+            return Limit::perMinute(3)->by($request->user()?->id ?: $request->ip())->response(function (Request $request) {
+                return response()->json([
+                    'success' => false,
+                    'code' => 'rate_limited',
+                    'message' => 'Too many verification email requests. Please wait and try again.',
+                ], 429);
+            });
+        });
+
         // Public demo-request form: cheap to abuse for spam / DB bloat, so
         // cap it at 10 submissions/min per IP with a friendly 429 payload.
         RateLimiter::for('demo-requests', function (Request $request) {
             return Limit::perMinute(10)->by($request->ip())->response(function (Request $request) {
                 return response()->json([
                     'success' => false,
+                    'code' => 'rate_limited',
                     'message' => 'Too many demo requests. Please wait and try again.',
                 ], 429);
             });

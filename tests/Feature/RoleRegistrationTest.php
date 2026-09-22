@@ -30,7 +30,7 @@ class RoleRegistrationTest extends TestCase
         $response = $this->postJson('/api/v1/auth/register', [
             'name' => 'Mallory',
             'email' => "mallory-{$role}@example.com",
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'role' => $role,
         ]);
 
@@ -53,7 +53,7 @@ class RoleRegistrationTest extends TestCase
         $contributor = $this->postJson('/api/v1/auth/register', [
             'name' => 'Cara',
             'email' => 'cara@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
         ]);
         $contributor->assertStatus(201)->assertJsonPath('data.user.role', 'contributor');
@@ -61,7 +61,7 @@ class RoleRegistrationTest extends TestCase
         $business = $this->postJson('/api/v1/auth/register', [
             'name' => 'Biz Owner',
             'email' => 'biz@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'role' => 'business',
             'company_name' => 'Acme LLC',
         ]);

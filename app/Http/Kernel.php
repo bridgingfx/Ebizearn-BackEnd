@@ -42,6 +42,8 @@ class Kernel extends HttpKernel
         'api' => [
             \Illuminate\Routing\Middleware\ThrottleRequests::class.':api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
+            // Round 2: security headers on every API response.
+            \App\Http\Middleware\SecurityHeaders::class,
         ],
     ];
 
@@ -65,6 +67,9 @@ class Kernel extends HttpKernel
         'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         'role' => EnsureRole::class,
+        // Round 2: custom verification gate with a machine-readable 403
+        // code (email_not_verified). Not Laravel's session-based `verified`.
+        'email.verified' => \App\Http\Middleware\EnsureEmailVerified::class,
         'permission' => EnsurePermission::class,
     ];
 }

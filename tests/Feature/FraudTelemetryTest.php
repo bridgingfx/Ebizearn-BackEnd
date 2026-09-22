@@ -28,8 +28,8 @@ class FraudTelemetryTest extends TestCase
         $resp = $this->postJson('/api/v1/auth/register', [
             'name' => 'Fraud Test',
             'email' => $email,
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'V3r1fy!Strong',
+            'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'contributor',
         ]);
         $resp->assertStatus(201);
@@ -59,7 +59,7 @@ class FraudTelemetryTest extends TestCase
         $login = $this->withHeaders(['User-Agent' => 'NewDevice/1.0'])
             ->postJson('/api/v1/auth/login', [
                 'email' => 'fraud2@example.com',
-                'password' => 'password123',
+                'password' => 'V3r1fy!Strong',
                 'portal' => 'contributor',
             ]);
         $login->assertStatus(200);
@@ -81,7 +81,7 @@ class FraudTelemetryTest extends TestCase
     {
         [$json, $user] = $this->register('fraud3@example.com');
 
-        $payload = ['email' => 'fraud3@example.com', 'password' => 'password123', 'portal' => 'contributor'];
+        $payload = ['email' => 'fraud3@example.com', 'password' => 'V3r1fy!Strong', 'portal' => 'contributor'];
         $this->postJson('/api/v1/auth/login', $payload)->assertStatus(200);
         $this->postJson('/api/v1/auth/login', $payload)->assertStatus(200);
 
@@ -112,7 +112,7 @@ class FraudTelemetryTest extends TestCase
         // Registration is NOT blocked — user can still log in.
         $login = $this->postJson('/api/v1/auth/login', [
             'email' => 'fraud4c@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'portal' => 'contributor',
         ]);
         $login->assertStatus(200);
@@ -126,7 +126,7 @@ class FraudTelemetryTest extends TestCase
         for ($i = 0; $i < 3; $i++) {
             $this->postJson('/api/v1/auth/login', [
                 'email' => 'fraud5@example.com',
-                'password' => 'password123',
+                'password' => 'V3r1fy!Strong',
                 'portal' => 'contributor',
             ])->assertStatus(200);
         }

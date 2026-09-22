@@ -35,10 +35,17 @@ Route::prefix('v1')->group(function () {
 
     // 2. Public Authentication
     Route::prefix('auth')->group(function () {
-        Route::post('/register', [AuthController::class, 'register']);
+        // Round 2: registration throttled (5/min per IP) + strong password.
+        Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:register');
         Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
+        // Round 2: social sign-in (Google/Apple ID-token, server-side verified).
+        Route::post('/social/{provider}', [AuthController::class, 'socialLogin'])
+            ->whereIn('provider', ['google', 'apple'])
+            ->middleware('throttle:social-login');
         Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:password-reset');
         Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:password-reset');
+        // Round 2: email verification (public — the token is the credential).
+        Route::post('/email/verify', [AuthController::class, 'verifyEmail']);
     });
 
     // 3. Public Marketplace Preview
@@ -55,6 +62,9 @@ Route::prefix('v1')->group(function () {
         // Auth management
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/auth/me', [AuthController::class, 'me']);
+        // Round 2: verification-email resend (authenticated, 3/min).
+        Route::post('/auth/email/resend', [AuthController::class, 'resendVerificationEmail'])
+            ->middleware('throttle:email-resend');
 
         // Profile
         Route::post('/profile/avatar', [ProfileController::class, 'uploadAvatar']);
@@ -62,7 +72,8 @@ Route::prefix('v1')->group(function () {
 
         // Contributor Endpoints
         Route::middleware('role:contributor')->prefix('contributor')->group(function () {
-            Route::get('/dashboard', [TaskController::class, 'contributorDashboard']);
+            // Round 2: dashboard data is gated on email verification.
+            Route::get('/dashboard', [TaskController::class, 'contributorDashboard'])->middleware('email.verified');
             Route::get('/my-tasks', [TaskController::class, 'myTasks']);
 
             // Phase 8: affiliate endpoints (real ledger-backed data only)
@@ -71,14 +82,16 @@ Route::prefix('v1')->group(function () {
             Route::get('/referrals/earnings', [ReferralController::class, 'earnings']);
         });
 
-        // Contributor Task Operations
-        Route::middleware('role:contributor')->group(function () {
+        // Contributor Task Operations (Round 2: task write paths gated on
+        // email verification).
+        Route::middleware(['role:contributor', 'email.verified'])->group(function () {
             Route::post('/tasks/{id}/start', [TaskController::class, 'start']);
             Route::post('/tasks/{id}/submit', [TaskController::class, 'submit']);
         });
 
-        // Contributor Wallet Operations
-        Route::middleware('role:contributor')->prefix('wallet')->group(function () {
+        // Contributor Wallet Operations (Round 2: wallet actions gated on
+        // email verification).
+        Route::middleware(['role:contributor', 'email.verified'])->prefix('wallet')->group(function () {
             Route::get('/', [WalletController::class, 'index']);
             Route::get('/transactions', [WalletController::class, 'transactions']);
             // Phase 7: breakdown computed from the real ledger + submissions
@@ -90,30 +103,33 @@ Route::prefix('v1')->group(function () {
         Route::middleware('role:business')->prefix('business')->group(function () {
             Route::get('/dashboard', [BusinessCampaignController::class, 'dashboard']);
             Route::get('/campaigns', [BusinessCampaignController::class, 'index']);
-            Route::post('/campaigns', [BusinessCampaignController::class, 'store']);
+            // Round 2: campaign creation + funding gated on verification.
+            Route::post('/campaigns', [BusinessCampaignController::class, 'store'])->middleware('email.verified');
             Route::get('/campaigns/{id}', [BusinessCampaignController::class, 'show']);
             Route::patch('/campaigns/{id}/status', [BusinessCampaignController::class, 'updateStatus']);
-            Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund']);
+            Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund'])->middleware('email.verified');
             Route::post('/campaigns/{id}/logo', [BusinessCampaignController::class, 'uploadLogo']);
             Route::get('/submissions', [BusinessCampaignController::class, 'submissions']);
 
             // ==============================================================
             // Phase 9 — CAMPAIGN WIZARD (Worker C): preview -> draft -> launch.
             // Tenant-scoped: a business touches only its own campaigns.
+            // Round 2: draft/launch gated on email verification.
             // ==============================================================
             Route::post('/campaigns/wizard/preview', [CampaignWizardController::class, 'preview']);
-            Route::post('/campaigns/wizard/draft', [CampaignWizardController::class, 'draft']);
-            Route::post('/campaigns/{id}/launch', [CampaignWizardController::class, 'launch']);
+            Route::post('/campaigns/wizard/draft', [CampaignWizardController::class, 'draft'])->middleware('email.verified');
+            Route::post('/campaigns/{id}/launch', [CampaignWizardController::class, 'launch'])->middleware('email.verified');
 
             // ==============================================================
             // Phase 4/13 — BUSINESS TASK CRUD (Worker C): strictly own-tenant
             // via TaskPolicy; rewards band-validated (Phase 12).
+            // Round 2: writes gated on email verification.
             // ==============================================================
             Route::get('/tasks', [BusinessTaskController::class, 'index']);
-            Route::post('/tasks', [BusinessTaskController::class, 'store']);
+            Route::post('/tasks', [BusinessTaskController::class, 'store'])->middleware('email.verified');
             Route::get('/tasks/{id}', [BusinessTaskController::class, 'show']);
-            Route::patch('/tasks/{id}', [BusinessTaskController::class, 'update']);
-            Route::delete('/tasks/{id}', [BusinessTaskController::class, 'destroy']);
+            Route::patch('/tasks/{id}', [BusinessTaskController::class, 'update'])->middleware('email.verified');
+            Route::delete('/tasks/{id}', [BusinessTaskController::class, 'destroy'])->middleware('email.verified');
 
             // Phase 9 — basic business analytics from REAL aggregates.
             Route::get('/analytics', [BusinessTaskController::class, 'analytics']);

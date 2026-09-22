@@ -45,7 +45,7 @@ class BusinessWorkflowTest extends TestCase
     {
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => $email,
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'portal' => $portal,
         ]);
         $response->assertStatus(200);
@@ -62,8 +62,8 @@ class BusinessWorkflowTest extends TestCase
         $reg = $this->postJson('/api/v1/auth/register', [
             'name' => 'Test Business',
             'email' => $email,
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'V3r1fy!Strong',
+            'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'business',
             'company_name' => 'Test Co LLC',
         ]);
@@ -71,6 +71,8 @@ class BusinessWorkflowTest extends TestCase
         $this->assertEquals('business', $reg->json('data.user.role'));
 
         $business = User::where('email', $email)->firstOrFail();
+        // Round 2: campaign/fund/launch are email-gated — verify in setup.
+        $business->forceFill(['email_verified_at' => now()])->save();
         $this->assertNotNull($business->business);
         $this->assertEquals('Test Co LLC', $business->business->company_name);
 
@@ -150,8 +152,8 @@ class BusinessWorkflowTest extends TestCase
         $this->postJson('/api/v1/auth/register', [
             'name' => 'Feed Checker',
             'email' => $contribEmail,
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'V3r1fy!Strong',
+            'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'contributor',
         ])->assertStatus(201);
         $contribToken = $this->loginAndGetToken($contribEmail, 'contributor');
@@ -168,7 +170,7 @@ class BusinessWorkflowTest extends TestCase
         $admin = User::create([
             'name' => 'Staff Approver',
             'email' => 'approver@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'moderator',
             'status' => 'active',
             'email_verified_at' => now(),

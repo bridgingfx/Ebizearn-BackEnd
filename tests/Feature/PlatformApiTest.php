@@ -41,6 +41,8 @@ class PlatformApiTest extends TestCase
     {
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'sarah@ebizearn.com',
+            // Seeded demo password (DatabaseSeeder), not subject to the
+            // registration-time strong-password policy.
             'password' => 'password123',
         ]);
 

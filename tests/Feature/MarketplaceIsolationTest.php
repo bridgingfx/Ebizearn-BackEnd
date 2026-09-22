@@ -38,7 +38,7 @@ class MarketplaceIsolationTest extends TestCase
         $user = User::create([
             'name' => 'Biz ' . $email,
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'business',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -54,7 +54,7 @@ class MarketplaceIsolationTest extends TestCase
         $user = User::create([
             'name' => 'C ' . $email,
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'contributor',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -69,7 +69,7 @@ class MarketplaceIsolationTest extends TestCase
         return User::create([
             'name' => 'Mod ' . $email,
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'moderator',
             'status' => 'active',
             'email_verified_at' => now(),

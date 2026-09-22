@@ -14,6 +14,13 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         Sanctum::ignoreMigrations();
+
+        // Round 2 — social login: bind the token verifier contract to the
+        // JWT implementation. Tests swap this for a fake.
+        $this->app->singleton(
+            \App\Services\Auth\SocialTokenVerifier::class,
+            \App\Services\Auth\JwtSocialTokenVerifier::class,
+        );
     }
 
     /**

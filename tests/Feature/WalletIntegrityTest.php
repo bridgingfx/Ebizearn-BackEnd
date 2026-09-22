@@ -47,13 +47,18 @@ class WalletIntegrityTest extends TestCase
 
     protected function registerContributor(string $name, string $email, ?string $refCode = null): User
     {
-        $payload = ['name' => $name, 'email' => $email, 'password' => 'password123', 'role' => 'contributor'];
+        $payload = ['name' => $name, 'email' => $email, 'password' => 'V3r1fy!Strong', 'role' => 'contributor'];
         if ($refCode) {
             $payload['referral_code'] = $refCode;
         }
         $this->postJson('/api/v1/auth/register', $payload)->assertStatus(201);
 
-        return User::where('email', $email)->firstOrFail();
+        // Round 2: wallet/task write paths are email-gated, so the test
+        // user verifies in setup (mirrors a real user clicking the link).
+        $user = User::where('email', $email)->firstOrFail();
+        $user->forceFill(['email_verified_at' => now()])->save();
+
+        return $user;
     }
 
     public function test_every_financial_action_writes_a_ledger_row_and_balances_reconcile(): void
@@ -96,7 +101,7 @@ class WalletIntegrityTest extends TestCase
         // 4. Staff approves the campaign ------------------------------------
         $moderator = User::create([
             'uuid' => (string) Str::uuid(), 'name' => 'Int Mod', 'email' => 'int-mod@example.com',
-            'password' => Hash::make('password123'), 'role' => 'moderator',
+            'password' => Hash::make('V3r1fy!Strong'), 'role' => 'moderator',
             'status' => 'active', 'email_verified_at' => now(),
         ]);
         $this->asUser($moderator);

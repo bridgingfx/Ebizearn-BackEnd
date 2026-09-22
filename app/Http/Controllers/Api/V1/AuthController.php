@@ -6,13 +6,19 @@ use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\FraudEvent;
 use App\Models\Profile;
+use App\Models\SocialAccount;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Rules\StrongPassword;
+use App\Services\Auth\EmailVerificationService;
+use App\Services\Auth\SocialTokenVerifier;
+use App\Services\Auth\SocialTokenVerificationException;
 use App\Services\Email\EmailService;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -42,7 +48,8 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users,email',
-            'password' => 'required|string|min:8',
+            // Round 2: strong password policy (min 10 chars, mixed classes).
+            'password' => ['required', 'string', new StrongPassword()],
             'role' => 'required|in:contributor,business',
             'country_code' => 'nullable|string|max:4',
             'referral_code' => 'nullable|string|max:32',
@@ -73,7 +80,9 @@ class AuthController extends Controller
             'role' => $validated['role'],
             'status' => 'active',
             'referrer_id' => $referrer?->id,
-            'email_verified_at' => now(), // Demo/default verified
+            // Round 2: accounts start UNVERIFIED. The verification email is
+            // sent below; money/task write paths are gated until verified.
+            'email_verified_at' => null,
         ]);
 
         // Create Profile
@@ -112,6 +121,18 @@ class AuthController extends Controller
         }
 
         $emails->sendEvent('welcome_' . $user->role, $user->email, ['user_name' => $user->name]);
+
+        // Round 2 — verification email. A mailer outage must not fail the
+        // registration itself: the token is persisted above, so the user can
+        // always request a resend.
+        try {
+            app(EmailVerificationService::class)->issue($user);
+        } catch (Exception $e) {
+            Log::warning('Verification email failed at registration', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         // Phase 2 / Priority 7 — log the registration + screen for
         // duplicate accounts from the same IP/device (flagged for review,
@@ -152,6 +173,10 @@ class AuthController extends Controller
         $user = User::where('email', $request->email)->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
+            // Round 2 — failed-attempt telemetry. Never reveals whether the
+            // email exists (same generic message either way).
+            $this->logFailedLogin($request, $user);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid email or password.',
@@ -211,6 +236,249 @@ class AuthController extends Controller
     }
 
     /**
+     * Round 2 — social sign-in (Google / Apple).
+     *
+     * POST /api/v1/auth/social/{provider} with { "id_token": "..." }.
+     * The ID token is verified server-side (signature, aud, exp, iss).
+     * Find-or-create: first by (provider, sub), else by verified email
+     * (links the provider to the existing account), else creates a fresh
+     * contributor account. Returns the same shape as password login.
+     */
+    public function socialLogin(
+        Request $request,
+        string $provider,
+        SocialTokenVerifier $verifier,
+        EmailVerificationService $verification,
+        EmailService $emails,
+    ): JsonResponse {
+        $provider = strtolower($provider);
+        if (!in_array($provider, ['google', 'apple'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unsupported social provider.',
+            ], 422);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'id_token' => 'required|string',
+            'name' => 'nullable|string|max:255',
+            'email' => 'nullable|email|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $claims = $provider === 'google'
+                ? $verifier->verifyGoogle($request->input('id_token'))
+                : $verifier->verifyApple($request->input('id_token'));
+        } catch (SocialTokenVerificationException $e) {
+            Log::warning('Social login token rejected', ['provider' => $provider]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Social sign-in failed. Please try again.',
+            ], 401);
+        }
+
+        // 1. Already linked? Sign straight in.
+        $social = SocialAccount::where('provider', $provider)
+            ->where('provider_sub', $claims['sub'])
+            ->first();
+
+        $user = $social?->user;
+        $isNewUser = false;
+
+        if (!$user) {
+            // 2. Email match? Link the provider to the existing account —
+            // but only when the provider asserts the email is verified,
+            // otherwise anyone could claim someone else's address.
+            $email = $claims['email'] ?? $request->input('email');
+            if ($email && $claims['email_verified'] === true) {
+                $user = User::where('email', $email)->first();
+            }
+
+            // 3. Fresh account (default role: contributor). If the claimed email
+            // belongs to someone else (unverified claim), it cannot be
+            // reused — mint a deterministic placeholder instead of violating
+            // the unique email constraint.
+            if (!$user) {
+                if ($email && User::where('email', $email)->exists()) {
+                    $email = $this->placeholderEmail($provider, $claims['sub']);
+                }
+                $displayName = $claims['name']
+                    ?? $request->input('name')
+                    ?? ($email ? Str::before($email, '@') : 'eBizEarn member');
+
+                $user = User::create([
+                    'uuid' => (string) Str::uuid(),
+                    'name' => $displayName,
+                    'email' => $email ?? $this->placeholderEmail($provider, $claims['sub']),
+                    // No usable password: social-only account. A random
+                    // 40-char secret means password login is impossible.
+                    'password' => Hash::make(Str::random(40)),
+                    'role' => 'contributor',
+                    'status' => 'active',
+                    // The provider already verified this address out-of-band.
+                    'email_verified_at' => $claims['email_verified'] === true ? now() : null,
+                ]);
+
+                Profile::create([
+                    'user_id' => $user->id,
+                    'country_code' => 'AE',
+                    'language' => 'en',
+                    'contributor_level' => 'starter',
+                    'fraud_score' => 0,
+                ]);
+
+                Wallet::create([
+                    'user_id' => $user->id,
+                    'currency' => 'USD',
+                    'available_balance_cents' => 0,
+                    'pending_balance_cents' => 0,
+                    'lifetime_earnings_cents' => 0,
+                    'total_withdrawn_cents' => 0,
+                ]);
+
+                $isNewUser = true;
+                $this->screenRegistrationForDuplicates($request, $user);
+                $emails->sendEvent('welcome_contributor', $user->email, ['user_name' => $user->name]);
+
+                // Round 2: unverified social accounts get the verification
+                // email (Apple hides email after first auth; provider-
+                // verified ones skip it).
+                if (!$user->email_verified_at) {
+                    try {
+                        $verification->issue($user);
+                    } catch (Exception $e) {
+                        Log::warning('Verification email failed at social registration', [
+                            'user_id' => $user->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+            }
+
+            SocialAccount::create([
+                'user_id' => $user->id,
+                'provider' => $provider,
+                'provider_sub' => $claims['sub'],
+                'email' => $email ?? null,
+                'linked_at' => now(),
+            ]);
+        }
+
+        if ($user->status === 'suspended') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Your account has been suspended for compliance review. Contact support@ebizearn.com.',
+            ], 403);
+        }
+
+        $user->tokens()->delete();
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        $this->logLoginRisk($request, $user);
+
+        return response()->json([
+            'success' => true,
+            'message' => $isNewUser ? 'Account created with ' . ucfirst($provider) : 'Login successful',
+            'data' => [
+                'user' => $user->load(['profile', 'wallet', 'business']),
+                'token' => $token,
+            ],
+        ]);
+    }
+
+    /**
+     * Apple may withhold the email entirely (private relay / hidden after
+     * first auth). The address must still be unique and recognizable, so we
+     * mint a deterministic placeholder the user can replace later.
+     */
+    protected function placeholderEmail(string $provider, string $sub): string
+    {
+        return $provider . '_' . substr(hash('sha256', $sub), 0, 16) . '@users.ebizearn.internal';
+    }
+
+    /**
+     * Round 2 — verify an email address with the token from the email URL.
+     *
+     * POST /api/v1/auth/email/verify { "token": "..." }
+     */
+    public function verifyEmail(Request $request, EmailVerificationService $verification): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'token' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $user = $verification->verify($request->input('token'));
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired verification token.',
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Email verified successfully.',
+            'data' => [
+                'user' => $user->load(['profile', 'wallet', 'business']),
+            ],
+        ]);
+    }
+
+    /**
+     * Round 2 — resend the verification email (authenticated, throttled).
+     *
+     * POST /api/v1/auth/email/resend
+     */
+    public function resendVerificationEmail(Request $request, EmailVerificationService $verification): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($user->email_verified_at) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Email is already verified.',
+            ], 422);
+        }
+
+        try {
+            $verification->issue($user);
+        } catch (Exception $e) {
+            Log::warning('Verification resend failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Could not send the verification email. Please try again later.',
+            ], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Verification email sent.',
+        ]);
+    }
+
+    /**
      * Create a password reset token. Local/dev responses include the reset URL for testing without SMTP.
      */
     public function forgotPassword(Request $request, EmailService $emails): JsonResponse
@@ -263,7 +531,8 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
             'token' => 'required|string',
-            'password' => 'required|string|min:8|confirmed',
+            // Round 2: resets must meet the same strong-password policy.
+            'password' => ['required', 'string', new StrongPassword(), 'confirmed'],
         ]);
 
         if ($validator->fails()) {
@@ -365,6 +634,79 @@ class AuthController extends Controller
             'last_login_ip' => $ip,
             'last_login_at' => now(),
         ])->save();
+
+        // Round 2 — country mismatch: when the request carries a
+        // Cloudflare country header (production is behind Cloudflare) and it
+        // disagrees with the profile country, flag for moderator review.
+        // Telemetry only — the login is never blocked.
+        $edgeCountry = strtoupper((string) $request->header('CF-IPCountry'));
+        $profileCountry = strtoupper((string) $user->profile?->country_code);
+        if ($edgeCountry !== '' && $edgeCountry !== 'XX' && $profileCountry !== '' && $edgeCountry !== $profileCountry) {
+            FraudEvent::create([
+                'user_id' => $user->id,
+                'event_type' => 'country_mismatch',
+                'severity' => 'medium',
+                'details_json' => [
+                    'edge_country' => $edgeCountry,
+                    'profile_country' => $profileCountry,
+                    'ip' => $ip,
+                    'note' => 'Login country differs from profile country. Travel and VPNs exist — moderator review, not an automated verdict.',
+                ],
+                'ip_address' => $ip,
+                'user_agent' => $userAgent,
+                'status' => 'flagged',
+            ]);
+        }
+    }
+
+    /**
+     * Round 2 — failed-login telemetry (defense in depth behind the login
+     * throttle limiter).
+     *
+     * Every failed attempt writes a `failed_login` row (low/reviewed). When
+     * 5+ failures arrive from one IP within 10 minutes, a
+     * `rapid_failed_logins` event is flagged medium for moderator review —
+     * the signature of credential stuffing. Nothing here blocks the login;
+     * the throttle middleware owns the actual backoff.
+     */
+    protected function logFailedLogin(Request $request, ?User $user): void
+    {
+        $ip = $request->ip();
+        $userAgent = (string) $request->userAgent();
+
+        FraudEvent::create([
+            'user_id' => $user?->id,
+            'event_type' => 'failed_login',
+            'severity' => 'low',
+            'details_json' => [
+                'ip' => $ip,
+                'email_known' => $user !== null,
+            ],
+            'ip_address' => $ip,
+            'user_agent' => $userAgent,
+            'status' => 'reviewed',
+        ]);
+
+        $recentFailures = FraudEvent::where('event_type', 'failed_login')
+            ->where('ip_address', $ip)
+            ->where('created_at', '>=', now()->subMinutes(10))
+            ->count();
+
+        if ($recentFailures >= 5) {
+            FraudEvent::create([
+                'user_id' => $user?->id,
+                'event_type' => 'rapid_failed_logins',
+                'severity' => 'medium',
+                'details_json' => [
+                    'ip' => $ip,
+                    'failed_attempts_10m' => $recentFailures,
+                    'note' => '5+ failed logins from one IP in 10 minutes — possible credential stuffing. Moderator review, not an automated verdict.',
+                ],
+                'ip_address' => $ip,
+                'user_agent' => $userAgent,
+                'status' => 'flagged',
+            ]);
+        }
     }
 
     /**

@@ -1,21 +1,26 @@
 # eBiz Earn API — v1 Reference
 
-Base URL: `/api/v1` (113 routes, verified 2026-09-23 — every route resolves to a real controller method).
+Base URL: `/api/v1` (111 routes, verified 2026-09-23 — every route resolves to a real controller method).
 Auth: Laravel Sanctum Bearer tokens (`Authorization: Bearer <token>`).
-All responses are JSON with `success: true|false`.
+All responses are JSON with `success: true|false`. Error responses also carry a stable machine-readable `code` (`validation_error`, `unauthenticated`, `forbidden`, `not_found`, `rate_limited`, `server_error`, …).
 
 ## Authentication & Portals
 
 | Method | Endpoint | Auth | Notes |
 |--------|----------|------|-------|
-| POST | `/auth/register` | Public | `role: contributor|business`. Business requires `company_name`. |
-| POST | `/auth/login` | Public | `email`, `password`, `portal: contributor|business|moderator|superadmin`. Wrong portal → 403 before token issuance. |
+| POST | `/auth/register` | Public | `role: contributor|business`. Business requires `company_name`. Throttled 5/min per IP. Strong password: min 10 chars + upper/lower/digit/symbol. Accounts start **unverified** — a verification email is sent; money/task write paths return 403 `email_not_verified` until verified. |
+| POST | `/auth/login` | Public | `email`, `password`, `portal: contributor|business|moderator|superadmin`. Wrong portal → 403 before token issuance. Throttled 5/min per email+IP. Failed attempts logged to `fraud_events`; 5+ failures from one IP in 10 min flags `rapid_failed_logins`. |
+| POST | `/auth/social/{provider}` | Public | `provider: google|apple`. Body: `id_token` (+ optional `name`, `email` fallback). ID token verified server-side (JWKS signature, `aud`, `exp`, `iss`). Find-or-create by `(provider, sub)`; verified provider email links to an existing account. New accounts are contributors. Throttled 10/min per IP. Requires real `GOOGLE_CLIENT_ID` / `APPLE_CLIENT_ID` in env (Dawood-side setup) — placeholder values fail closed with 401. |
 | POST | `/auth/logout` | Bearer | Revokes current token. |
-| GET | `/auth/me` | Bearer | Current user with profile, wallet, business. |
-| POST | `/auth/forgot-password` | Public | Sends reset link. |
-| POST | `/auth/reset-password` | Public | Resets with token. |
+| GET | `/auth/me` | Bearer | Current user with profile, wallet, business. Includes `email_verified` boolean. |
+| POST | `/auth/forgot-password` | Public | Sends reset link. Throttled. |
+| POST | `/auth/reset-password` | Public | Resets with token. New password must meet the strong-password policy. |
+| POST | `/auth/email/verify` | Public | Body: `token` (from the verification email URL). Marks `email_verified_at`; single-use, 24h expiry. |
+| POST | `/auth/email/resend` | Bearer | Re-sends the verification email (regenerates token). Unverified users only; throttled 3/min. |
 
-**Risk telemetry (Phase 2):** every login writes a `fraud_events` row. A device fingerprint never seen for the user is flagged `new_device_login` (medium/flagged) for moderator review; repeat devices log as `login` (low/reviewed). Registration records `registration_ip`; 3+ accounts from one IP in 30 days flags `multi_account` (medium). Telemetry never blocks auth and never claims automated verdicts.
+**Email verification (Round 2):** registration (all roles, including first-time social sign-ups without a provider-verified email) sends a branded HTML + plain-text verification email with a 24h token link to `{FRONTEND_URL}/verify-email?token=…`. Only the token's SHA-256 digest is stored. Gated routes — contributor dashboard, wallet actions, task start/submit, campaign create/fund/draft/launch, business task writes — answer `403 { code: "email_not_verified" }` for unverified users. Login itself is never gated (users need to log in to resend).
+
+**Risk telemetry (Phase 2 + Round 2):** every login writes a `fraud_events` row. A device fingerprint never seen for the user is flagged `new_device_login` (medium/flagged) for moderator review; repeat devices log as `login` (low/reviewed). Registration records `registration_ip`; 3+ accounts from one IP in 30 days flags `multi_account` (medium). Round 2 adds: `failed_login` rows on every bad credential (low/reviewed), `rapid_failed_logins` when 5+ failures come from one IP in 10 minutes (medium/flagged), and `country_mismatch` when the Cloudflare country header disagrees with the profile country (medium/flagged). Telemetry never blocks auth and never claims automated verdicts.
 
 ## Public
 

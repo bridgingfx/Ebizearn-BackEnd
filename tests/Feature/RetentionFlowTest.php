@@ -36,7 +36,7 @@ class RetentionFlowTest extends TestCase
         $user = User::create([
             'name' => 'Biz ' . $email,
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'business',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -53,7 +53,7 @@ class RetentionFlowTest extends TestCase
         $user = User::create([
             'name' => 'Con ' . $email,
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'contributor',
             'status' => 'active',
             'email_verified_at' => now(),

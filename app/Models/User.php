@@ -27,17 +27,31 @@ class User extends Authenticatable
         'referral_code',
         'referrer_id',
         'email_verified_at',
+        // Round 2: SHA-256 digest of the pending verification token + issue
+        // timestamp. The raw token is never persisted.
+        'email_verification_token',
+        'email_verification_sent_at',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        // Round 2: the token digest is internal; clients get email_verified.
+        'email_verification_token',
+        'email_verification_sent_at',
     ];
+
+    /**
+     * Round 2: `email_verified` is part of every serialized user (incl. the
+     * /me response) while email_verified_at stays the source of truth.
+     */
+    protected $appends = ['email_verified'];
 
     // NOTE: Laravel 10.50 does not support the model `casts()` method form
     // (Laravel 11+ only), so casts are declared as a property.
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'email_verification_sent_at' => 'datetime',
         'password' => 'hashed',
     ];
 
@@ -137,6 +151,23 @@ class User extends Authenticatable
     public function fraudEvents(): HasMany
     {
         return $this->hasMany(FraudEvent::class);
+    }
+
+    /**
+     * Round 2: linked social identities (google/apple), keyed by the
+     * provider's stable subject claim.
+     */
+    public function socialAccounts(): HasMany
+    {
+        return $this->hasMany(SocialAccount::class);
+    }
+
+    /**
+     * Round 2: serialized convenience boolean for the verification gate.
+     */
+    public function getEmailVerifiedAttribute(): bool
+    {
+        return $this->email_verified_at !== null;
     }
 
     public function supportTickets(): HasMany

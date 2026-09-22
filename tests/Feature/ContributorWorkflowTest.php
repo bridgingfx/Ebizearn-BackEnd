@@ -44,7 +44,7 @@ class ContributorWorkflowTest extends TestCase
         $bizUser = User::create([
             'name' => 'Workflow Biz',
             'email' => 'workflow-biz@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'business',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -107,16 +107,20 @@ class ContributorWorkflowTest extends TestCase
         $reg = $this->postJson('/api/v1/auth/register', [
             'name' => 'Earn Tester',
             'email' => 'earner@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
         ]);
         $reg->assertStatus(201);
         $this->assertNotEmpty($reg->json('data.token'));
 
+        // Round 2: wallet/task write paths are email-gated — verify in setup.
+        User::where('email', 'earner@example.com')->firstOrFail()
+            ->forceFill(['email_verified_at' => now()])->save();
+
         // 2. Login ----------------------------------------------------------
         $login = $this->postJson('/api/v1/auth/login', [
             'email' => 'earner@example.com',
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'portal' => 'contributor',
         ]);
         $login->assertStatus(200);
@@ -162,7 +166,7 @@ class ContributorWorkflowTest extends TestCase
         $moderator = User::create([
             'name' => 'Mod',
             'email' => 'workflow-mod@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'moderator',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -236,7 +240,7 @@ class ContributorWorkflowTest extends TestCase
     {
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => $email,
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
         ]);
         $response->assertStatus(200);
 
@@ -257,17 +261,19 @@ class ContributorWorkflowTest extends TestCase
         $this->postJson('/api/v1/auth/register', [
             'name' => 'Proofer',
             'email' => $email,
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'V3r1fy!Strong',
+            'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'contributor',
         ])->assertStatus(201);
         $contributor = User::where('email', $email)->firstOrFail();
+        // Round 2: task start/submit are email-gated — verify in setup.
+        $contributor->forceFill(['email_verified_at' => now()])->save();
         $token = $this->loginAndGetToken($email);
         $auth = ['Authorization' => 'Bearer ' . $token];
 
         $bizUser = User::create([
             'name' => 'Biz', 'email' => 'bizproof@example.com',
-            'password' => Hash::make('password123'), 'role' => 'business',
+            'password' => Hash::make('V3r1fy!Strong'), 'role' => 'business',
             'status' => 'active', 'email_verified_at' => now(),
         ]);
         $business = Business::create(['owner_id' => $bizUser->id, 'company_name' => 'Co', 'status' => 'active']);

@@ -45,7 +45,7 @@ class ModeratorWorkflowTest extends TestCase
         $this->moderator = User::create([
             'name' => 'Mod One',
             'email' => 'mod1@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'moderator',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -54,7 +54,7 @@ class ModeratorWorkflowTest extends TestCase
         $this->contributor = User::create([
             'name' => 'Contrib One',
             'email' => 'contrib1@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'contributor',
             'status' => 'active',
             'email_verified_at' => now(),
@@ -64,7 +64,7 @@ class ModeratorWorkflowTest extends TestCase
         $bizUser = User::create([
             'name' => 'Biz One',
             'email' => 'biz1@example.com',
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'business',
             'status' => 'active',
             'email_verified_at' => now(),

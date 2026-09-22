@@ -42,7 +42,7 @@ class ReferralRulesTest extends TestCase
             'uuid' => (string) Str::uuid(),
             'name' => ucfirst($role) . ' User',
             'email' => $email,
-            'password' => Hash::make('password123'),
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => $role,
             'status' => 'active',
             'email_verified_at' => now(),
@@ -54,7 +54,7 @@ class ReferralRulesTest extends TestCase
         $payload = [
             'name' => $name,
             'email' => $email,
-            'password' => 'password123',
+            'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
         ];
 
@@ -64,7 +64,12 @@ class ReferralRulesTest extends TestCase
 
         $this->postJson('/api/v1/auth/register', $payload)->assertStatus(201);
 
-        return User::where('email', $email)->firstOrFail();
+        // Round 2: referral rewards require a verified email, so the test
+        // user verifies in setup (mirrors a real user clicking the link).
+        $user = User::where('email', $email)->firstOrFail();
+        $user->forceFill(['email_verified_at' => now()])->save();
+
+        return $user;
     }
 
     public function test_sensible_defaults_are_seeded(): void

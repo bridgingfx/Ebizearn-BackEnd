@@ -51,6 +51,14 @@ class Handler extends ExceptionHandler
      */
     public function render($request, Throwable $e)
     {
+        // Round 2: throttle limiters answer with a purpose-built response
+        // (HttpResponseException carrying the 429 JSON). Pass it through
+        // untouched — the generic error mapper below would otherwise turn
+        // every rate-limit hit into a 500.
+        if ($e instanceof \Illuminate\Http\Exceptions\HttpResponseException) {
+            return $e->getResponse();
+        }
+
         if ($request->is('api/*') || $request->expectsJson()) {
             // Normalize framework exceptions first (ModelNotFoundException ->
             // 404 etc.); without this every firstOrFail() answers 500.
@@ -87,6 +95,8 @@ class Handler extends ExceptionHandler
 
         $payload = [
             'success' => false,
+            // Round 2: machine-readable error code, stable for clients.
+            'code' => $this->errorCode($e, $status),
             'message' => $message,
         ];
 
@@ -97,5 +107,24 @@ class Handler extends ExceptionHandler
         }
 
         return response()->json($payload, $status ?: 500);
+    }
+
+    /**
+     * Round 2 — stable machine-readable error codes for API clients.
+     */
+    private function errorCode(Throwable $e, int $status): string
+    {
+        return match (true) {
+            $e instanceof \Illuminate\Auth\AuthenticationException => 'unauthenticated',
+            $e instanceof \Illuminate\Auth\Access\AuthorizationException => 'forbidden',
+            $e instanceof \Illuminate\Validation\ValidationException => 'validation_error',
+            $status === 404 => 'not_found',
+            $status === 405 => 'method_not_allowed',
+            $status === 429 => 'rate_limited',
+            $status === 403 => 'forbidden',
+            $status === 401 => 'unauthenticated',
+            $status >= 500 => 'server_error',
+            default => 'request_error',
+        };
     }
 }
