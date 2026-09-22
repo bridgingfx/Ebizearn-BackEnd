@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\Profile;
-use App\Models\Referral;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Services\Email\EmailService;
@@ -21,9 +20,24 @@ class AuthController extends Controller
 {
     /**
      * Register a new Contributor or Business account.
+     *
+     * Phase 2: only contributor/business may self-register. Privileged
+     * roles (admin, moderator, superadmin) are rejected here with 422 —
+     * they are created exclusively by Super Admin (ops API / artisan).
      */
     public function register(Request $request, EmailService $emails): JsonResponse
     {
+        // Explicit guard (defense in depth): the `in:` rule below also
+        // rejects these, but a privileged role must fail with a clear,
+        // deliberate message — never silently.
+        $requestedRole = strtolower(trim((string) $request->input('role', '')));
+        if (in_array($requestedRole, ['admin', 'moderator', 'superadmin', 'super_admin'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This role cannot be registered publicly. Please contact platform support.',
+            ], 422);
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users,email',
@@ -89,14 +103,11 @@ class AuthController extends Controller
             ]);
         }
 
-        // Track referral if applicable
+        // Phase 8: resolve the multi-level referral chain (?ref= code).
+        // One Referral row per level; rewards are paid only after the
+        // qualification rules (see ReferralService::qualifyAndReward).
         if ($referrer) {
-            Referral::create([
-                'referrer_id' => $referrer->id,
-                'referred_user_id' => $user->id,
-                'status' => 'pending',
-                'reward_cents' => 100, // $1.00
-            ]);
+            app(\App\Services\Referral\ReferralService::class)->buildChain($user->load('referrer'));
         }
 
         $emails->sendEvent('welcome_' . $user->role, $user->email, ['user_name' => $user->name]);

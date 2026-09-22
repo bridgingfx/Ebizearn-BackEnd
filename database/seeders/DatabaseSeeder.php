@@ -5,8 +5,12 @@ namespace Database\Seeders;
 use App\Models\AiVerificationResult;
 use App\Models\Business;
 use App\Models\Campaign;
+use App\Models\Country;
 use App\Models\FeatureFlag;
+use App\Models\Permission;
+use App\Models\PlatformSetting;
 use App\Models\Profile;
+use App\Models\Role;
 use App\Models\SubmissionFile;
 use App\Models\SystemSetting;
 use App\Models\Task;
@@ -16,6 +20,7 @@ use App\Models\TaskSubmission;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use App\Models\WithdrawalRule;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -381,6 +386,124 @@ class DatabaseSeeder extends Seeder
                     ],
                 ]
             );
+        }
+
+        // 5. Phase 2/8/13 seeds (safe additive: updateOrCreate / firstOrCreate only)
+        $this->seedRolesAndPermissions();
+        $this->seedCountries();
+        $this->seedWithdrawalRules();
+        $this->seedPlatformSettings();
+    }
+
+    /**
+     * Canonical roles + permission catalog + default role grants.
+     * Super Admin implicitly holds every permission (see User::hasPermission).
+     */
+    protected function seedRolesAndPermissions(): void
+    {
+        $roles = [
+            'contributor' => 'Contributor',
+            'business' => 'Business',
+            'moderator' => 'Moderator',
+            'admin' => 'Admin',
+            'superadmin' => 'Super Admin',
+        ];
+
+        $roleModels = [];
+        foreach ($roles as $name => $label) {
+            $roleModels[$name] = Role::updateOrCreate(['name' => $name], ['label' => $label, 'is_system' => true]);
+        }
+
+        $permissionModels = [];
+        foreach (Permission::catalog() as $name => $label) {
+            $permissionModels[$name] = Permission::updateOrCreate(['name' => $name], ['label' => $label]);
+        }
+
+        $grants = [
+            'moderator' => [Permission::REVIEW_SUBMISSIONS, Permission::HANDLE_DISPUTES],
+            'admin' => [
+                Permission::REVIEW_SUBMISSIONS,
+                Permission::MANAGE_CAMPAIGNS,
+                Permission::MANAGE_USERS,
+                Permission::HANDLE_DISPUTES,
+                Permission::MANAGE_TASK_TEMPLATES,
+                Permission::VIEW_REPORTS,
+            ],
+        ];
+
+        foreach ($grants as $roleName => $permissionNames) {
+            $ids = collect($permissionNames)->map(fn ($n) => $permissionModels[$n]->id)->all();
+            $roleModels[$roleName]->permissions()->syncWithoutDetaching($ids);
+        }
+    }
+
+    /**
+     * Country catalog (replaces the hardcoded config list as source of truth).
+     */
+    protected function seedCountries(): void
+    {
+        $countries = [
+            ['code' => 'AE', 'name' => 'United Arab Emirates', 'currency' => 'AED', 'sort_order' => 1],
+            ['code' => 'US', 'name' => 'United States', 'currency' => 'USD', 'sort_order' => 2],
+            ['code' => 'GB', 'name' => 'United Kingdom', 'currency' => 'GBP', 'sort_order' => 3],
+            ['code' => 'IN', 'name' => 'India', 'currency' => 'INR', 'sort_order' => 4],
+            ['code' => 'PK', 'name' => 'Pakistan', 'currency' => 'PKR', 'sort_order' => 5],
+            ['code' => 'BD', 'name' => 'Bangladesh', 'currency' => 'BDT', 'sort_order' => 6],
+            ['code' => 'LK', 'name' => 'Sri Lanka', 'currency' => 'LKR', 'sort_order' => 7],
+            ['code' => 'PH', 'name' => 'Philippines', 'currency' => 'PHP', 'sort_order' => 8],
+            ['code' => 'NG', 'name' => 'Nigeria', 'currency' => 'NGN', 'sort_order' => 9],
+            ['code' => 'BR', 'name' => 'Brazil', 'currency' => 'BRL', 'sort_order' => 10],
+        ];
+
+        foreach ($countries as $country) {
+            Country::updateOrCreate(
+                ['code' => $country['code']],
+                array_merge($country, ['is_active' => true])
+            );
+        }
+    }
+
+    /**
+     * Owner-approved withdrawal minimum options; $50 active by default.
+     */
+    protected function seedWithdrawalRules(): void
+    {
+        foreach ([1000, 2500, 5000, 10000] as $cents) {
+            WithdrawalRule::firstOrCreate(
+                ['amount_cents' => $cents],
+                ['is_active' => $cents === 5000]
+            );
+        }
+
+        // Guarantee exactly one active rule even if rows pre-existed.
+        if (WithdrawalRule::where('is_active', true)->count() !== 1) {
+            WithdrawalRule::query()->update(['is_active' => false]);
+            WithdrawalRule::where('amount_cents', 5000)->update(['is_active' => true]);
+        }
+
+        WithdrawalRule::flushCache();
+    }
+
+    /**
+     * Platform + fraud-rule defaults (Super-Admin-editable via ops API).
+     */
+    protected function seedPlatformSettings(): void
+    {
+        $settings = [
+            ['key' => 'platform.name', 'value' => 'eBiz Earn', 'group' => 'general', 'is_public' => true],
+            ['key' => 'platform.support_email', 'value' => 'support@ebizearn.com', 'group' => 'general', 'is_public' => true],
+            ['key' => 'fraud.max_devices_per_user', 'value' => '3', 'group' => 'fraud', 'is_public' => false],
+            ['key' => 'fraud.duplicate_screenshot_check', 'value' => '1', 'group' => 'fraud', 'is_public' => false],
+            ['key' => 'fraud.require_proof_url', 'value' => '1', 'group' => 'fraud', 'is_public' => false],
+            ['key' => 'fraud.max_referrals_per_ip_per_day', 'value' => '5', 'group' => 'fraud', 'is_public' => false],
+        ];
+
+        foreach ($settings as $setting) {
+            $existing = PlatformSetting::where('key', $setting['key'])->first();
+            if (!$existing) {
+                PlatformSetting::create($setting);
+            }
+            PlatformSetting::forget($setting['key']);
         }
     }
 }

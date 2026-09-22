@@ -69,5 +69,11 @@ class RouteServiceProvider extends ServiceProvider
                 ], 429);
             });
         });
+
+        // Super-Admin ops surface: tighter than the generic api limiter
+        // because these endpoints manage staff, money rules, and settings.
+        RateLimiter::for('ops', function (Request $request) {
+            return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
+        });
     }
 }

@@ -34,4 +34,19 @@ class AuditLog extends Model
     {
         return $this->belongsTo(User::class, 'actor_id');
     }
+
+    /**
+     * Phase 13: audit_logs is append-only. Any attempt to mutate or delete a
+     * written row is a programming error — fail loudly instead of silently
+     * rewriting history.
+     */
+    protected static function booted(): void
+    {
+        $deny = function () {
+            throw new \LogicException('audit_logs is append-only: rows cannot be updated or deleted.');
+        };
+
+        static::updating($deny);
+        static::deleting($deny);
+    }
 }

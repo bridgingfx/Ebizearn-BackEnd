@@ -52,6 +52,10 @@ class Handler extends ExceptionHandler
     public function render($request, Throwable $e)
     {
         if ($request->is('api/*') || $request->expectsJson()) {
+            // Normalize framework exceptions first (ModelNotFoundException ->
+            // 404 etc.); without this every firstOrFail() answers 500.
+            $e = $this->prepareException($e);
+
             return $this->apiResponse($request, $e);
         }
 
@@ -60,7 +64,17 @@ class Handler extends ExceptionHandler
 
     private function apiResponse(Request $request, Throwable $e): JsonResponse
     {
-        $status = method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 500;
+        // Phase 13: map framework auth exceptions to their proper HTTP
+        // statuses. (AuthenticationException carries no getStatusCode(), so
+        // without this mapping every guest API request answered 500.)
+        $status = match (true) {
+            $e instanceof \Illuminate\Auth\AuthenticationException => 401,
+            $e instanceof \Illuminate\Auth\Access\AuthorizationException => 403,
+            $e instanceof \Illuminate\Validation\ValidationException => 422,
+            $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface => $e->getStatusCode(),
+            method_exists($e, 'getStatusCode') => $e->getStatusCode(),
+            default => 500,
+        };
 
         return response()->json([
             'success' => false,

@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Models\WithdrawalRequest;
+use App\Models\WithdrawalRule;
 use App\Services\Payment\PaymentService;
 use Exception;
 use Illuminate\Database\QueryException;
@@ -369,7 +370,9 @@ class WalletLedgerService
         array $payoutDetails,
         ?string $idempotencyKey = null
     ): WithdrawalRequest {
-        $minWithdrawal = (int) config('payouts.withdrawal_min_cents', 5000); // single source of truth; master spec $50.00
+        // Phase 2: single source of truth is the active DB withdrawal rule
+        // (Super-Admin-selectable $10/$25/$50/$100); config is the fallback.
+        $minWithdrawal = WithdrawalRule::currentMinCents();
         if ($amountCents < $minWithdrawal) {
             throw new Exception("Minimum withdrawal amount is " . number_format($minWithdrawal / 100, 2) . " USD.");
         }

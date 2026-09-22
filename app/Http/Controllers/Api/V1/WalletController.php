@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\Referral;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use App\Models\WithdrawalRule;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
@@ -33,7 +33,8 @@ class WalletController extends Controller
             'success' => true,
             'data' => [
                 'wallet' => $wallet,
-                'min_withdrawal_cents' => (int) config('payouts.withdrawal_min_cents', 5000),
+                // Phase 2: DB-backed, Super-Admin-selectable ($10/$25/$50/$100).
+                'min_withdrawal_cents' => WithdrawalRule::currentMinCents(),
             ],
         ]);
     }
@@ -74,11 +75,14 @@ class WalletController extends Controller
      */
     public function withdraw(Request $request): JsonResponse
     {
-        $minWithdrawalCents = (int) config('payouts.withdrawal_min_cents', 5000);
+        // Phase 2: the minimum is the active DB withdrawal rule
+        // (Super-Admin-selectable $10/$25/$50/$100), config as fallback.
+        $minWithdrawalCents = WithdrawalRule::currentMinCents();
 
         $validator = Validator::make($request->all(), [
             'amount_cents' => 'required|integer|min:' . $minWithdrawalCents,
-            'payout_method' => 'required|in:bank_transfer,paypal,wise,crypto',
+            // No crypto in MVP (owner-adjudicated rule): only fiat rails.
+            'payout_method' => 'required|in:bank_transfer,paypal,wise',
             'payout_details' => 'required|array',
             'idempotency_key' => 'nullable|string|max:128',
         ]);
@@ -111,36 +115,5 @@ class WalletController extends Controller
                 'message' => $e->getMessage(),
             ], 400);
         }
-    }
-
-    /**
-     * Get user referral statistics and referral list.
-     */
-    public function referrals(Request $request): JsonResponse
-    {
-        $user = $request->user();
-        $referrals = Referral::with('referredUser.profile')
-            ->where('referrer_id', $user->id)
-            ->latest()
-            ->get();
-
-        $totalEarnedCents = WalletTransaction::where('wallet_id', $user->wallet?->id)
-            ->where('type', 'referral_reward')
-            ->sum('amount_cents');
-
-        $qualifiedCount = $referrals->where('status', 'rewarded')->count();
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'referral_code' => $user->referral_code,
-                'referral_link' => config('platform.domain') . '/signup/contributor?ref=' . $user->referral_code,
-                'total_referred' => $referrals->count(),
-                'qualified_referrals' => $qualifiedCount,
-                'total_earned_cents' => $totalEarnedCents,
-                'reward_per_referral_cents' => 100, // $1.00 per qualified friend
-                'referrals' => $referrals,
-            ],
-        ]);
     }
 }

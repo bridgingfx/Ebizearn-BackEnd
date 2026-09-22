@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -92,6 +93,47 @@ class User extends Authenticatable
         return $this->hasMany(WithdrawalRequest::class);
     }
 
+    /**
+     * Direct per-user permission grants assigned by Super Admin.
+     */
+    public function directPermissions(): BelongsToMany
+    {
+        return $this->belongsToMany(Permission::class, 'permission_user')->withTimestamps();
+    }
+
+    /**
+     * Sync the user's direct permission grants (Super Admin only, via API).
+     *
+     * @param string[] $permissionNames
+     */
+    public function syncPermissions(array $permissionNames): void
+    {
+        $ids = Permission::whereIn('name', $permissionNames)->pluck('id')->all();
+        $this->directPermissions()->sync($ids);
+    }
+
+    /**
+     * Permission check: super_admin implicitly holds every permission;
+     * everyone else is evaluated against direct grants plus grants attached
+     * to their primary role row.
+     */
+    public function hasPermission(string $permission): bool
+    {
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        if ($this->directPermissions()->where('permissions.name', $permission)->exists()) {
+            return true;
+        }
+
+        $role = Role::where('name', $this->role)->first();
+
+        return $role
+            ? $role->permissions()->where('permissions.name', $permission)->exists()
+            : false;
+    }
+
     public function fraudEvents(): HasMany
     {
         return $this->hasMany(FraudEvent::class);
@@ -115,6 +157,11 @@ class User extends Authenticatable
     public function isAdmin(): bool
     {
         return in_array($this->role, ['admin', 'superadmin'], true);
+    }
+
+    public function isModerator(): bool
+    {
+        return $this->role === 'moderator';
     }
 
     public function isSuperAdmin(): bool

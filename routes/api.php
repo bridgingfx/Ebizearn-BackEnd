@@ -7,7 +7,10 @@ use App\Http\Controllers\Api\V1\AdminVerificationController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\BusinessCampaignController;
 use App\Http\Controllers\Api\V1\ConfigController;
+use App\Http\Controllers\Api\V1\Ops\OpsAdminController;
+use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
 use App\Http\Controllers\Api\V1\ProfileController;
+use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\TaskController;
 use App\Http\Controllers\Api\V1\WalletController;
 use Illuminate\Support\Facades\Route;
@@ -45,7 +48,11 @@ Route::prefix('v1')->group(function () {
         Route::middleware('role:contributor')->prefix('contributor')->group(function () {
             Route::get('/dashboard', [TaskController::class, 'contributorDashboard']);
             Route::get('/my-tasks', [TaskController::class, 'myTasks']);
-            Route::get('/referrals', [WalletController::class, 'referrals']);
+
+            // Phase 8: affiliate endpoints (real ledger-backed data only)
+            Route::get('/referrals', [ReferralController::class, 'index']);
+            Route::get('/referrals/tree', [ReferralController::class, 'tree']);
+            Route::get('/referrals/earnings', [ReferralController::class, 'earnings']);
         });
 
         // Contributor Task Operations
@@ -116,6 +123,43 @@ Route::prefix('v1')->group(function () {
             Route::get('/users', [AdminSystemController::class, 'users']);
             Route::patch('/users/{id}/status', [AdminSystemController::class, 'updateUserStatus']);
             Route::get('/health', [AdminSystemController::class, 'health']);
+        });
+
+        // ==================================================================
+        // 5. SUPER ADMIN OPS (Phase 2) — hidden /ops prefix, NOT referenced by
+        //    any public UI route. Super Admin only. Staff creation, permission
+        //    assignment, countries, task categories, withdrawal rules, fraud
+        //    rules, platform settings, audit log read.
+        // ==================================================================
+        Route::middleware(['role:superadmin', 'throttle:ops'])->prefix('ops')->group(function () {
+            // Staff (admin/moderator) accounts — superadmin itself is created
+            // only via `php artisan superadmin:create`
+            Route::get('/admins', [OpsAdminController::class, 'index']);
+            Route::post('/admins', [OpsAdminController::class, 'store'])->middleware('throttle:15,1');
+            Route::patch('/admins/{id}/permissions', [OpsAdminController::class, 'updatePermissions']);
+            Route::get('/permissions', [OpsAdminController::class, 'permissions']);
+
+            // Countries
+            Route::get('/countries', [OpsSettingsController::class, 'countries']);
+            Route::post('/countries', [OpsSettingsController::class, 'storeCountry']);
+            Route::patch('/countries/{code}', [OpsSettingsController::class, 'updateCountry']);
+
+            // Task categories
+            Route::get('/task-categories', [OpsSettingsController::class, 'taskCategories']);
+            Route::post('/task-categories', [OpsSettingsController::class, 'storeTaskCategory']);
+            Route::patch('/task-categories/{id}', [OpsSettingsController::class, 'updateTaskCategory']);
+
+            // Withdrawal rules (selectable $10/$25/$50/$100 minimum)
+            Route::get('/withdrawal-rules', [OpsSettingsController::class, 'withdrawalRules']);
+            Route::post('/withdrawal-rules', [OpsSettingsController::class, 'storeWithdrawalRule']);
+            Route::post('/withdrawal-rules/{id}/activate', [OpsSettingsController::class, 'activateWithdrawalRule']);
+
+            // Platform settings + fraud rules (group=fraud)
+            Route::get('/platform-settings', [OpsSettingsController::class, 'platformSettings']);
+            Route::patch('/platform-settings', [OpsSettingsController::class, 'updatePlatformSettings']);
+
+            // Audit log (append-only; read only)
+            Route::get('/audit-logs', [OpsSettingsController::class, 'auditLogs']);
         });
     });
 });

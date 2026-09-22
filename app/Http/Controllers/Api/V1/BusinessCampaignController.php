@@ -13,6 +13,7 @@ use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -356,11 +357,13 @@ class BusinessCampaignController extends Controller
      */
     public function show(Request $request, string $id): JsonResponse
     {
-        $business = $request->user()->business;
+        // Phase 13: load tenant-agnostically, then authorize explicitly so a
+        // cross-business read is a 403 (not a 404 that hides behind scoping).
         $campaign = Campaign::with(['category', 'tasks'])
-            ->where('business_id', $business->id)
             ->where(fn($q) => $q->where('id', $id)->orWhere('uuid', $id))
             ->firstOrFail();
+
+        Gate::authorize('view', $campaign);
 
         $submissions = TaskSubmission::whereHas('task', fn($q) => $q->where('campaign_id', $campaign->id))
             ->with(['user.profile', 'aiResult', 'files'])
