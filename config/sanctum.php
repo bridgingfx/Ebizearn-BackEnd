@@ -50,7 +50,14 @@ return [
     |
     */
 
-    'expiration' => null,
+    'expiration' => (int) env('SANCTUM_TOKEN_EXPIRATION_MINUTES', 10080),
+
+    // Token lifetime: 7 days by default (10080 minutes). Chosen as the maximum
+    // acceptable bound on the old "never expires" finding: the SPA stores the
+    // token in localStorage with no refresh-token flow, so a shorter lifetime
+    // (e.g. 24h) would log contributors out mid-week; 7 days keeps sessions
+    // bounded for a money-handling app while matching normal weekly usage.
+    // Override via SANCTUM_TOKEN_EXPIRATION_MINUTES.
 
     /*
     |--------------------------------------------------------------------------

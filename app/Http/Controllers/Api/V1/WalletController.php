@@ -33,7 +33,7 @@ class WalletController extends Controller
             'success' => true,
             'data' => [
                 'wallet' => $wallet,
-                'min_withdrawal_cents' => (int) config('platform.minWithdrawalCents', 1000),
+                'min_withdrawal_cents' => (int) config('payouts.withdrawal_min_cents', 5000),
             ],
         ]);
     }
@@ -74,8 +74,10 @@ class WalletController extends Controller
      */
     public function withdraw(Request $request): JsonResponse
     {
+        $minWithdrawalCents = (int) config('payouts.withdrawal_min_cents', 5000);
+
         $validator = Validator::make($request->all(), [
-            'amount_cents' => 'required|integer|min:1000',
+            'amount_cents' => 'required|integer|min:' . $minWithdrawalCents,
             'payout_method' => 'required|in:bank_transfer,paypal,wise,crypto',
             'payout_details' => 'required|array',
         ]);

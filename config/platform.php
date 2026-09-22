@@ -13,7 +13,7 @@ return [
     'supportEmail' => env('PLATFORM_SUPPORT_EMAIL', 'support@ebizearn.com'),
     'defaultCurrency' => 'USD',
     'defaultLocale' => 'en',
-    'minWithdrawalCents' => 1000, // $10.00
+    'minWithdrawalCents' => (int) env('WITHDRAWAL_MIN_CENTS', 5000), // $50.00 — mirrors config('payouts.withdrawal_min_cents'), which is the source of truth
     'platformFeePercent' => 15, // 15% platform margin on campaigns
     'socials' => [
         'facebook' => 'https://facebook.com/ebizearn',

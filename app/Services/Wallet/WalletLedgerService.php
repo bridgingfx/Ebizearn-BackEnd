@@ -107,7 +107,7 @@ class WalletLedgerService
         string $payoutMethod,
         array $payoutDetails
     ): WithdrawalRequest {
-        $minWithdrawal = config('platform.minWithdrawalCents', 1000);
+        $minWithdrawal = (int) config('payouts.withdrawal_min_cents', 5000); // single source of truth; master spec $50.00
         if ($amountCents < $minWithdrawal) {
             throw new Exception("Minimum withdrawal amount is " . number_format($minWithdrawal / 100, 2) . " USD.");
         }

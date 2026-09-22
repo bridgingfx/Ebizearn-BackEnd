@@ -147,7 +147,13 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // Revoke older tokens if needed
+        // Single-active-session: revoke all prior tokens before minting the new
+        // one. This kills leaked/stale tokens the moment the legitimate user
+        // logs in and prevents indefinite session sprawl (the SPA stores a
+        // single token in localStorage, so multi-device concurrency is not a
+        // designed feature). Chosen over "prune expired only" because expiry
+        // alone leaves live-but-abandoned tokens valid for up to 7 days.
+        $user->tokens()->delete();
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([

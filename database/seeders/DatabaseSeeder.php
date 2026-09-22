@@ -57,7 +57,7 @@ class DatabaseSeeder extends Seeder
         // 3. System Settings
         SystemSetting::set('platform_name', 'BizNetwork', 'general', true);
         SystemSetting::set('platform_tagline', 'Small Tasks. Big Opportunities.', 'general', true);
-        SystemSetting::set('min_withdrawal_cents', '1000', 'finance', true);
+        SystemSetting::set('min_withdrawal_cents', '5000', 'finance', true); // legacy setting, kept in sync; config('payouts.withdrawal_min_cents') wins at runtime
         SystemSetting::set('platform_fee_percent', '15', 'finance', true);
         SystemSetting::set('support_email', 'support@ebizearn.com', 'support', true);
 

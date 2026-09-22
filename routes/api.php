@@ -21,9 +21,9 @@ Route::prefix('v1')->group(function () {
     // 2. Public Authentication
     Route::prefix('auth')->group(function () {
         Route::post('/register', [AuthController::class, 'register']);
-        Route::post('/login', [AuthController::class, 'login']);
-        Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
-        Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+        Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
+        Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:password-reset');
+        Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:password-reset');
     });
 
     // 3. Public Marketplace Preview

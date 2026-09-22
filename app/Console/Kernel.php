@@ -12,7 +12,10 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        //
+        // Keep the personal_access_tokens table tidy now that API tokens have
+        // a real expiry (config/sanctum.php). Tokens expired >24h ago are safe
+        // to delete; this does not affect live sessions.
+        $schedule->command('sanctum:prune-expired --hours=24')->daily();
     }
 
     /**

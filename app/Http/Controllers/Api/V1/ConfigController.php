@@ -32,7 +32,10 @@ class ConfigController extends Controller
                 'supportEmail' => SystemSetting::get('support_email', $platform['supportEmail']),
                 'defaultCurrency' => $platform['defaultCurrency'],
                 'defaultLocale' => $platform['defaultLocale'],
-                'minWithdrawalCents' => (int) SystemSetting::get('min_withdrawal_cents', $platform['minWithdrawalCents']),
+                // Minimum withdrawal: config is the single source of truth. The legacy
+                // admin-editable `min_withdrawal_cents` system setting is intentionally
+                // NOT consulted here (it previously had no effect on enforcement).
+                'minWithdrawalCents' => (int) config('payouts.withdrawal_min_cents', 5000),
                 'platformFeePercent' => (int) SystemSetting::get('platform_fee_percent', $platform['platformFeePercent']),
                 'socials' => $platform['socials'],
                 'supportedCountries' => $platform['supportedCountries'],
