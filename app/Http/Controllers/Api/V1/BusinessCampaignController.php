@@ -7,6 +7,8 @@ use App\Models\Business;
 use App\Models\Campaign;
 use App\Models\Task;
 use App\Models\TaskSubmission;
+use App\Models\Wallet;
+use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,6 +18,10 @@ use Illuminate\Support\Str;
 
 class BusinessCampaignController extends Controller
 {
+    public function __construct(
+        protected WalletLedgerService $ledger = new WalletLedgerService()
+    ) {}
+
     /**
      * Get Business Dashboard Overview.
      */
@@ -133,52 +139,216 @@ class BusinessCampaignController extends Controller
         $platformFee = (int) round($tasksBudget * ($feePercent / 100));
         $totalBudget = $tasksBudget + $platformFee;
 
-        $campaign = DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $totalBudget, $platformFee) {
-            $camp = Campaign::create([
-                'uuid' => (string) Str::uuid(),
-                'business_id' => $business->id,
-                'category_id' => $validated['category_id'],
-                'title' => $validated['title'],
-                'objective' => $validated['objective'] ?? null,
-                'description' => $validated['description'],
-                'instructions_markdown' => $validated['instructions_markdown'],
-                'proof_requirements_json' => $validated['proof_requirements_json'] ?? ['screenshot' => true, 'url' => true],
-                'status' => 'active',
-                'total_budget_cents' => $totalBudget,
-                'remaining_budget_cents' => $totalBudget,
-                'reserved_budget_cents' => 0,
-                'reward_per_task_cents' => $rewardPerTask,
-                'platform_fee_cents' => $platformFee,
-                'target_contributors_count' => $contributorCount,
-                'target_countries_json' => $validated['target_countries'] ?? ['ALL'],
-                'target_languages_json' => $validated['target_languages'] ?? ['en'],
-                'min_contributor_level' => $validated['min_contributor_level'] ?? 'starter',
-                'retention_hours' => $validated['retention_hours'] ?? 24,
-                'starts_at' => now(),
-            ]);
+        // FUNDING GATE PRE-CHECK (P0): fail fast with an honest 422 before
+        // touching the database. The atomic hold() inside the transaction
+        // below remains the final authority against concurrent races.
+        $ownerWallet = Wallet::firstOrCreate(
+            ['user_id' => $business->owner_id],
+            ['currency' => 'USD', 'available_balance_cents' => 0]
+        );
 
-            // Create initial active Task pool
-            Task::create([
-                'uuid' => (string) Str::uuid(),
-                'campaign_id' => $camp->id,
-                'category_id' => $camp->category_id,
-                'title' => $camp->title,
-                'reward_cents' => $rewardPerTask,
-                'estimated_minutes' => 5,
-                'difficulty' => 'easy',
-                'status' => 'available',
-                'slots_total' => $contributorCount,
-                'slots_taken' => 0,
-            ]);
+        if ((int) $ownerWallet->available_balance_cents < $totalBudget) {
+            return $this->insufficientFundingResponse(
+                (int) $ownerWallet->available_balance_cents,
+                $totalBudget
+            );
+        }
 
-            return $camp;
-        });
+        try {
+            $campaign = DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $ownerWallet) {
+                $camp = Campaign::create([
+                    'uuid' => (string) Str::uuid(),
+                    'business_id' => $business->id,
+                    'category_id' => $validated['category_id'],
+                    'title' => $validated['title'],
+                    'objective' => $validated['objective'] ?? null,
+                    'description' => $validated['description'],
+                    'instructions_markdown' => $validated['instructions_markdown'],
+                    'proof_requirements_json' => $validated['proof_requirements_json'] ?? ['screenshot' => true, 'url' => true],
+                    'status' => 'draft', // goes active only after the funding gate below
+                    'total_budget_cents' => $totalBudget,
+                    'remaining_budget_cents' => $tasksBudget, // rewards pool only; the platform fee is taken at launch
+                    'reserved_budget_cents' => 0,
+                    'reward_per_task_cents' => $rewardPerTask,
+                    'platform_fee_cents' => $platformFee,
+                    'target_contributors_count' => $contributorCount,
+                    'target_countries_json' => $validated['target_countries'] ?? ['ALL'],
+                    'target_languages_json' => $validated['target_languages'] ?? ['en'],
+                    'min_contributor_level' => $validated['min_contributor_level'] ?? 'starter',
+                    'retention_hours' => $validated['retention_hours'] ?? 24,
+                    'starts_at' => now(),
+                ]);
+
+                // FUNDING GATE (P0): the business wallet must cover the campaign
+                // budget before the campaign goes active. Rewards are escrow-held
+                // (available -> pending); the platform fee is debited immediately
+                // and is non-refundable. Insufficient funds abort the launch and
+                // the whole transaction (including the draft row) is rolled back,
+                // so a campaign can never sit 'active' with zero backing.
+                $this->ledger->hold(
+                    $ownerWallet,
+                    $tasksBudget,
+                    'campaign_funding',
+                    "Escrow hold — campaign rewards: {$camp->title}",
+                    Campaign::class,
+                    $camp->id
+                );
+
+                if ($platformFee > 0) {
+                    $this->ledger->debit(
+                        $ownerWallet,
+                        $platformFee,
+                        'campaign_funding',
+                        "Platform fee — campaign launch: {$camp->title}",
+                        Campaign::class,
+                        $camp->id,
+                        ['is_platform_fee' => true]
+                    );
+                }
+
+                // Create initial active Task pool
+                Task::create([
+                    'uuid' => (string) Str::uuid(),
+                    'campaign_id' => $camp->id,
+                    'category_id' => $camp->category_id,
+                    'title' => $camp->title,
+                    'reward_cents' => $rewardPerTask,
+                    'estimated_minutes' => 5,
+                    'difficulty' => 'easy',
+                    'status' => 'available',
+                    'slots_total' => $contributorCount,
+                    'slots_taken' => 0,
+                ]);
+
+                $camp->update(['status' => 'active']);
+
+                return $camp;
+            });
+        } catch (Exception $e) {
+            // A lost race against the funding gate surfaces here: map it to
+            // the same honest 422 as the pre-check instead of a generic 400.
+            if ($this->isInsufficientFundsError($e)) {
+                return $this->insufficientFundingResponse(
+                    (int) $ownerWallet->fresh()->available_balance_cents,
+                    $totalBudget
+                );
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
 
         return response()->json([
             'success' => true,
-            'message' => 'Campaign created and launched successfully.',
+            'message' => 'Campaign funded and launched successfully.',
             'data' => $campaign->load(['category', 'tasks']),
         ], 201);
+    }
+
+    /**
+     * Honest 422 for the funding gate: names the funded balance the business
+     * has and what the campaign needs, in plain dollars.
+     */
+    protected function insufficientFundingResponse(int $availableCents, int $requiredCents): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Insufficient funded balance. This needs '
+                . '$' . number_format($requiredCents / 100, 2) . ' USD, but the business wallet only has '
+                . '$' . number_format($availableCents / 100, 2) . ' USD available. '
+                . 'Add funds to the wallet and try again.',
+        ], 422);
+    }
+
+    /**
+     * True when the ledger service rejected a hold/debit for lack of funds.
+     */
+    protected function isInsufficientFundsError(Exception $e): bool
+    {
+        return str_contains($e->getMessage(), 'Insufficient available balance')
+            || str_contains($e->getMessage(), 'Insufficient wallet balance');
+    }
+
+    /**
+     * Top up a campaign's escrowed rewards budget from the business wallet.
+     * Used for campaigns launched before the funding gate, or to extend a
+     * campaign that exhausted its budget.
+     */
+    public function fund(Request $request, string $id): JsonResponse
+    {
+        $business = $request->user()->business;
+        if (!$business) {
+            return response()->json(['success' => false, 'message' => 'Business profile not found.'], 404);
+        }
+
+        $campaign = Campaign::where('business_id', $business->id)
+            ->where(fn($q) => $q->where('id', $id)->orWhere('uuid', $id))
+            ->firstOrFail();
+
+        $validator = Validator::make($request->all(), [
+            'amount_cents' => 'required|integer|min:20',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $amount = (int) $request->input('amount_cents');
+
+        // Fail fast with an honest 422 when the wallet cannot cover the top-up.
+        $ownerWallet = Wallet::firstOrCreate(
+            ['user_id' => $business->owner_id],
+            ['currency' => 'USD', 'available_balance_cents' => 0]
+        );
+
+        if ((int) $ownerWallet->available_balance_cents < $amount) {
+            return $this->insufficientFundingResponse(
+                (int) $ownerWallet->available_balance_cents,
+                $amount
+            );
+        }
+
+        try {
+            DB::transaction(function () use ($business, $campaign, $amount, $ownerWallet) {
+                $locked = Campaign::where('id', $campaign->id)->lockForUpdate()->firstOrFail();
+
+                $this->ledger->hold(
+                    $ownerWallet,
+                    $amount,
+                    'campaign_funding',
+                    "Top-up escrow — campaign: {$locked->title}",
+                    Campaign::class,
+                    $locked->id
+                );
+
+                $locked->increment('remaining_budget_cents', $amount);
+                $locked->increment('total_budget_cents', $amount);
+            });
+        } catch (Exception $e) {
+            if ($this->isInsufficientFundsError($e)) {
+                return $this->insufficientFundingResponse(
+                    (int) $ownerWallet->fresh()->available_balance_cents,
+                    $amount
+                );
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Campaign funded successfully.',
+            'data' => $campaign->fresh()->load(['category', 'tasks']),
+        ]);
     }
 
     /**
@@ -217,17 +387,63 @@ class BusinessCampaignController extends Controller
             ->firstOrFail();
 
         $status = $request->input('status');
-        if (!in_array($status, ['active', 'paused', 'cancelled'], true)) {
+        if (!in_array($status, ['active', 'paused', 'cancelled', 'expired'], true)) {
             return response()->json(['success' => false, 'message' => 'Invalid status option.'], 422);
         }
 
-        $campaign->update(['status' => $status]);
-        $campaign->tasks()->update(['status' => $status === 'active' ? 'available' : 'paused']);
+        $isTerminalRefund = fn (string $s) => in_array($s, ['cancelled', 'expired'], true);
+
+        try {
+            DB::transaction(function () use ($business, $campaign, $status, $isTerminalRefund) {
+                $locked = Campaign::where('id', $campaign->id)->lockForUpdate()->firstOrFail();
+
+                // Cancelling OR expiring refunds the unspent escrowed rewards
+                // budget back to the business wallet (platform fee stays earned).
+                // The refund is capped at what is actually still held, so it can
+                // never over-release.
+                if ($isTerminalRefund($status) && !$isTerminalRefund($locked->status)) {
+                    $refundable = (int) $locked->remaining_budget_cents + (int) $locked->reserved_budget_cents;
+
+                    if ($refundable > 0) {
+                        $ownerWallet = Wallet::firstOrCreate(
+                            ['user_id' => $business->owner_id],
+                            ['currency' => 'USD', 'available_balance_cents' => 0]
+                        );
+
+                        $heldWallet = Wallet::where('id', $ownerWallet->id)->lockForUpdate()->firstOrFail();
+                        $release = min($refundable, (int) $heldWallet->pending_balance_cents);
+
+                        if ($release > 0) {
+                            $this->ledger->releaseHold(
+                                $ownerWallet,
+                                $release,
+                                'campaign_refund',
+                                "Escrow refund — campaign {$status}: {$locked->title}",
+                                Campaign::class,
+                                $locked->id,
+                                ['unrefunded_shortfall_cents' => $refundable - $release]
+                            );
+                        }
+
+                        $locked->update(['remaining_budget_cents' => 0, 'reserved_budget_cents' => 0]);
+                    }
+                }
+
+                $locked->update(['status' => $status]);
+            });
+
+            $campaign->tasks()->update(['status' => $status === 'active' ? 'available' : 'paused']);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
 
         return response()->json([
             'success' => true,
             'message' => "Campaign is now {$status}.",
-            'data' => $campaign,
+            'data' => $campaign->fresh(),
         ]);
     }
 

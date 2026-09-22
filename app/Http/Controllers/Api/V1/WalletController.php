@@ -80,6 +80,7 @@ class WalletController extends Controller
             'amount_cents' => 'required|integer|min:' . $minWithdrawalCents,
             'payout_method' => 'required|in:bank_transfer,paypal,wise,crypto',
             'payout_details' => 'required|array',
+            'idempotency_key' => 'nullable|string|max:128',
         ]);
 
         if ($validator->fails()) {
@@ -95,7 +96,8 @@ class WalletController extends Controller
                 $request->user(),
                 (int) $request->input('amount_cents'),
                 $request->input('payout_method'),
-                $request->input('payout_details')
+                $request->input('payout_details'),
+                $request->header('Idempotency-Key') ?: $request->input('idempotency_key')
             );
 
             return response()->json([

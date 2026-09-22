@@ -33,7 +33,7 @@ class AdminVerificationController extends Controller
         $totalBusinesses = Business::count();
         $activeCampaigns = Campaign::where('status', 'active')->count();
         $pendingVerification = TaskSubmission::where('status', 'under_review')->count();
-        $pendingPayouts = WithdrawalRequest::where('status', 'requested')->count();
+        $pendingPayouts = WithdrawalRequest::whereIn('status', ['requested', 'compliance_check', 'processing'])->count();
         $fraudAlertsCount = FraudEvent::where('status', 'flagged')->count();
 
         // Recent verification submissions
@@ -206,7 +206,7 @@ class AdminVerificationController extends Controller
     }
 
     /**
-     * Process payout: approve (mark paid) or reject (reverse funds).
+     * Process payout: approve (log for manual processing) or reject (reverse funds).
      */
     public function processPayout(Request $request, string $id): JsonResponse
     {
@@ -214,6 +214,7 @@ class AdminVerificationController extends Controller
             'action' => 'required|in:approve,reject',
             'reason' => 'required_if:action,reject|nullable|string',
             'provider_tx_id' => 'nullable|string',
+            'idempotency_key' => 'nullable|string|max:128',
         ]);
 
         if ($validator->fails()) {
@@ -225,13 +226,14 @@ class AdminVerificationController extends Controller
         }
 
         $withdrawal = WithdrawalRequest::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $idempotencyKey = $request->header('Idempotency-Key') ?: $request->input('idempotency_key');
 
         try {
             if ($request->input('action') === 'approve') {
-                $processed = $this->walletService->approveWithdrawal($withdrawal, $request->input('provider_tx_id'));
-                $msg = 'Payout marked as paid and processed.';
+                $processed = $this->walletService->approveWithdrawal($withdrawal, $request->input('provider_tx_id'), $idempotencyKey);
+                $msg = 'Payout approved and logged for manual processing — funds not yet sent.';
             } else {
-                $processed = $this->walletService->rejectWithdrawal($withdrawal, $request->input('reason', 'Compliance criteria not met'));
+                $processed = $this->walletService->rejectWithdrawal($withdrawal, $request->input('reason', 'Compliance criteria not met'), $idempotencyKey);
                 $msg = 'Payout rejected and balance returned to contributor wallet.';
             }
 

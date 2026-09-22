@@ -3,13 +3,16 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Campaign;
 use App\Models\SubmissionFile;
 use App\Models\Task;
 use App\Models\TaskAssignment;
 use App\Models\TaskSubmission;
+use App\Models\User;
 use App\Models\Wallet;
 use App\Services\Verification\VerificationService;
 use Exception;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -107,37 +110,86 @@ class TaskController extends Controller
             ], 400);
         }
 
-        // Check existing active assignment
-        $existing = TaskAssignment::where('task_id', $task->id)
-            ->where('user_id', $user->id)
-            ->whereIn('status', ['reserved', 'in_progress', 'submitted'])
-            ->first();
-
-        if ($existing) {
+        try {
+            $assignment = $this->reserveSlot($task, $user);
+        } catch (Exception $e) {
             return response()->json([
-                'success' => true,
-                'message' => 'Task already started.',
-                'data' => $existing->load('task.campaign'),
-            ]);
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
         }
-
-        $assignment = DB::transaction(function () use ($task, $user) {
-            $task->increment('slots_taken');
-
-            return TaskAssignment::create([
-                'task_id' => $task->id,
-                'user_id' => $user->id,
-                'status' => 'in_progress',
-                'reserved_until' => now()->addHours(2), // 2 hours reservation window
-                'started_at' => now(),
-            ]);
-        });
 
         return response()->json([
             'success' => true,
-            'message' => 'Task started successfully.',
+            'message' => $assignment->wasRecentlyCreated ? 'Task started successfully.' : 'Task already started.',
             'data' => $assignment->load('task.campaign'),
-        ], 201);
+        ], $assignment->wasRecentlyCreated ? 201 : 200);
+    }
+
+    /**
+     * Reserve a slot atomically: the task row and the campaign budget row are
+     * both locked inside one transaction, and the campaign's remaining budget
+     * is decremented together with the slot increment. Slots can therefore
+     * never be oversold and remaining_budget_cents can never go negative.
+     * Lost races return the winning assignment instead of duplicating.
+     */
+    protected function reserveSlot(Task $task, User $user): TaskAssignment
+    {
+        return DB::transaction(function () use ($task, $user) {
+            $lockedTask = Task::where('id', $task->id)->lockForUpdate()->firstOrFail();
+
+            if ($lockedTask->status !== 'available' || $lockedTask->slots_taken >= $lockedTask->slots_total) {
+                throw new Exception('This task is no longer available or has reached capacity.');
+            }
+
+            $existing = TaskAssignment::where('task_id', $lockedTask->id)
+                ->where('user_id', $user->id)
+                ->whereIn('status', ['reserved', 'in_progress', 'submitted'])
+                ->lockForUpdate()
+                ->first();
+
+            if ($existing) {
+                return $existing;
+            }
+
+            $campaign = Campaign::where('id', $lockedTask->campaign_id)->lockForUpdate()->firstOrFail();
+
+            if ($campaign->status !== 'active') {
+                throw new Exception('This campaign is not currently active.');
+            }
+
+            if ($campaign->remaining_budget_cents < $lockedTask->reward_cents) {
+                throw new Exception('Campaign budget exhausted — no funded slots remaining.');
+            }
+
+            try {
+                $assignment = TaskAssignment::create([
+                    'task_id' => $lockedTask->id,
+                    'user_id' => $user->id,
+                    'status' => 'in_progress',
+                    'reserved_until' => now()->addHours(2), // 2 hours reservation window
+                    'started_at' => now(),
+                ]);
+            } catch (QueryException $e) {
+                // Lost a race with a concurrent request: return the winner's
+                // assignment instead of creating a duplicate.
+                $winner = TaskAssignment::where('task_id', $lockedTask->id)
+                    ->where('user_id', $user->id)
+                    ->first();
+
+                if ($winner) {
+                    return $winner;
+                }
+
+                throw $e;
+            }
+
+            $lockedTask->increment('slots_taken');
+            $campaign->decrement('remaining_budget_cents', $lockedTask->reward_cents);
+            $campaign->increment('reserved_budget_cents', $lockedTask->reward_cents);
+
+            return $assignment;
+        });
     }
 
     /**
@@ -175,14 +227,16 @@ class TaskController extends Controller
                 ], 409);
             }
 
-            // Auto-create assignment if not explicitly reserved
-            $assignment = TaskAssignment::create([
-                'task_id' => $task->id,
-                'user_id' => $user->id,
-                'status' => 'in_progress',
-                'started_at' => now()->subMinutes(5),
-            ]);
-            $task->increment('slots_taken');
+            // Auto-create assignment if not explicitly reserved (atomic slot +
+            // budget reservation, race-safe).
+            try {
+                $assignment = $this->reserveSlot($task, $user);
+            } catch (Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 409);
+            }
         }
 
         $validator = Validator::make($request->all(), [
@@ -208,35 +262,50 @@ class TaskController extends Controller
             'user_agent' => $request->userAgent(),
         ];
 
-        $submission = DB::transaction(function () use ($task, $user, $assignment, $proofData, $request) {
-            $sub = TaskSubmission::create([
-                'task_id' => $task->id,
-                'user_id' => $user->id,
-                'assignment_id' => $assignment->id,
-                'status' => 'under_review',
-                'proof_data_json' => $proofData,
-            ]);
+        $submission = null;
 
-            $assignment->update([
-                'status' => 'submitted',
-                'completed_at' => now(),
-            ]);
-
-            // Save screenshot file entry if provided
-            $screenshot = $request->input('proof_screenshot');
-            if (!empty($screenshot)) {
-                SubmissionFile::create([
-                    'submission_id' => $sub->id,
-                    'file_type' => 'screenshot',
-                    'file_path' => 'proofs/' . $sub->uuid . '.png',
-                    'file_url' => $screenshot,
-                    'file_size_bytes' => 1024 * 512,
-                    'mime_type' => 'image/png',
+        try {
+            $submission = DB::transaction(function () use ($task, $user, $assignment, $proofData, $request) {
+                $sub = TaskSubmission::create([
+                    'task_id' => $task->id,
+                    'user_id' => $user->id,
+                    'assignment_id' => $assignment->id,
+                    'status' => 'under_review',
+                    'proof_data_json' => $proofData,
                 ]);
+
+                $assignment->update([
+                    'status' => 'submitted',
+                    'completed_at' => now(),
+                ]);
+
+                // Save screenshot file entry if provided
+                $screenshot = $request->input('proof_screenshot');
+                if (!empty($screenshot)) {
+                    SubmissionFile::create([
+                        'submission_id' => $sub->id,
+                        'file_type' => 'screenshot',
+                        'file_path' => 'proofs/' . $sub->uuid . '.png',
+                        'file_url' => $screenshot,
+                        'file_size_bytes' => 1024 * 512,
+                        'mime_type' => 'image/png',
+                    ]);
+                }
+
+                return $sub;
+            });
+        } catch (QueryException $e) {
+            // Lost a double-submit race against the unique(task_id, user_id)
+            // constraint: treat it as the existing "already submitted" case.
+            if (TaskSubmission::where('task_id', $task->id)->where('user_id', $user->id)->exists()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You have already submitted proof for this task.',
+                ], 409);
             }
 
-            return $sub;
-        });
+            throw $e;
+        }
 
         // Run AI Pre-Check & Fraud Analysis
         $aiResult = $this->verificationService->processNewSubmission($submission);
@@ -250,6 +319,9 @@ class TaskController extends Controller
                     'confidence_score' => $aiResult->confidence_score,
                     'suggested_decision' => $aiResult->suggested_decision,
                     'summary' => $aiResult->analysis_summary,
+                    // Honesty labelling: mock results are simulated placeholders.
+                    'ai_simulated' => (bool) $aiResult->ai_simulated,
+                    'ai_label' => $aiResult->ai_label,
                 ],
             ],
         ], 201);

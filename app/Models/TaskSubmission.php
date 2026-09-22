@@ -18,6 +18,7 @@ class TaskSubmission extends Model
         'task_id',
         'user_id',
         'assignment_id',
+        'triggered_referral_id',
         'status',
         'proof_data_json',
         'reviewer_id',
