@@ -16,6 +16,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -241,7 +242,9 @@ class BusinessCampaignController extends Controller
                     'slots_taken' => 0,
                 ]);
 
-                $camp->update(['status' => 'active']);
+                // Priority 4 — approval gate: funded campaigns park in
+                // pending_review until staff approves them to active.
+                $camp->update(['status' => 'pending_review']);
 
                 return $camp;
             });
@@ -488,6 +491,47 @@ class BusinessCampaignController extends Controller
                 'current_page' => $submissions->currentPage(),
                 'last_page' => $submissions->lastPage(),
                 'total' => $submissions->total(),
+            ],
+        ]);
+    }
+
+    /**
+     * Priority 4 — campaign branding: upload a company logo for a campaign.
+     * Validated image, stored on the public disk, path persisted. Only the
+     * owning business (or staff) may set it.
+     */
+    public function uploadLogo(Request $request, string $id): JsonResponse
+    {
+        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        Gate::authorize('update', $campaign);
+
+        $validator = Validator::make($request->all(), [
+            'logo' => 'required|image|mimes:png,jpg,jpeg,webp,svg|max:2048',
+            'company_name' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $path = $request->file('logo')->store('campaign-logos', 'public');
+
+        $campaign->update([
+            'logo_path' => $path,
+            'company_name' => $request->input('company_name', $campaign->company_name),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Campaign logo uploaded.',
+            'data' => [
+                'logo_path' => $path,
+                'logo_url' => Storage::disk('public')->url($path),
+                'company_name' => $campaign->company_name,
             ],
         ]);
     }

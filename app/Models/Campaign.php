@@ -36,6 +36,8 @@ class Campaign extends Model
         'retention_hours',
         'starts_at',
         'ends_at',
+        'company_name',
+        'logo_path',
     ];
 
     protected $casts = [

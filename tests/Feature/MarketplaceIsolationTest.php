@@ -218,6 +218,11 @@ class MarketplaceIsolationTest extends TestCase
         // Staff sees all campaigns cross-tenant.
         $this->getJson('/api/v1/staff/campaigns')->assertStatus(200);
 
+        // Priority 4 — approval gate: approve pending_review → active first.
+        $this->patchJson("/api/v1/staff/campaigns/{$draftId}/status", ['status' => 'active'])
+            ->assertStatus(200);
+        $this->assertEquals('active', Campaign::findOrFail($draftId)->status);
+
         // Pause.
         $this->patchJson("/api/v1/staff/campaigns/{$draftId}/status", ['status' => 'paused'])
             ->assertStatus(200);
@@ -276,7 +281,8 @@ class MarketplaceIsolationTest extends TestCase
         $this->assertSame(2000, (int) $wallet->pending_balance_cents);
         $this->assertSame(17400, (int) $wallet->available_balance_cents); // 20000 - 600 fees - 4000 held + 2000 released
         $this->assertEquals('cancelled', Campaign::findOrFail($campaignA)->status);
-        $this->assertEquals('active', Campaign::findOrFail($campaignB)->status);
+        // Priority 4 — B was never approved, so it stays in pending_review.
+        $this->assertEquals('pending_review', Campaign::findOrFail($campaignB)->status);
     }
 
     public function test_staff_cannot_delete_campaign_once_money_moved(): void

@@ -82,7 +82,8 @@ class EscrowFundingGateTest extends TestCase
 
         $response->assertStatus(201)
             ->assertJson(['success' => true])
-            ->assertJsonPath('data.status', 'active');
+            // Priority 4 — approval gate: funded campaigns park in pending_review.
+            ->assertJsonPath('data.status', 'pending_review');
 
         // Tasks budget = 5 x 100 = 500 cents held in escrow; platform fee 15%
         // = 75 cents debited immediately (non-refundable).
@@ -96,6 +97,6 @@ class EscrowFundingGateTest extends TestCase
             'type' => 'campaign_funding',
             'amount_cents' => -500,
         ]);
-        $this->assertDatabaseHas('campaigns', ['id' => $campaignId, 'status' => 'active']);
+        $this->assertDatabaseHas('campaigns', ['id' => $campaignId, 'status' => 'pending_review']);
     }
 }

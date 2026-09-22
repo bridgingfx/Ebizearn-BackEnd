@@ -97,7 +97,18 @@ return new class extends Migration
 
         // SQLite: drop the added columns; keep `checking` rows mapped to
         // `under_review` so no data is lost on rollback.
+        // Drop the proof_hash index first — SQLite refuses to drop a column
+        // that has an index on it. The index may carry a rebuild-suffixed
+        // name from an earlier table rebuild, so resolve it dynamically.
         DB::statement("UPDATE task_submissions SET status = 'under_review' WHERE status = 'checking'");
+        $indexName = DB::selectOne("
+            SELECT name FROM sqlite_master
+            WHERE type = 'index' AND tbl_name = 'task_submissions'
+            AND sql LIKE '%proof_hash%'
+        ")->name ?? null;
+        if ($indexName) {
+            DB::statement("DROP INDEX \"{$indexName}\"");
+        }
         Schema::table('task_submissions', function (Blueprint $table) {
             $table->dropColumn([
                 'proof_hash',

@@ -190,7 +190,11 @@ class CampaignWizardService
                 'slots_taken' => 0,
             ]);
 
-            $locked->update(['status' => 'active']);
+            // Priority 4 — admin approval gate: funded campaigns park in
+            // `pending_review`. Tasks are materialized but stay invisible
+            // until staff approves the campaign to `active` (the
+            // contributor feed only lists tasks of active campaigns).
+            $locked->update(['status' => 'pending_review']);
 
             return $locked->fresh();
         });

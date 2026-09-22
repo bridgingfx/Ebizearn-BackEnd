@@ -145,7 +145,9 @@ class CampaignWizardTest extends TestCase
         $response->assertStatus(200)->assertJson(['success' => true]);
 
         $campaign = Campaign::findOrFail($draftId);
-        $this->assertEquals('active', $campaign->status);
+        // Priority 4 — approval gate: launch parks in pending_review;
+        // staff approval moves it to active.
+        $this->assertEquals('pending_review', $campaign->status);
 
         // Task pool: 100 slots at $0.20.
         $task = $campaign->tasks()->firstOrFail();

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Business;
+use App\Models\FraudEvent;
 use App\Models\Profile;
 use App\Models\User;
 use App\Models\Wallet;
@@ -112,6 +113,11 @@ class AuthController extends Controller
 
         $emails->sendEvent('welcome_' . $user->role, $user->email, ['user_name' => $user->name]);
 
+        // Phase 2 / Priority 7 — log the registration + screen for
+        // duplicate accounts from the same IP/device (flagged for review,
+        // never auto-blocked).
+        $this->screenRegistrationForDuplicates($request, $user);
+
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -187,6 +193,12 @@ class AuthController extends Controller
         // alone leaves live-but-abandoned tokens valid for up to 7 days.
         $user->tokens()->delete();
         $token = $user->createToken('auth_token')->plainTextToken;
+
+        // Phase 2 / Priority 7 — device/IP risk logging on every login.
+        // Honest telemetry: routine logins are recorded as reviewed/info;
+        // a never-before-seen device fingerprint for this user is flagged
+        // for moderator review. Heuristics never block the login itself.
+        $this->logLoginRisk($request, $user);
 
         return response()->json([
             'success' => true,
@@ -311,6 +323,98 @@ class AuthController extends Controller
                 'user' => $request->user()->load(['profile', 'wallet', 'business']),
             ],
         ]);
+    }
+
+    /**
+     * Phase 2 / Priority 7 — device/IP risk logging on login.
+     *
+     * Every successful login writes a FraudEvent row (routine logins are
+     * `reviewed`/low so they stay out of the flagged queue). A device
+     * fingerprint never seen for this user is recorded as `flagged`/medium
+     * for moderator review. This is honest telemetry — it never blocks the
+     * login and never claims automated fraud verdicts.
+     */
+    protected function logLoginRisk(Request $request, User $user): void
+    {
+        $ip = $request->ip();
+        $userAgent = (string) $request->userAgent();
+        $fingerprint = hash('sha256', ($ip ?? 'unknown') . '|' . $userAgent);
+
+        $seenBefore = FraudEvent::where('user_id', $user->id)
+            ->whereIn('event_type', ['login', 'new_device_login', 'registration'])
+            ->where('details_json->fingerprint', $fingerprint)
+            ->exists();
+
+        $isNewDevice = !$seenBefore;
+
+        FraudEvent::create([
+            'user_id' => $user->id,
+            'event_type' => $isNewDevice ? 'new_device_login' : 'login',
+            'severity' => $isNewDevice ? 'medium' : 'low',
+            'details_json' => [
+                'fingerprint' => $fingerprint,
+                'ip' => $ip,
+                'first_seen_for_user' => $isNewDevice,
+            ],
+            'ip_address' => $ip,
+            'user_agent' => $userAgent,
+            'status' => $isNewDevice ? 'flagged' : 'reviewed',
+        ]);
+
+        $user->forceFill([
+            'last_login_ip' => $ip,
+            'last_login_at' => now(),
+        ])->save();
+    }
+
+    /**
+     * Phase 2 / Priority 7 — duplicate-account screen at registration.
+     *
+     * Counts distinct users registered from the same IP in the trailing
+     * 30 days. At 3+ accounts the new registration is still allowed (we
+     * do not punish shared networks automatically) but a `multi_account`
+     * FraudEvent is flagged for moderator review. The registration row
+     * itself is logged so future screens have data to compare against.
+     */
+    protected function screenRegistrationForDuplicates(Request $request, User $user): void
+    {
+        $ip = $request->ip();
+        $userAgent = (string) $request->userAgent();
+        $fingerprint = hash('sha256', ($ip ?? 'unknown') . '|' . $userAgent);
+
+        $user->forceFill(['registration_ip' => $ip])->save();
+
+        FraudEvent::create([
+            'user_id' => $user->id,
+            'event_type' => 'registration',
+            'severity' => 'low',
+            'details_json' => ['fingerprint' => $fingerprint, 'ip' => $ip],
+            'ip_address' => $ip,
+            'user_agent' => $userAgent,
+            'status' => 'reviewed',
+        ]);
+
+        $recentSameIp = User::where('registration_ip', $ip)
+            ->where('id', '!=', $user->id)
+            ->where('created_at', '>=', now()->subDays(30))
+            ->count();
+
+        if ($recentSameIp >= 2) {
+            FraudEvent::create([
+                'user_id' => $user->id,
+                'event_type' => 'multi_account',
+                'severity' => 'medium',
+                'details_json' => [
+                    'fingerprint' => $fingerprint,
+                    'ip' => $ip,
+                    'distinct_users_same_ip_30d' => $recentSameIp + 1,
+                    'note' => '3+ accounts registered from one IP in 30 days. Shared networks exist — moderator review, not an automated verdict.',
+                ],
+                'ip_address' => $ip,
+                'user_agent' => $userAgent,
+                'status' => 'flagged',
+            ]);
+        }
     }
 }
 

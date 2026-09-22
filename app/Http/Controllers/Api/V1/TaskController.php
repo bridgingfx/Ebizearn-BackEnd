@@ -18,6 +18,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class TaskController extends Controller
@@ -33,7 +34,12 @@ class TaskController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = Task::with(['category', 'campaign.business'])
-            ->where('status', 'available');
+            ->where('status', 'available')
+            // Priority 4 — approval gate: tasks are invisible until their
+            // campaign is approved to `active` by staff.
+            ->whereHas('campaign', function ($q) {
+                $q->where('status', 'active');
+            });
 
         // Filter by category slug
         if ($request->filled('category')) {
@@ -304,16 +310,31 @@ class TaskController extends Controller
                     'completed_at' => now(),
                 ]);
 
-                // Save screenshot file entry if provided
+                // Save screenshot file entry if provided.
+                // Priority 3 — proof persistence: base64 data is decoded and
+                // written to storage (not just a path string); URLs are kept as-is.
                 $screenshot = $request->input('proof_screenshot');
                 if (!empty($screenshot)) {
+                    $filePath = 'proofs/' . $sub->uuid . '.png';
+                    $fileUrl = $screenshot;
+                    $fileSize = 1024 * 512;
+                    $mimeType = 'image/png';
+
+                    if ($this->isBase64Image($screenshot)) {
+                        $binary = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $screenshot));
+                        Storage::disk('public')->put($filePath, $binary);
+                        $fileUrl = Storage::disk('public')->url($filePath);
+                        $fileSize = strlen($binary);
+                        $mimeType = $this->detectImageMime($binary) ?? 'image/png';
+                    }
+
                     SubmissionFile::create([
                         'submission_id' => $sub->id,
                         'file_type' => 'screenshot',
-                        'file_path' => 'proofs/' . $sub->uuid . '.png',
-                        'file_url' => $screenshot,
-                        'file_size_bytes' => 1024 * 512,
-                        'mime_type' => 'image/png',
+                        'file_path' => $filePath,
+                        'file_url' => $fileUrl,
+                        'file_size_bytes' => $fileSize,
+                        'mime_type' => $mimeType,
                     ]);
                 }
 
@@ -425,5 +446,34 @@ class TaskController extends Controller
                 'total' => $submissions->total(),
             ],
         ]);
+    }
+
+    /**
+     * Detect base64-encoded image data (with or without data-URI prefix).
+     */
+    protected function isBase64Image(string $value): bool
+    {
+        if (preg_match('#^data:image/\w+;base64,#i', $value)) {
+            return true;
+        }
+        // Raw base64: long string, valid base64 alphabet, decodes to bytes
+        // starting with a known image magic number.
+        if (strlen($value) < 100 || !preg_match('#^[A-Za-z0-9+/=\r\n]+$#', $value)) {
+            return false;
+        }
+        $binary = base64_decode($value, true);
+        return $binary !== false && $this->detectImageMime($binary) !== null;
+    }
+
+    /**
+     * Sniff PNG/JPEG/GIF/WebP magic bytes. Returns null when unknown.
+     */
+    protected function detectImageMime(string $binary): ?string
+    {
+        if (str_starts_with($binary, "\x89PNG\r\n\x1a\n")) return 'image/png';
+        if (str_starts_with($binary, "\xff\xd8\xff")) return 'image/jpeg';
+        if (str_starts_with($binary, 'GIF87a') || str_starts_with($binary, 'GIF89a')) return 'image/gif';
+        if (str_starts_with($binary, 'RIFF') && substr($binary, 8, 4) === 'WEBP') return 'image/webp';
+        return null;
     }
 }

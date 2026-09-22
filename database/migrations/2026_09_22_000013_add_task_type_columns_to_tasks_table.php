@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -31,6 +32,25 @@ return new class extends Migration
 
     public function down(): void
     {
+        // SQLite: FKs are part of the table definition, not droppable
+        // constraints — drop the column directly.
+        if (DB::getDriverName() !== 'mysql') {
+            Schema::table('tasks', function (Blueprint $table) {
+                $table->dropColumn([
+                    'task_type_id',
+                    'platform',
+                    'country_code',
+                    'instructions',
+                    'proof_required_json',
+                    'retention_days',
+                    'fraud_rules_json',
+                    'company_name',
+                    'company_logo_url',
+                ]);
+            });
+            return;
+        }
+
         Schema::table('tasks', function (Blueprint $table) {
             $table->dropForeign(['task_type_id']);
             $table->dropColumn([

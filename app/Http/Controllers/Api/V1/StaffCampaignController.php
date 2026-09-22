@@ -95,6 +95,9 @@ class StaffCampaignController extends Controller
 
         $allowed = [
             'draft' => ['cancelled'],
+            // Priority 4 — approval gate: staff approves pending_review
+            // campaigns to active (publishes tasks) or cancels them.
+            'pending_review' => ['active', 'cancelled'],
             'active' => ['paused', 'cancelled'],
             'paused' => ['active', 'cancelled'],
         ];

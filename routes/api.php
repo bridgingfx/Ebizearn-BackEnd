@@ -94,6 +94,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/campaigns/{id}', [BusinessCampaignController::class, 'show']);
             Route::patch('/campaigns/{id}/status', [BusinessCampaignController::class, 'updateStatus']);
             Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund']);
+            Route::post('/campaigns/{id}/logo', [BusinessCampaignController::class, 'uploadLogo']);
             Route::get('/submissions', [BusinessCampaignController::class, 'submissions']);
 
             // ==============================================================
