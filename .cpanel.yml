@@ -3,8 +3,8 @@ deployment:
   tasks:
     - export DEPLOYPATH=/home/eazz6z8mutng/public_html/api.ebizearn.com/
     - /bin/cp -R app bootstrap config database public routes composer.json composer.lock artisan $DEPLOYPATH
-    - /usr/local/bin/ea-php84 /opt/cpanel/composer/bin/composer install --no-dev --optimize-autoloader --working-dir=$DEPLOYPATH
-    - /usr/local/bin/ea-php84 $DEPLOYPATH/artisan migrate --force
-    - /usr/local/bin/ea-php84 $DEPLOYPATH/artisan config:clear
-    - /usr/local/bin/ea-php84 $DEPLOYPATH/artisan route:clear
-    - /usr/local/bin/ea-php84 $DEPLOYPATH/artisan cache:clear
+    - /usr/local/bin/composer install --no-dev --optimize-autoloader --working-dir=$DEPLOYPATH
+    - php $DEPLOYPATH/artisan migrate --force
+    - php $DEPLOYPATH/artisan config:clear
+    - php $DEPLOYPATH/artisan route:clear
+    - php $DEPLOYPATH/artisan cache:clear
