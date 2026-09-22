@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Campaign;
 use App\Services\Campaigns\CampaignWizardService;
+use App\Services\Idempotency\IdempotencyService;
 use App\Services\TaskTypes\RewardBandService;
 use App\Services\TaskTypes\RewardBandViolationException;
 use Exception;
@@ -120,8 +121,30 @@ class CampaignWizardController extends Controller
 
         Gate::authorize('launch', $campaign);
 
+        $validator = Validator::make($request->all(), [
+            'idempotency_key' => 'nullable|string|max:128',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
         try {
-            $launched = $this->wizard->launch($campaign);
+            // Idempotent: a retried launch with the same key returns the
+            // already-launched campaign. The wizard itself is double-safe
+            // (non-draft status -> 409), so the key mainly protects the
+            // escrow hold + fee debit against network retries.
+            $launched = app(IdempotencyService::class)->run(
+                IdempotencyService::keyFromRequest($request),
+                'campaign.launch',
+                $request->user()->id,
+                ['campaign_id' => $campaign->id],
+                fn () => $this->wizard->launch($campaign)
+            );
         } catch (Exception $e) {
             $status = $e->getCode() === 409 ? 409 : 422;
 

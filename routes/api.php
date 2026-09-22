@@ -154,6 +154,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/payouts', [AdminVerificationController::class, 'payouts']);
             Route::post('/payouts/{id}/process', [AdminVerificationController::class, 'processPayout']);
             Route::get('/referrals/overview', [AdminReferralController::class, 'overview']); // Phase 11: read-only referral overview
+            Route::get('/referral-rules', [AdminReferralController::class, 'rules']); // Phase 13: view admin-controllable referral rules
+            Route::patch('/referral-rules', [AdminReferralController::class, 'updateRules']); // Phase 13: update referral rules (audited)
 
             // Super Admin Controls
             Route::get('/feature-flags', [AdminSystemController::class, 'featureFlags']);

@@ -8,9 +8,9 @@ use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Models\WithdrawalRequest;
 use App\Models\WithdrawalRule;
+use App\Services\Idempotency\IdempotencyService;
 use App\Services\Payment\PaymentService;
 use Exception;
-use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 class WalletLedgerService
@@ -617,6 +617,9 @@ class WalletLedgerService
      * concurrent in-flight request with the same key gets a 409-style error
      * instead of double-applying.
      *
+     * Delegates to IdempotencyService (shared with campaign funding /
+     * launch paths) for a single implementation of the guarantees.
+     *
      * @param callable(): mixed $work
      * @param callable(IdempotencyKey): mixed|null $resolveResult custom replay resolver
      */
@@ -628,51 +631,7 @@ class WalletLedgerService
         callable $work,
         ?callable $resolveResult = null
     ): mixed {
-        if (empty($key)) {
-            return $work();
-        }
-
-        $fingerprint = hash('sha256', $action . '|' . json_encode($fingerprintParts));
-
-        return DB::transaction(function () use ($key, $action, $userId, $fingerprint, $work, $resolveResult) {
-            try {
-                $record = IdempotencyKey::create([
-                    'idempotency_key' => $key,
-                    'user_id' => $userId,
-                    'action' => $action,
-                    'fingerprint' => $fingerprint,
-                ]);
-            } catch (QueryException $e) {
-                // Key already seen: only a genuine duplicate-key collision has a
-                // row to show for it; anything else is rethrown untouched.
-                $record = IdempotencyKey::where('idempotency_key', $key)->first();
-
-                if (!$record) {
-                    throw $e;
-                }
-
-                $record = IdempotencyKey::where('idempotency_key', $key)->lockForUpdate()->firstOrFail();
-
-                if (!hash_equals((string) $record->fingerprint, $fingerprint)) {
-                    throw new Exception('Idempotency key was already used with different parameters.');
-                }
-
-                if ($record->result_type && $record->result_id) {
-                    return $resolveResult ? $resolveResult($record) : $this->resolveStoredResult($record);
-                }
-
-                throw new Exception('A request with this idempotency key is already being processed.');
-            }
-
-            $result = $work();
-
-            $record->update([
-                'result_type' => get_class($result),
-                'result_id' => $result->getKey(),
-            ]);
-
-            return $result;
-        });
+        return app(IdempotencyService::class)->run($key, $action, $userId, $fingerprintParts, $work, $resolveResult);
     }
 
     /**

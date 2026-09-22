@@ -76,9 +76,26 @@ class Handler extends ExceptionHandler
             default => 500,
         };
 
-        return response()->json([
+        // Never leak internals (SQL, file paths, stack context) to API
+        // clients in production: a 500 with debug off answers with a generic
+        // message. The real exception is still reported to the logs via
+        // report() before render() runs.
+        $message = $e->getMessage() ?: 'Server Error';
+        if ($status >= 500 && !config('app.debug')) {
+            $message = 'Server Error';
+        }
+
+        $payload = [
             'success' => false,
-            'message' => $e->getMessage() ?: 'Server Error',
-        ], $status ?: 500);
+            'message' => $message,
+        ];
+
+        // Consistent error shape: validation failures always carry the
+        // field-level errors map, matching the controllers' manual 422s.
+        if ($e instanceof \Illuminate\Validation\ValidationException) {
+            $payload['errors'] = $e->errors();
+        }
+
+        return response()->json($payload, $status ?: 500);
     }
 }

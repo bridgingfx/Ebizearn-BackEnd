@@ -4,6 +4,7 @@ namespace App\Services\Referral;
 
 use App\Models\Referral;
 use App\Models\ReferralReward;
+use App\Models\ReferralRule;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
@@ -88,9 +89,14 @@ class ReferralService
      * task-approval flow (Worker C wiring) when a referee's first task is
      * approved. Returns the rewards paid (or already paid) in this call.
      *
+     * $basisCents is the referee's first approved task reward — the basis
+     * for percent-mode rules (flat-mode rules ignore it). When a percent
+     * rule has no basis available, it falls back to its flat estimate so
+     * qualification can never silently pay zero.
+     *
      * Idempotent: repeating the call changes nothing and pays nothing new.
      */
-    public function qualifyAndReward(User $referee, ?string $trigger = null): array
+    public function qualifyAndReward(User $referee, ?string $trigger = null, ?int $basisCents = null): array
     {
         if (!config('referrals.enabled', true)) {
             return [];
@@ -100,7 +106,7 @@ class ReferralService
             return [];
         }
 
-        return DB::transaction(function () use ($referee, $trigger) {
+        return DB::transaction(function () use ($referee, $trigger, $basisCents) {
             $pending = Referral::where('referred_user_id', $referee->id)
                 ->where('status', 'pending')
                 ->orderBy('level')
@@ -110,7 +116,7 @@ class ReferralService
             $paid = [];
 
             foreach ($pending as $referral) {
-                $paid[] = $this->payLevel($referral, $referee, $trigger);
+                $paid[] = $this->payLevel($referral, $referee, $trigger, $basisCents);
             }
 
             return $paid;
@@ -118,31 +124,60 @@ class ReferralService
     }
 
     /**
-     * Reward amount for a level in cents. Missing levels inherit the
-     * previous level's amount. A 0 amount marks the level rewarded with no
+     * Reward amount for a level in cents. Flat-mode rules return their fixed
+     * amount; percent-mode rules return the percentage of $basisCents (with
+     * a flat fallback when no basis is available). Levels with no rule row
+     * fall back to config('referrals'), inheriting the previous level's
+     * amount for missing levels. A 0 amount marks the level rewarded with no
      * ledger movement.
      */
-    public function rewardForLevel(int $level): int
+    public function rewardForLevel(int $level, ?int $basisCents = null): int
     {
-        $rewards = config('referrals.rewards_cents', [1 => 100]);
-        $amount = null;
+        return ReferralRule::forLevel($level)->payoutCents($basisCents);
+    }
 
-        for ($l = 1; $l <= $level; $l++) {
-            if (array_key_exists($l, $rewards)) {
-                $amount = (int) $rewards[$l];
-            }
+    /**
+     * The admin-visible rule set, one descriptor per level.
+     *
+     * @return array<int, array>
+     */
+    public function rules(): array
+    {
+        $levels = max(1, (int) config('referrals.levels', 3));
+        $out = [];
+
+        for ($level = 1; $level <= $levels; $level++) {
+            $rule = ReferralRule::forLevel($level);
+            $out[$level] = [
+                'level' => $level,
+                'reward_mode' => $rule->reward_mode,
+                'reward_cents' => $rule->reward_cents ?? ReferralRule::configFlatCents($level),
+                'percent_bps' => (int) $rule->percent_bps,
+                'percent' => round(((int) $rule->percent_bps) / 100, 2),
+                'is_enabled' => (bool) $rule->is_enabled,
+                'from_database' => $rule->exists,
+                'description' => $rule->describe(),
+            ];
         }
 
-        return max(0, (int) $amount);
+        return $out;
     }
 
     /**
      * Pay one referral level. The referral row is already locked by the
      * caller; the unique(referrer_id, referred_user_id, level) key plus the
      * ledger-reference check make this safe under retry and concurrency.
+     *
+     * The actual payout comes from the admin-controllable rule for the level
+     * (flat amount, or percent of the referee's first approved task reward
+     * as $basisCents). The referral row's reward_cents estimate recorded at
+     * registration is synced to the actual amount paid.
      */
-    protected function payLevel(Referral $referral, User $referee, ?string $trigger): ReferralReward
+    protected function payLevel(Referral $referral, User $referee, ?string $trigger, ?int $basisCents = null): ReferralReward
     {
+        // The actual payout for this level under the current admin rules.
+        $payoutCents = $this->rewardForLevel($referral->level, $basisCents);
+
         try {
             $reward = ReferralReward::firstOrCreate(
                 [
@@ -152,7 +187,7 @@ class ReferralService
                 ],
                 [
                     'referral_id' => $referral->id,
-                    'amount_cents' => (int) $referral->reward_cents,
+                    'amount_cents' => $payoutCents,
                     'status' => ReferralReward::STATUS_PENDING,
                 ]
             );
@@ -165,13 +200,16 @@ class ReferralService
                 ->firstOrFail();
         }
 
+        // A rule change between registration (estimate) and qualification
+        // (payout) must not rewrite a reward that was already paid.
         if ($reward->status === ReferralReward::STATUS_REWARDED) {
             $referral->update(['status' => 'rewarded', 'qualified_at' => $referral->qualified_at ?? now()]);
 
             return $reward;
         }
 
-        $amount = (int) $reward->amount_cents;
+        $amount = $payoutCents;
+        $reward->update(['amount_cents' => $amount]);
 
         if ($amount > 0) {
             // Retry guard: if a previous attempt credited the ledger but
@@ -229,7 +267,13 @@ class ReferralService
             ]);
         }
 
-        $referral->update(['status' => 'rewarded', 'qualified_at' => now()]);
+        // Sync the registration-time estimate to the amount actually paid
+        // under the current admin rules.
+        $referral->update([
+            'status' => 'rewarded',
+            'reward_cents' => $amount,
+            'qualified_at' => now(),
+        ]);
 
         AuditLogger::log(
             null,
@@ -241,6 +285,7 @@ class ReferralService
                 'referred_user_id' => $referee->id,
                 'level' => $referral->level,
                 'amount_cents' => $amount,
+                'reward_mode' => ReferralRule::forLevel($referral->level)->reward_mode,
                 'trigger' => $trigger,
             ]
         );

@@ -8,6 +8,7 @@ use App\Models\Campaign;
 use App\Models\Task;
 use App\Models\TaskSubmission;
 use App\Models\Wallet;
+use App\Services\Idempotency\IdempotencyService;
 use App\Services\TaskTypes\RewardBandService;
 use App\Services\TaskTypes\RewardBandViolationException;
 use App\Services\Wallet\WalletLedgerService;
@@ -124,6 +125,7 @@ class BusinessCampaignController extends Controller
             'target_languages' => 'nullable|array',
             'min_contributor_level' => 'nullable|in:starter,explorer,trusted,pro,elite',
             'retention_hours' => 'nullable|integer|min:0',
+            'idempotency_key' => 'nullable|string|max:128',
         ]);
 
         if ($validator->fails()) {
@@ -173,7 +175,17 @@ class BusinessCampaignController extends Controller
         }
 
         try {
-            $campaign = DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $ownerWallet, $type) {
+            // Idempotent: a retried create (double-click / network retry) with
+            // the same key + identical parameters returns the original
+            // campaign instead of creating a second one and double-charging
+            // the escrow hold.
+            $campaign = app(IdempotencyService::class)->run(
+                IdempotencyService::keyFromRequest($request),
+                'campaign.create',
+                $request->user()->id,
+                ['business_id' => $business->id, 'payload_hash' => hash('sha256', json_encode($validated))],
+                function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $ownerWallet, $type) {
+                    return DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $ownerWallet, $type) {
                 $camp = Campaign::create([
                     'uuid' => (string) Str::uuid(),
                     'business_id' => $business->id,
@@ -247,7 +259,9 @@ class BusinessCampaignController extends Controller
                 $camp->update(['status' => 'pending_review']);
 
                 return $camp;
-            });
+                });
+            }
+        );
         } catch (Exception $e) {
             // A lost race against the funding gate surfaces here: map it to
             // the same honest 422 as the pre-check instead of a generic 400.
@@ -266,9 +280,11 @@ class BusinessCampaignController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Campaign funded and launched successfully.',
+            'message' => $campaign->wasRecentlyCreated
+                ? 'Campaign funded and launched successfully.'
+                : 'Campaign already created — returning the existing record.',
             'data' => $campaign->load(['category', 'tasks']),
-        ], 201);
+        ], $campaign->wasRecentlyCreated ? 201 : 200);
     }
 
     /**
@@ -313,6 +329,7 @@ class BusinessCampaignController extends Controller
 
         $validator = Validator::make($request->all(), [
             'amount_cents' => 'required|integer|min:20',
+            'idempotency_key' => 'nullable|string|max:128',
         ]);
 
         if ($validator->fails()) {
@@ -339,21 +356,33 @@ class BusinessCampaignController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($business, $campaign, $amount, $ownerWallet) {
-                $locked = Campaign::where('id', $campaign->id)->lockForUpdate()->firstOrFail();
+            // Idempotent: a retried top-up with the same key + same amount
+            // returns the funded campaign instead of escrow-holding twice.
+            $campaign = app(IdempotencyService::class)->run(
+                IdempotencyService::keyFromRequest($request),
+                'campaign.fund',
+                $request->user()->id,
+                ['campaign_id' => $campaign->id, 'amount_cents' => $amount],
+                function () use ($campaign, $amount, $ownerWallet) {
+                    return DB::transaction(function () use ($campaign, $amount, $ownerWallet) {
+                        $locked = Campaign::where('id', $campaign->id)->lockForUpdate()->firstOrFail();
 
-                $this->ledger->hold(
-                    $ownerWallet,
-                    $amount,
-                    'campaign_funding',
-                    "Top-up escrow — campaign: {$locked->title}",
-                    Campaign::class,
-                    $locked->id
-                );
+                        $this->ledger->hold(
+                            $ownerWallet,
+                            $amount,
+                            'campaign_funding',
+                            "Top-up escrow — campaign: {$locked->title}",
+                            Campaign::class,
+                            $locked->id
+                        );
 
-                $locked->increment('remaining_budget_cents', $amount);
-                $locked->increment('total_budget_cents', $amount);
-            });
+                        $locked->increment('remaining_budget_cents', $amount);
+                        $locked->increment('total_budget_cents', $amount);
+
+                        return $locked->fresh();
+                    });
+                }
+            );
         } catch (Exception $e) {
             if ($this->isInsufficientFundsError($e)) {
                 return $this->insufficientFundingResponse(
@@ -371,7 +400,7 @@ class BusinessCampaignController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Campaign funded successfully.',
-            'data' => $campaign->fresh()->load(['category', 'tasks']),
+            'data' => $campaign->load(['category', 'tasks']),
         ]);
     }
 

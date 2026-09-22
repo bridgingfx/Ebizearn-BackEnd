@@ -414,7 +414,7 @@ class VerificationService
             return [];
         }
 
-        return DB::transaction(function () use ($contributor) {
+        return DB::transaction(function () use ($contributor, $submission) {
             $pendingIds = Referral::where('referred_user_id', $contributor->id)
                 ->where('status', 'pending')
                 ->lockForUpdate()
@@ -425,7 +425,11 @@ class VerificationService
                 return [];
             }
 
-            (new ReferralService($this->walletService))->qualifyAndReward($contributor, 'first_task_approved');
+            // Percent-mode referral rules pay a share of the referee's first
+            // approved task reward — pass it as the payout basis.
+            $basisCents = $submission->task ? (int) $submission->task->reward_cents : null;
+
+            (new ReferralService($this->walletService))->qualifyAndReward($contributor, 'first_task_approved', $basisCents);
 
             // Rows that flipped pending -> rewarded while we held the locks
             // were paid by this approval — no more, no less.

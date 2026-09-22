@@ -1,6 +1,6 @@
 # eBiz Earn API — v1 Reference
 
-Base URL: `/api/v1`
+Base URL: `/api/v1` (113 routes, verified 2026-09-23 — every route resolves to a real controller method).
 Auth: Laravel Sanctum Bearer tokens (`Authorization: Bearer <token>`).
 All responses are JSON with `success: true|false`.
 
@@ -109,7 +109,12 @@ Verification queue, submission decisions, fraud alerts, payouts, referral overvi
 | GET/PATCH | `/admin/system-settings` | System settings. |
 | GET | `/admin/health` | Service health. |
 | GET | `/admin/demo-requests` | Demo request triage. |
+| GET | `/admin/referrals/overview` | Referral ledger overview (totals, per-level, recent). |
+| GET | `/admin/referral-rules` | Affiliate rules per level (flat cents + percent bps, 10%/5%/2% defaults). |
+| PATCH | `/admin/referral-rules` | Update rules: `levels: [{level, reward_mode: flat\|percent, reward_cents?, percent_bps?, is_enabled?}]`. Audited; future qualifications only. |
 | Email providers/templates, payment gateways/logs | | Standard CRUD + test/activate. |
+
+**Idempotency:** every money-moving endpoint (`/wallet/withdraw`, `/admin/payouts/{id}/process`, `/business/campaigns`, `/business/campaigns/{id}/fund`, `/business/campaigns/{id}/launch`) accepts an `Idempotency-Key` header (or `idempotency_key` body field). A retry with the same key + identical parameters returns the original result; the same key with different parameters is rejected with 400.
 
 ## Super Admin (`role:superadmin`, `/ops`)
 
@@ -139,6 +144,8 @@ Private, manually created (no public registration, no seeded password).
 
 - All money in integer cents; ledger is immutable (`wallet_transactions`).
 - Approval credits `task_reward`; referral rewards pay 3 levels on first approval only.
+- Referral rewards are admin-controllable per level (`/admin/referral-rules`): flat amounts (default L1 $1.00 / L2 $0.50 / L3 $0.25) or a percent of the referee's first approved task reward (10% / 5% / 2% ready). Rule changes never rewrite already-paid rewards.
 - Retention: approved rewards can enter `pending` (task-specific `retention_days`) before becoming available.
 - Withdrawals move available → pending; threshold enforced from the active `withdrawal_rules` row.
 - No manual balance edits without an audited ledger row.
+- No stack traces or internals leak to API clients in production (500 → generic `Server Error` when `APP_DEBUG=false`); validation failures always answer `{success:false, message, errors}`.

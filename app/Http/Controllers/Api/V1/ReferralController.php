@@ -31,13 +31,17 @@ class ReferralController extends Controller
 
         $levels = (int) config('referrals.levels', 3);
         $byLevel = [];
+        $referralService = app(\App\Services\Referral\ReferralService::class);
 
         for ($l = 1; $l <= $levels; $l++) {
             $levelRows = $referrals->where('level', $l);
+            $rule = \App\Models\ReferralRule::forLevel($l);
             $byLevel[$l] = [
                 'total' => $levelRows->count(),
                 'rewarded' => $levelRows->where('status', 'rewarded')->count(),
-                'reward_cents' => app(\App\Services\Referral\ReferralService::class)->rewardForLevel($l),
+                'reward_cents' => $referralService->rewardForLevel($l),
+                'reward_mode' => $rule->reward_mode,
+                'reward_description' => $rule->describe(),
             ];
         }
 

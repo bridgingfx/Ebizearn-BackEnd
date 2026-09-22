@@ -10,6 +10,7 @@ use App\Models\FeatureFlag;
 use App\Models\Permission;
 use App\Models\PlatformSetting;
 use App\Models\Profile;
+use App\Models\ReferralRule;
 use App\Models\Role;
 use App\Models\SubmissionFile;
 use App\Models\SystemSetting;
@@ -385,6 +386,7 @@ class DatabaseSeeder extends Seeder
         $this->seedRolesAndPermissions();
         $this->seedCountries();
         $this->seedWithdrawalRules();
+        $this->seedReferralRules();
         $this->seedPlatformSettings();
         $this->seedTaskTypes();
     }
@@ -494,6 +496,35 @@ class DatabaseSeeder extends Seeder
         }
 
         WithdrawalRule::flushCache();
+    }
+
+    /**
+     * Owner-approved affiliate defaults: 3 levels, flat mode —
+     * L1 $1.00 / L2 $0.50 / L3 $0.25 — with 10%/5%/2% percent values ready
+     * if an admin switches a level to percent mode via the admin API.
+     * Additive and idempotent: firstOrCreate on the unique level, so a
+     * re-seed never duplicates and never clobbers admin edits.
+     */
+    protected function seedReferralRules(): void
+    {
+        $defaults = [
+            // level => [flat cents, percent basis points]
+            1 => [100, 1000], // $1.00 flat, 10% of first task reward
+            2 => [50, 500],   // $0.50 flat, 5%
+            3 => [25, 200],   // $0.25 flat, 2%
+        ];
+
+        foreach ($defaults as $level => [$cents, $bps]) {
+            ReferralRule::firstOrCreate(
+                ['level' => $level],
+                [
+                    'reward_mode' => ReferralRule::MODE_FLAT,
+                    'reward_cents' => $cents,
+                    'percent_bps' => $bps,
+                    'is_enabled' => true,
+                ]
+            );
+        }
     }
 
     /**
