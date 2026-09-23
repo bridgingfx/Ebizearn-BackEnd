@@ -21,6 +21,8 @@ class User extends Authenticatable
         'uuid',
         'name',
         'email',
+        // Signup hardening: E.164 phone ("+971501234567"), nullable.
+        'phone',
         'password',
         'role',
         'status',

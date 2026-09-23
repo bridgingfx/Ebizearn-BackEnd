@@ -1,6 +1,6 @@
 # eBiz Earn API — v1 Reference
 
-Base URL: `/api/v1` (111 routes, verified 2026-09-23 — every route resolves to a real controller method).
+Base URL: `/api/v1` (113 routes — includes new `POST /auth/otp/send` + `POST /auth/otp/verify`).
 Auth: Laravel Sanctum Bearer tokens (`Authorization: Bearer <token>`).
 All responses are JSON with `success: true|false`. Error responses also carry a stable machine-readable `code` (`validation_error`, `unauthenticated`, `forbidden`, `not_found`, `rate_limited`, `server_error`, …).
 
@@ -8,17 +8,23 @@ All responses are JSON with `success: true|false`. Error responses also carry a 
 
 | Method | Endpoint | Auth | Notes |
 |--------|----------|------|-------|
-| POST | `/auth/register` | Public | `role: contributor|business`. Business requires `company_name`. Throttled 5/min per IP. Strong password: min 10 chars + upper/lower/digit/symbol. Accounts start **unverified** — a verification email is sent; money/task write paths return 403 `email_not_verified` until verified. |
-| POST | `/auth/login` | Public | `email`, `password`, `portal: contributor|business|moderator|superadmin`. Wrong portal → 403 before token issuance. Throttled 5/min per email+IP. Failed attempts logged to `fraud_events`; 5+ failures from one IP in 10 min flags `rapid_failed_logins`. |
+| POST | `/auth/register` | Public | `role: contributor|business`. Business requires `company_name`. **Requires `phone_country_code` (real dial code, allow-list in `config/phone.php`) + `phone_number` (4–15 digits)** — stored as E.164 `users.phone`. Throttled 5/min per IP. Strong password: min 10 chars + upper/lower/digit/symbol. Accounts start **`pending_verification`** — NO token is issued; a 6-digit OTP is emailed. Verify via `/auth/otp/verify` to activate and get a token. |
+| POST | `/auth/login` | Public | `email`, `password`, `portal: contributor|business|moderator|superadmin`. Wrong portal → 403 before token issuance. Accounts still `pending_verification` → 403 `email_unverified` (pre-existing `active` accounts, even if unverified, are unaffected). Throttled 5/min per email+IP. Failed attempts logged to `fraud_events`; 5+ failures from one IP in 10 min flags `rapid_failed_logins`. |
 | POST | `/auth/social/{provider}` | Public | `provider: google|apple`. Body: `id_token` (+ optional `name`, `email` fallback). ID token verified server-side (JWKS signature, `aud`, `exp`, `iss`). Find-or-create by `(provider, sub)`; verified provider email links to an existing account. New accounts are contributors. Throttled 10/min per IP. Requires real `GOOGLE_CLIENT_ID` / `APPLE_CLIENT_ID` in env (Dawood-side setup) — placeholder values fail closed with 401. |
 | POST | `/auth/logout` | Bearer | Revokes current token. |
 | GET | `/auth/me` | Bearer | Current user with profile, wallet, business. Includes `email_verified` boolean. |
 | POST | `/auth/forgot-password` | Public | Sends reset link. Throttled. |
 | POST | `/auth/reset-password` | Public | Resets with token. New password must meet the strong-password policy. |
-| POST | `/auth/email/verify` | Public | Body: `token` (from the verification email URL). Marks `email_verified_at`; single-use, 24h expiry. |
+| POST | `/auth/email/verify` | Public | Body: `token` (from the verification email URL). Marks `email_verified_at`; single-use, 24h expiry. Legacy flow — kept for pre-existing accounts; new signups use OTP below. |
 | POST | `/auth/email/resend` | Bearer | Re-sends the verification email (regenerates token). Unverified users only; throttled 3/min. |
+| POST | `/auth/otp/send` | Public | Body: `email`. Sends a fresh 6-digit code (invalidates older ones). 60s resend cooldown, max 5 sends/hour per email AND per IP. Machine codes: `not_found` (404), `already_verified` (409), `cooldown`/`rate_limited` (429), `email_failed` (503). |
+| POST | `/auth/otp/verify` | Public | Body: `email`, `code` (6 digits). On success: sets `email_verified_at`, flips `pending_verification` → `active`, issues Sanctum token (user logged in). Code is bcrypt-hashed at rest, 10-min expiry, max 5 attempts then invalidated. Machine codes: `invalid` (422), `expired` (410), `too_many_attempts` (429), `not_found` (404), `already_verified` (409). |
 
-**Email verification (Round 2):** registration (all roles, including first-time social sign-ups without a provider-verified email) sends a branded HTML + plain-text verification email with a 24h token link to `{FRONTEND_URL}/verify-email?token=…`. Only the token's SHA-256 digest is stored. Gated routes — contributor dashboard, wallet actions, task start/submit, campaign create/fund/draft/launch, business task writes — answer `403 { code: "email_not_verified" }` for unverified users. Login itself is never gated (users need to log in to resend).
+**Email verification (signup hardening):** new email signups collect a phone number and verify via OTP before the account activates — no token at registration, and password login answers `403 { code: "email_unverified" }` while pending. The legacy token-link flow (`/auth/email/verify`, 24h) is kept for pre-existing accounts. Google OAuth users are unaffected (provider-verified emails need no OTP). Gated routes — contributor dashboard, wallet actions, task start/submit, campaign create/fund/draft/launch, business task writes — answer `403 { code: "email_not_verified" }` for unverified users.
+
+**SMTP requirement:** OTP emails go through Laravel's mailer. If mail cannot be delivered, registration FAILS LOUDLY with `503 { code: "email_failed" }` and rolls back (no half-created account). Production MUST set `MAIL_MAILER=smtp` + `MAIL_HOST/PORT/USERNAME/PASSWORD/ENCRYPTION` + `MAIL_FROM_ADDRESS/NAME` (see `.env.example`) — without working SMTP, signup cannot complete.
+
+**Email verification (Round 2, legacy):** pre-existing unverified accounts can still use the branded HTML + plain-text verification email with a 24h token link to `{FRONTEND_URL}/verify-email?token=…`. Only the token's SHA-256 digest is stored. Password login is gated ONLY for accounts created via the new OTP signup flow while they are still `pending_verification` (403 `email_unverified`); older `active` accounts log in regardless of verification state (money/task write paths stay gated until verified).
 
 **Risk telemetry (Phase 2 + Round 2):** every login writes a `fraud_events` row. A device fingerprint never seen for the user is flagged `new_device_login` (medium/flagged) for moderator review; repeat devices log as `login` (low/reviewed). Registration records `registration_ip`; 3+ accounts from one IP in 30 days flags `multi_account` (medium). Round 2 adds: `failed_login` rows on every bad credential (low/reviewed), `rapid_failed_logins` when 5+ failures come from one IP in 10 minutes (medium/flagged), and `country_mismatch` when the Cloudflare country header disagrees with the profile country (medium/flagged). Telemetry never blocks auth and never claims automated verdicts.
 

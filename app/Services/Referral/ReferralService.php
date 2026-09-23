@@ -58,8 +58,10 @@ class ReferralService
             }
             $seen[] = $current->id;
 
-            if ($current->status !== 'active') {
-                break; // the chain stops at an inactive account
+            if ($current->status === 'suspended') {
+                break; // the chain stops at a suspended account. Note:
+                // pending_verification signups still build chains — their
+                // rewards only pay out on qualification (verified email).
             }
 
             if ((int) $current->id === (int) $referee->id) {

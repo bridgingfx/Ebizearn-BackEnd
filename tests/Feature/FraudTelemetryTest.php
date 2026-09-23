@@ -31,9 +31,16 @@ class FraudTelemetryTest extends TestCase
             'password' => 'V3r1fy!Strong',
             'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ]);
         $resp->assertStatus(201);
-        return [$resp->json('data.user'), User::where('email', $email)->firstOrFail()];
+        // Fraud telemetry tests exercise the login path, not verification:
+        // activate the account in setup (mirrors a verified user).
+        $user = User::where('email', $email)->firstOrFail();
+        $user->forceFill(['status' => 'active'])->save();
+
+        return [$resp->json('data.user'), $user->fresh()];
     }
 
     public function test_registration_records_ip_and_logs_event(): void

@@ -55,6 +55,8 @@ class RoleRegistrationTest extends TestCase
             'email' => 'cara@example.com',
             'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ]);
         $contributor->assertStatus(201)->assertJsonPath('data.user.role', 'contributor');
 
@@ -63,6 +65,8 @@ class RoleRegistrationTest extends TestCase
             'email' => 'biz@example.com',
             'password' => 'V3r1fy!Strong',
             'role' => 'business',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
             'company_name' => 'Acme LLC',
         ]);
         $business->assertStatus(201)->assertJsonPath('data.user.role', 'business');

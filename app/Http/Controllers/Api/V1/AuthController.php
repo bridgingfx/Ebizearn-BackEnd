@@ -10,6 +10,8 @@ use App\Models\SocialAccount;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Rules\StrongPassword;
+use App\Exceptions\EmailOtpException;
+use App\Services\Auth\EmailOtpService;
 use App\Services\Auth\EmailVerificationService;
 use App\Services\Auth\SocialTokenVerifier;
 use App\Services\Auth\SocialTokenVerificationException;
@@ -54,6 +56,24 @@ class AuthController extends Controller
             'country_code' => 'nullable|string|max:4',
             'referral_code' => 'nullable|string|max:32',
             'company_name' => 'required_if:role,business|nullable|string|max:255',
+            // Signup hardening: phone is mandatory on email signup. The
+            // country code must be a real dial code from the allow-list
+            // (config/phone.php); the number is digits only, 4-15 chars.
+            // Persisted as a single E.164 value on users.phone.
+            'phone_country_code' => [
+                'required',
+                'string',
+                function (string $attribute, mixed $value, \Closure $fail) {
+                    $code = ltrim(trim((string) $value), '+');
+                    if (!preg_match('/^\d{1,4}$/', $code)
+                        || !in_array($code, config('phone.allowed_codes', []), true)) {
+                        $fail('The selected phone country code is invalid.');
+                    }
+                },
+            ],
+            'phone_number' => ['required', 'string', 'regex:/^\d{4,15}$/'],
+        ], [
+            'phone_number.regex' => 'The phone number must contain 4-15 digits only.',
         ]);
 
         if ($validator->fails()) {
@@ -66,87 +86,115 @@ class AuthController extends Controller
 
         $validated = $validator->validated();
 
+        $phone = EmailOtpService::normalizePhone(
+            $validated['phone_country_code'],
+            $validated['phone_number'],
+        );
+
+        if ($phone === null) {
+            // Unreachable through the validator above (defense in depth).
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => ['phone_country_code' => ['The selected phone country code is invalid.']],
+            ], 422);
+        }
+
         // Check referrer
         $referrer = null;
         if (!empty($validated['referral_code'])) {
             $referrer = User::where('referral_code', strtoupper($validated['referral_code']))->first();
         }
 
-        $user = User::create([
-            'uuid' => (string) Str::uuid(),
-            'name' => $validated['name'],
-            'email' => $validated['email'],
-            'password' => Hash::make($validated['password']),
-            'role' => $validated['role'],
-            'status' => 'active',
-            'referrer_id' => $referrer?->id,
-            // Round 2: accounts start UNVERIFIED. The verification email is
-            // sent below; money/task write paths are gated until verified.
-            'email_verified_at' => null,
-        ]);
-
-        // Create Profile
-        Profile::create([
-            'user_id' => $user->id,
-            'country_code' => $validated['country_code'] ?? 'AE',
-            'language' => 'en',
-            'contributor_level' => 'starter',
-            'fraud_score' => 0,
-        ]);
-
-        // Create Wallet
-        $wallet = Wallet::create([
-            'user_id' => $user->id,
-            'currency' => 'USD',
-            'available_balance_cents' => 0,
-            'pending_balance_cents' => 0,
-            'lifetime_earnings_cents' => 0,
-            'total_withdrawn_cents' => 0,
-        ]);
-
-        // Create Business profile if business role
-        if ($user->role === 'business') {
-            Business::create([
-                'owner_id' => $user->id,
-                'company_name' => $validated['company_name'] ?? $user->name . ' Co',
-                'status' => 'active',
-            ]);
-        }
-
-        // Phase 8: resolve the multi-level referral chain (?ref= code).
-        // One Referral row per level; rewards are paid only after the
-        // qualification rules (see ReferralService::qualifyAndReward).
-        if ($referrer) {
-            app(\App\Services\Referral\ReferralService::class)->buildChain($user->load('referrer'));
-        }
-
-        $emails->sendEvent('welcome_' . $user->role, $user->email, ['user_name' => $user->name]);
-
-        // Round 2 — verification email. A mailer outage must not fail the
-        // registration itself: the token is persisted above, so the user can
-        // always request a resend.
+        // Signup hardening: the account is created PENDING verification —
+        // no Sanctum token is issued here. The OTP email goes out below;
+        // POST /api/v1/auth/otp/verify activates the account and logs the
+        // user in. Everything runs in one transaction so a failed email
+        // send never leaves a half-created account behind.
         try {
-            app(EmailVerificationService::class)->issue($user);
-        } catch (Exception $e) {
-            Log::warning('Verification email failed at registration', [
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-            ]);
+            $result = \Illuminate\Support\Facades\DB::transaction(function () use ($validated, $referrer, $phone, $emails, $request) {
+                $user = User::create([
+                    'uuid' => (string) Str::uuid(),
+                    'name' => $validated['name'],
+                    'email' => $validated['email'],
+                    'phone' => $phone,
+                    'password' => Hash::make($validated['password']),
+                    'role' => $validated['role'],
+                    'status' => 'pending_verification',
+                    'referrer_id' => $referrer?->id,
+                    'email_verified_at' => null,
+                ]);
+
+                // Create Profile
+                Profile::create([
+                    'user_id' => $user->id,
+                    'country_code' => $validated['country_code'] ?? 'AE',
+                    'language' => 'en',
+                    'contributor_level' => 'starter',
+                    'fraud_score' => 0,
+                ]);
+
+                // Create Wallet
+                Wallet::create([
+                    'user_id' => $user->id,
+                    'currency' => 'USD',
+                    'available_balance_cents' => 0,
+                    'pending_balance_cents' => 0,
+                    'lifetime_earnings_cents' => 0,
+                    'total_withdrawn_cents' => 0,
+                ]);
+
+                // Create Business profile if business role
+                if ($user->role === 'business') {
+                    Business::create([
+                        'owner_id' => $user->id,
+                        'company_name' => $validated['company_name'] ?? $user->name . ' Co',
+                        'status' => 'active',
+                    ]);
+                }
+
+                // Phase 8: resolve the multi-level referral chain (?ref= code).
+                // One Referral row per level; rewards are paid only after the
+                // qualification rules (see ReferralService::qualifyAndReward).
+                if ($referrer) {
+                    app(\App\Services\Referral\ReferralService::class)->buildChain($user->load('referrer'));
+                }
+
+                $emails->sendEvent('welcome_' . $user->role, $user->email, ['user_name' => $user->name]);
+
+                // Signup hardening — OTP email. A mailer outage FAILS the
+                // registration loudly (503): the transaction rolls back, no
+                // half-created account, no silently-missing code. The server
+                // MUST have working SMTP (see MAIL_* in .env.example).
+                $expiresIn = app(EmailOtpService::class)->issue($user, $request->ip());
+
+                // Phase 2 / Priority 7 — log the registration + screen for
+                // duplicate accounts from the same IP/device (flagged for review,
+                // never auto-blocked).
+                $this->screenRegistrationForDuplicates($request, $user);
+
+                return [$user, $expiresIn];
+            });
+        } catch (EmailOtpException $e) {
+            return response()->json([
+                'success' => false,
+                'code' => $e->errorCode,
+                'message' => $e->getMessage(),
+            ], $e->status);
         }
 
-        // Phase 2 / Priority 7 — log the registration + screen for
-        // duplicate accounts from the same IP/device (flagged for review,
-        // never auto-blocked).
-        $this->screenRegistrationForDuplicates($request, $user);
-
-        $token = $user->createToken('auth_token')->plainTextToken;
+        [$user, $expiresIn] = $result;
 
         return response()->json([
             'success' => true,
-            'message' => 'Registration successful',
+            'message' => 'Account created. Enter the 6-digit code sent to your email to activate it.',
             'data' => [
                 'user' => $user->load(['profile', 'wallet', 'business']),
-                'token' => $token,
+                'requires_otp' => true,
+                'otp' => [
+                    'expires_in_seconds' => $expiresIn,
+                    'resend_cooldown_seconds' => EmailOtpService::RESEND_COOLDOWN_SECONDS,
+                ],
             ],
         ], 201);
     }
@@ -187,6 +235,18 @@ class AuthController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Your account has been suspended for compliance review. Contact support@ebizearn.com.',
+            ], 403);
+        }
+
+        // Signup hardening: an email signup stays pending until the OTP is
+        // verified — password login cannot bypass the OTP gate. Pre-existing
+        // accounts (status active, even if unverified) are unaffected, and
+        // Google OAuth users are verified out-of-band.
+        if ($user->status === 'pending_verification' && !$user->email_verified_at) {
+            return response()->json([
+                'success' => false,
+                'code' => 'email_unverified',
+                'message' => 'Please verify the 6-digit code sent to your email to activate your account.',
             ], 403);
         }
 

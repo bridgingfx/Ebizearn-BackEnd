@@ -62,6 +62,9 @@ class EmailVerificationService
             'email_verified_at' => now(),
             'email_verification_token' => null,
             'email_verification_sent_at' => null,
+            // Signup hardening: verifying the address also activates an
+            // account that was still pending OTP verification.
+            'status' => $user->status === 'pending_verification' ? 'active' : $user->status,
         ])->save();
 
         return $user->fresh();

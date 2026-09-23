@@ -56,6 +56,8 @@ class ReferralRulesTest extends TestCase
             'email' => $email,
             'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ];
 
         if ($refCode) {

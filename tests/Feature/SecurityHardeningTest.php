@@ -52,6 +52,8 @@ class SecurityHardeningTest extends TestCase
             'email' => 'weak-' . md5($password) . '@example.com',
             'password' => $password,
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('password');
@@ -77,6 +79,8 @@ class SecurityHardeningTest extends TestCase
             'email' => 'strong@example.com',
             'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ])->assertStatus(201);
     }
 
@@ -88,6 +92,8 @@ class SecurityHardeningTest extends TestCase
                 'email' => "throttle{$i}@example.com",
                 'password' => 'V3r1fy!Strong',
                 'role' => 'contributor',
+                "phone_country_code" => "+971",
+                "phone_number" => "501234567",
             ])->assertStatus(201);
         }
 
@@ -97,6 +103,8 @@ class SecurityHardeningTest extends TestCase
             'email' => 'throttle5@example.com',
             'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ])->assertStatus(429)->assertJson(['code' => 'rate_limited']);
     }
 

@@ -91,6 +91,7 @@ class ErrorHandlingTest extends TestCase
             'email' => 'err-contrib@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'contributor',
+            "phone" => "+971501234567",
             'status' => 'active',
             'email_verified_at' => now(),
         ]);
@@ -115,6 +116,7 @@ class ErrorHandlingTest extends TestCase
             'email' => 'err-contrib2@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'contributor',
+            "phone" => "+971501234567",
             'status' => 'active',
             'email_verified_at' => now(),
         ]);

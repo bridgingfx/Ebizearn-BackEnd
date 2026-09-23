@@ -46,6 +46,7 @@ class ContributorWorkflowTest extends TestCase
             'email' => 'workflow-biz@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'business',
+            "phone" => "+971501234567",
             'status' => 'active',
             'email_verified_at' => now(),
         ]);
@@ -109,9 +110,11 @@ class ContributorWorkflowTest extends TestCase
             'email' => 'earner@example.com',
             'password' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ]);
         $reg->assertStatus(201);
-        $this->assertNotEmpty($reg->json('data.token'));
+        $this->assertTrue($reg->json('data.requires_otp'));
 
         // Round 2: wallet/task write paths are email-gated — verify in setup.
         User::where('email', 'earner@example.com')->firstOrFail()
@@ -264,6 +267,8 @@ class ContributorWorkflowTest extends TestCase
             'password' => 'V3r1fy!Strong',
             'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ])->assertStatus(201);
         $contributor = User::where('email', $email)->firstOrFail();
         // Round 2: task start/submit are email-gated — verify in setup.

@@ -127,5 +127,33 @@ class RouteServiceProvider extends ServiceProvider
                 ], 429);
             });
         });
+
+        // Signup hardening — OTP endpoints. These middleware limits are a
+        // backstop against request floods; the real policy (5 sends/hour
+        // per email AND per IP, 60s resend cooldown, 5 verify attempts)
+        // is enforced in EmailOtpService.
+        RateLimiter::for('otp-send', function (Request $request) {
+            $key = strtolower(trim((string) $request->input('email'))).'|'.$request->ip();
+
+            return Limit::perMinute(10)->by($key)->response(function (Request $request) {
+                return response()->json([
+                    'success' => false,
+                    'code' => 'rate_limited',
+                    'message' => 'Too many code requests. Please wait and try again.',
+                ], 429);
+            });
+        });
+
+        RateLimiter::for('otp-verify', function (Request $request) {
+            $key = strtolower(trim((string) $request->input('email'))).'|'.$request->ip();
+
+            return Limit::perMinute(20)->by($key)->response(function (Request $request) {
+                return response()->json([
+                    'success' => false,
+                    'code' => 'rate_limited',
+                    'message' => 'Too many verification attempts. Please wait and try again.',
+                ], 429);
+            });
+        });
     }
 }

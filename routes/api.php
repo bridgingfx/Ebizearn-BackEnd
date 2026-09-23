@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\DemoRequestController;
 use App\Http\Controllers\Api\V1\Ops\OpsAdminController;
 use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
 use App\Http\Controllers\Api\V1\Ops\OpsTaskTypeController;
+use App\Http\Controllers\Api\V1\OtpController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
@@ -46,6 +47,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:password-reset');
         // Round 2: email verification (public — the token is the credential).
         Route::post('/email/verify', [AuthController::class, 'verifyEmail']);
+        // Signup hardening: 6-digit email OTP send / verify. Replaces the
+        // token-link flow for new email signups (the legacy flow above is
+        // kept for pre-existing accounts).
+        Route::post('/otp/send', [OtpController::class, 'send'])->middleware('throttle:otp-send');
+        Route::post('/otp/verify', [OtpController::class, 'verify'])->middleware('throttle:otp-verify');
     });
 
     // 3. Public Marketplace Preview

@@ -8,6 +8,7 @@ use App\Services\Auth\EmailVerificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -30,14 +31,18 @@ class EmailVerificationTest extends TestCase
 
     protected function registerUnverified(string $email): User
     {
-        $this->postJson('/api/v1/auth/register', [
+        // The legacy token-link flow serves PRE-EXISTING unverified accounts
+        // (new signups go through OTP), so build one directly: active
+        // status, unverified email.
+        return User::create([
+            'uuid' => (string) Str::uuid(),
             'name' => 'Verify Me',
             'email' => $email,
-            'password' => 'V3r1fy!Strong',
+            'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'contributor',
-        ])->assertStatus(201);
-
-        return User::where('email', $email)->firstOrFail();
+            'status' => 'active',
+            'email_verified_at' => null,
+        ]);
     }
 
     protected function issueToken(User $user): string
@@ -58,15 +63,21 @@ class EmailVerificationTest extends TestCase
         return ['Authorization' => 'Bearer ' . $login->json('data.token')];
     }
 
-    public function test_registration_sends_verification_email_and_starts_unverified(): void
+    public function test_verification_email_issue_stores_digest_and_sends_branded_email(): void
     {
         $user = $this->registerUnverified('verify1@example.com');
 
+        $url = app(EmailVerificationService::class)->issue($user);
+        parse_str(parse_url($url, PHP_URL_QUERY), $query);
+        $this->assertNotEmpty($query['token'] ?? null);
+
+        $user = $user->fresh();
         $this->assertNull($user->email_verified_at);
         $this->assertFalse($user->email_verified);
         $this->assertNotNull($user->email_verification_token);
         // Digest-only storage: the raw token is not the stored value.
         $this->assertSame(64, strlen($user->email_verification_token));
+        $this->assertSame(hash('sha256', $query['token']), $user->email_verification_token);
 
         Mail::assertSent(VerifyEmail::class, function (VerifyEmail $mail) {
             return $mail->hasTo('verify1@example.com')

@@ -65,6 +65,8 @@ class BusinessWorkflowTest extends TestCase
             'password' => 'V3r1fy!Strong',
             'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'business',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
             'company_name' => 'Test Co LLC',
         ]);
         $reg->assertStatus(201);
@@ -155,7 +157,13 @@ class BusinessWorkflowTest extends TestCase
             'password' => 'V3r1fy!Strong',
             'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "phone_country_code" => "+971",
+            "phone_number" => "501234567",
         ])->assertStatus(201);
+        // The feed check needs an authenticated contributor — activate in
+        // setup (mirrors a verified user).
+        User::where('email', $contribEmail)->firstOrFail()
+            ->forceFill(['status' => 'active', 'email_verified_at' => now()])->save();
         $contribToken = $this->loginAndGetToken($contribEmail, 'contributor');
 
         $feedBefore = $this->withHeaders(['Authorization' => 'Bearer ' . $contribToken])

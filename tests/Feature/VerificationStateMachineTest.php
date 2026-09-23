@@ -164,7 +164,7 @@ class VerificationStateMachineTest extends TestCase
 
     protected function registerContributor(string $name, string $email, ?string $refCode = null): User
     {
-        $payload = ['name' => $name, 'email' => $email, 'password' => 'V3r1fy!Strong', 'role' => 'contributor'];
+        $payload = ['name' => $name, 'email' => $email, 'password' => 'V3r1fy!Strong', 'role' => 'contributor', 'phone_country_code' => '+971', 'phone_number' => '501234567'];
         if ($refCode) {
             $payload['referral_code'] = $refCode;
         }
