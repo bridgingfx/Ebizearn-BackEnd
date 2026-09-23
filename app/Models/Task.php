@@ -13,6 +13,13 @@ class Task extends Model
 {
     use HasFactory, SoftDeletes;
 
+    /**
+     * Never serialize internal anti-fraud configuration to API consumers.
+     * The public task browse/detail endpoints are unauthenticated, so
+     * fraud_rules_json must not leak (contributors could game the rules).
+     */
+    protected $hidden = ['fraud_rules_json'];
+
     protected $fillable = [
         'uuid',
         'campaign_id',

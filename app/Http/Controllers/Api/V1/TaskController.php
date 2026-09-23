@@ -90,12 +90,18 @@ class TaskController extends Controller
 
     /**
      * Get detailed task information including campaign guidelines and proof requirements.
+     *
+     * Public endpoint: scoped to available tasks in active campaigns, mirroring
+     * index(). Draft/paused tasks must not be enumerable without authentication.
      */
     public function show(string $id): JsonResponse
     {
         $task = Task::with(['category', 'campaign.business'])
-            ->where('id', $id)
-            ->orWhere('uuid', $id)
+            ->where('status', 'available')
+            ->whereHas('campaign', fn ($q) => $q->where('status', 'active'))
+            ->where(function ($q) use ($id) {
+                $q->where('tasks.id', $id)->orWhere('tasks.uuid', $id);
+            })
             ->firstOrFail();
 
         return response()->json([
