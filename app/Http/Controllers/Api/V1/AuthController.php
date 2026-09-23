@@ -198,7 +198,7 @@ class AuthController extends Controller
         $portalRoles = [
             'contributor' => ['contributor'],
             'business' => ['business'],
-            'moderator' => ['moderator'],
+            'moderator' => ['moderator', 'admin'],
             'superadmin' => ['superadmin'],
         ];
 
