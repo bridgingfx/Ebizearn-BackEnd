@@ -118,6 +118,7 @@ Route::prefix('v1')->group(function () {
             // ==============================================================
             Route::post('/campaigns/wizard/preview', [CampaignWizardController::class, 'preview']);
             Route::post('/campaigns/wizard/draft', [CampaignWizardController::class, 'draft'])->middleware('email.verified');
+            Route::patch('/campaigns/wizard/draft/{id}', [CampaignWizardController::class, 'updateDraft'])->middleware('email.verified');
             Route::post('/campaigns/{id}/launch', [CampaignWizardController::class, 'launch'])->middleware('email.verified');
 
             // ==============================================================

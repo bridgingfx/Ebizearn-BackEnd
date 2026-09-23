@@ -116,6 +116,7 @@ class BusinessCampaignController extends Controller
             'objective' => 'nullable|string|max:255',
             'description' => 'required|string',
             'category_id' => 'required|exists:task_categories,id',
+            'platform' => 'nullable|string|max:64',
             'reward_per_task_cents' => 'required|integer|min:20', // Min $0.20
             'task_type_key' => 'required|string|exists:task_types,key',
             'target_contributors_count' => 'required|integer|min:5',
@@ -190,6 +191,7 @@ class BusinessCampaignController extends Controller
                     'uuid' => (string) Str::uuid(),
                     'business_id' => $business->id,
                     'category_id' => $validated['category_id'],
+                    'platform' => $validated['platform'] ?? null,
                     'title' => $validated['title'],
                     'objective' => $validated['objective'] ?? null,
                     'description' => $validated['description'],
@@ -243,6 +245,7 @@ class BusinessCampaignController extends Controller
                     'campaign_id' => $camp->id,
                     'category_id' => $camp->category_id,
                     'task_type_id' => $type->id,
+                    'platform' => $camp->platform,
                     'title' => $camp->title,
                     'reward_cents' => $rewardPerTask,
                     'proof_required_json' => $type->proof_required_json,

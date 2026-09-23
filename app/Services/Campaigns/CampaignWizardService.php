@@ -80,6 +80,7 @@ class CampaignWizardService
             'uuid' => (string) Str::uuid(),
             'business_id' => $business->id,
             'category_id' => $data['category_id'],
+            'platform' => $data['platform'] ?? null,
             'title' => $data['title'],
             'objective' => $data['objective'] ?? null,
             'description' => $data['description'] ?? $data['title'],
@@ -101,6 +102,56 @@ class CampaignWizardService
 
         // Stash the wizard answers on the draft so launch() can materialize
         // the task pool from them (no schema change needed).
+        $this->stashWizardAnswers($campaign, [
+            'task_type_id' => $type->id,
+            'task_type_key' => $type->key,
+            'task_title' => $data['task_title'] ?? null,
+            'platform' => $data['platform'] ?? null,
+            'country_code' => $data['country_code'] ?? null,
+            'instructions' => $data['instructions'] ?? null,
+            'proof_required' => $data['proof_requirements'] ?? $type->proof_required_json,
+            'retention_days' => $data['retention_days'] ?? $type->retention_period_days,
+            'estimated_minutes' => $data['estimated_minutes'] ?? 5,
+            'difficulty' => $data['difficulty'] ?? 'easy',
+        ]);
+
+        return $campaign->fresh();
+    }
+
+    /**
+     * Round 3: update a saved draft in place (resume-editing). Re-runs the
+     * type band check and budget math, refreshes the row and the stashed
+     * wizard answers. No money moves.
+     */
+    public function updateDraft(Campaign $campaign, array $data): Campaign
+    {
+        $type = $this->bands->resolveType($data['task_type_key']);
+        $this->bands->assertWithinBand($type, (int) $data['reward_cents']);
+
+        $preview = $this->preview([
+            'reward_cents' => (int) $data['reward_cents'],
+            'contributors' => (int) $data['contributors'],
+        ]);
+
+        $campaign->update([
+            'category_id' => $data['category_id'],
+            'platform' => $data['platform'] ?? null,
+            'title' => $data['title'],
+            'objective' => $data['objective'] ?? null,
+            'description' => $data['description'] ?? $data['title'],
+            'instructions_markdown' => $data['instructions'] ?? '',
+            'proof_requirements_json' => $data['proof_requirements'] ?? $type->proof_required_json,
+            'total_budget_cents' => $preview['total_due_cents'],
+            'remaining_budget_cents' => $preview['tasks_budget_cents'],
+            'reward_per_task_cents' => $preview['reward_cents'],
+            'platform_fee_cents' => $preview['platform_fee_cents'],
+            'target_contributors_count' => $preview['contributors'],
+            'target_countries_json' => $data['countries'] ?? ['ALL'],
+            'target_languages_json' => $data['languages'] ?? ['en'],
+            'min_contributor_level' => $data['min_contributor_level'] ?? 'starter',
+            'retention_hours' => (int) ($data['retention_days'] ?? $type->retention_period_days ?? 0) * 24,
+        ]);
+
         $this->stashWizardAnswers($campaign, [
             'task_type_id' => $type->id,
             'task_type_key' => $type->key,
@@ -176,7 +227,7 @@ class CampaignWizardService
                 'category_id' => $locked->category_id,
                 'task_type_id' => $wizard['task_type_id'],
                 'title' => $wizard['task_title'] ?? $locked->title,
-                'platform' => $wizard['platform'],
+                'platform' => $locked->platform ?? $wizard['platform'],
                 'country_code' => $wizard['country_code'],
                 'instructions' => $wizard['instructions'],
                 'proof_required_json' => $wizard['proof_required'],

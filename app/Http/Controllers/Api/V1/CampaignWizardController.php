@@ -71,26 +71,7 @@ class CampaignWizardController extends Controller
             return response()->json(['success' => false, 'message' => 'Business profile not found.'], 404);
         }
 
-        $validator = Validator::make($request->all(), [
-            'title' => 'required|string|max:255',
-            'task_title' => 'nullable|string|max:255',
-            'objective' => 'nullable|string|max:255',
-            'description' => 'nullable|string',
-            'category_id' => 'required|exists:task_categories,id',
-            'task_type_key' => 'required|string|exists:task_types,key',
-            'platform' => 'nullable|string|max:64',
-            'country_code' => 'nullable|string|max:8',
-            'instructions' => 'nullable|string',
-            'proof_requirements' => 'nullable|array',
-            'reward_cents' => 'required|integer|min:1',
-            'contributors' => 'required|integer|min:1|max:100000',
-            'retention_days' => 'nullable|integer|min:0|max:365',
-            'estimated_minutes' => 'nullable|integer|min:1|max:480',
-            'difficulty' => 'nullable|in:easy,medium,hard',
-            'countries' => 'nullable|array',
-            'languages' => 'nullable|array',
-            'min_contributor_level' => 'nullable|in:starter,explorer,trusted,pro,elite',
-        ]);
+        $validator = Validator::make($request->all(), $this->draftRules());
 
         if ($validator->fails()) {
             return response()->json(['success' => false, 'message' => 'Validation error', 'errors' => $validator->errors()], 422);
@@ -109,6 +90,72 @@ class CampaignWizardController extends Controller
             'message' => 'Draft saved. Launch it to reserve the budget and go live.',
             'data' => $campaign->load(['category']),
         ], 201);
+    }
+
+    /**
+     * Round 3: update a saved draft (resume-editing in the wizard).
+     * Only drafts can be edited; anything already launched/funded is
+     * immutable through this endpoint.
+     */
+    public function updateDraft(Request $request, string $id): JsonResponse
+    {
+        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+
+        Gate::authorize('update', $campaign);
+
+        if ($campaign->status !== 'draft') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only draft campaigns can be edited.',
+            ], 422);
+        }
+
+        $validator = Validator::make($request->all(), $this->draftRules());
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'message' => 'Validation error', 'errors' => $validator->errors()], 422);
+        }
+
+        try {
+            $campaign = $this->wizard->updateDraft($campaign, $validator->validated());
+        } catch (RewardBandViolationException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Draft updated.',
+            'data' => $campaign->load(['category']),
+        ]);
+    }
+
+    /**
+     * Shared validation for draft create + draft update.
+     */
+    protected function draftRules(): array
+    {
+        return [
+            'title' => 'required|string|max:255',
+            'task_title' => 'nullable|string|max:255',
+            'objective' => 'nullable|string|max:255',
+            'description' => 'nullable|string',
+            'category_id' => 'required|exists:task_categories,id',
+            'task_type_key' => 'required|string|exists:task_types,key',
+            'platform' => 'nullable|string|max:64',
+            'country_code' => 'nullable|string|max:8',
+            'instructions' => 'nullable|string',
+            'proof_requirements' => 'nullable|array',
+            'reward_cents' => 'required|integer|min:1',
+            'contributors' => 'required|integer|min:1|max:100000',
+            'retention_days' => 'nullable|integer|min:0|max:365',
+            'estimated_minutes' => 'nullable|integer|min:1|max:480',
+            'difficulty' => 'nullable|in:easy,medium,hard',
+            'countries' => 'nullable|array',
+            'languages' => 'nullable|array',
+            'min_contributor_level' => 'nullable|in:starter,explorer,trusted,pro,elite',
+        ];
     }
 
     /**

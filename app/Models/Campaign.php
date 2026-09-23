@@ -17,6 +17,7 @@ class Campaign extends Model
         'uuid',
         'business_id',
         'category_id',
+        'platform',
         'title',
         'objective',
         'description',
