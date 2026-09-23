@@ -9,6 +9,7 @@ use App\Models\Profile;
 use App\Models\SocialAccount;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Rules\PhoneCountryCode;
 use App\Rules\StrongPassword;
 use App\Exceptions\EmailOtpException;
 use App\Services\Auth\EmailOtpService;
@@ -60,17 +61,7 @@ class AuthController extends Controller
             // country code must be a real dial code from the allow-list
             // (config/phone.php); the number is digits only, 4-15 chars.
             // Persisted as a single E.164 value on users.phone.
-            'phone_country_code' => [
-                'required',
-                'string',
-                function (string $attribute, mixed $value, \Closure $fail) {
-                    $code = ltrim(trim((string) $value), '+');
-                    if (!preg_match('/^\d{1,4}$/', $code)
-                        || !in_array($code, config('phone.allowed_codes', []), true)) {
-                        $fail('The selected phone country code is invalid.');
-                    }
-                },
-            ],
+            'phone_country_code' => ['required', 'string', new PhoneCountryCode()],
             'phone_number' => ['required', 'string', 'regex:/^\d{4,15}$/'],
         ], [
             'phone_number.regex' => 'The phone number must contain 4-15 digits only.',

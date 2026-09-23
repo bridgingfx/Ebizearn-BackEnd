@@ -73,6 +73,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('throttle:email-resend');
 
         // Profile
+        Route::put('/profile', [ProfileController::class, 'update']);
         Route::post('/profile/avatar', [ProfileController::class, 'uploadAvatar']);
         Route::delete('/profile/avatar', [ProfileController::class, 'removeAvatar']);
 
