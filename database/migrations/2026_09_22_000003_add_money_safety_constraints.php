@@ -26,8 +26,18 @@ return new class extends Migration
         $this->dedupe('task_submissions', ['task_id', 'user_id'], 'status');
         $this->dedupe('profiles', ['user_id']);
 
+        // The plain composite index this replaces may not exist under Laravel's
+        // conventional name on every environment (schema history differs per
+        // deploy target), so drop it defensively rather than assuming it's there.
         Schema::table('task_assignments', function (Blueprint $table) {
-            $table->dropIndex(['task_id', 'user_id']);
+            try {
+                $table->dropIndex(['task_id', 'user_id']);
+            } catch (\Throwable $e) {
+                // Nothing to drop under that name; the unique constraint below still applies.
+            }
+        });
+
+        Schema::table('task_assignments', function (Blueprint $table) {
             $table->unique(['task_id', 'user_id']);
         });
 
