@@ -28,14 +28,16 @@ return new class extends Migration
 
         // The plain composite index this replaces may not exist under Laravel's
         // conventional name on every environment (schema history differs per
-        // deploy target), so drop it defensively rather than assuming it's there.
-        Schema::table('task_assignments', function (Blueprint $table) {
-            try {
+        // deploy target). Blueprint commands only run once the closure returns
+        // and Schema::table() builds them, so the try/catch has to wrap this
+        // whole call, not the dropIndex() line, to actually catch the failure.
+        try {
+            Schema::table('task_assignments', function (Blueprint $table) {
                 $table->dropIndex(['task_id', 'user_id']);
-            } catch (\Throwable $e) {
-                // Nothing to drop under that name; the unique constraint below still applies.
-            }
-        });
+            });
+        } catch (\Throwable $e) {
+            // Nothing to drop under that name; the unique constraint below still applies.
+        }
 
         Schema::table('task_assignments', function (Blueprint $table) {
             $table->unique(['task_id', 'user_id']);
