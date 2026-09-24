@@ -19,6 +19,8 @@ use App\Http\Controllers\Api\V1\OtpController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
+use App\Http\Controllers\Api\V1\StaffKycController;
+use App\Http\Controllers\Api\V1\SupportTicketController;
 use App\Http\Controllers\Api\V1\TaskController;
 use App\Http\Controllers\Api\V1\TaskTypeController;
 use App\Http\Controllers\Api\V1\WalletController;
@@ -76,6 +78,17 @@ Route::prefix('v1')->group(function () {
         Route::put('/profile', [ProfileController::class, 'update']);
         Route::post('/profile/avatar', [ProfileController::class, 'uploadAvatar']);
         Route::delete('/profile/avatar', [ProfileController::class, 'removeAvatar']);
+        // KYC: submit identity documents (private disk, reviewed via /staff/kyc).
+        Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
+            ->middleware(['role:contributor,business', 'throttle:10,1']);
+
+        // In-app support tickets (own tickets only).
+        Route::middleware('role:contributor,business')->prefix('support/tickets')->group(function () {
+            Route::get('/', [SupportTicketController::class, 'index']);
+            Route::post('/', [SupportTicketController::class, 'store'])->middleware('throttle:10,1');
+            Route::get('/{uuid}', [SupportTicketController::class, 'show']);
+            Route::post('/{uuid}/messages', [SupportTicketController::class, 'reply'])->middleware('throttle:30,1');
+        });
 
         // Contributor Endpoints
         Route::middleware('role:contributor')->prefix('contributor')->group(function () {
@@ -206,6 +219,22 @@ Route::prefix('v1')->group(function () {
             Route::get('/submissions/{id}', [AdminVerificationController::class, 'submissionDetail']);
             Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
             Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts']);
+        });
+
+        // Support desk: the shared ticket queue (handle_disputes).
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:handle_disputes'])->prefix('staff/support')->group(function () {
+            Route::get('/tickets', [SupportTicketController::class, 'staffIndex']);
+            Route::get('/tickets/{uuid}', [SupportTicketController::class, 'staffShow']);
+            Route::post('/tickets/{uuid}/messages', [SupportTicketController::class, 'staffReply']);
+            Route::patch('/tickets/{uuid}', [SupportTicketController::class, 'staffUpdate']);
+        });
+
+        // KYC review queue (review_submissions — same staff who verify proofs).
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:review_submissions'])->prefix('staff/kyc')->group(function () {
+            Route::get('/', [StaffKycController::class, 'index']);
+            Route::get('/{userId}/documents/{side}', [StaffKycController::class, 'document'])
+                ->whereIn('side', ['front', 'back', 'selfie']);
+            Route::post('/{userId}/decision', [StaffKycController::class, 'decision']);
         });
 
         Route::middleware(['role:moderator,admin,superadmin', 'permission:manage_task_templates'])->prefix('staff')->group(function () {
