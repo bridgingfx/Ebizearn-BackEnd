@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Permission;
 use App\Models\Referral;
 use App\Models\ReferralReward;
 use App\Models\ReferralRule;
@@ -78,6 +79,8 @@ class AdminReferralController extends Controller
                     'require_first_task_approved' => (bool) config('referrals.require_first_task_approved', true),
                 ],
                 'rules' => $service->rules(),
+                // Lets the UI show an editable form or a read-only view.
+                'can_edit' => (bool) request()->user()?->hasPermission(Permission::MANAGE_REFERRAL_RULES),
             ],
         ]);
     }
@@ -119,7 +122,7 @@ class AdminReferralController extends Controller
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Validation error',
+                'message' => $validator->errors()->first(),
                 'errors' => $validator->errors(),
             ], 422);
         }

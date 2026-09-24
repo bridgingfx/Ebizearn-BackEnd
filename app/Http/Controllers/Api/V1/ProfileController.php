@@ -6,16 +6,78 @@ use App\Http\Controllers\Controller;
 use App\Models\Profile;
 use App\Models\User;
 use App\Rules\PhoneCountryCode;
+use App\Rules\StrongPassword;
 use App\Services\Audit\AuditLogger;
 use App\Services\Auth\EmailOtpService;
 use App\Services\Email\EmailService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class ProfileController extends Controller
 {
+    /**
+     * Change the signed-in user's password.
+     *
+     * PUT /api/v1/profile/password
+     *   { current_password, password, password_confirmation }
+     *
+     * Same strong-password policy as signup/reset. On success every OTHER
+     * session (API token) is revoked so a stolen token stops working, the
+     * current session stays signed in, and a "password changed" email goes
+     * out so the owner notices if it wasn't them.
+     */
+    public function updatePassword(Request $request, EmailService $emails): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'current_password' => 'required|string',
+            'password' => ['required', 'string', 'max:128', new StrongPassword(), 'confirmed', 'different:current_password'],
+        ], [
+            'password.confirmed' => 'The new passwords do not match.',
+            'password.different' => 'Choose a new password that is different from your current one.',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $user = $request->user();
+
+        if (!Hash::check((string) $request->input('current_password'), $user->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Your current password is incorrect.',
+                'errors' => ['current_password' => ['Your current password is incorrect.']],
+            ], 422);
+        }
+
+        $user->forceFill(['password' => Hash::make((string) $request->input('password'))])->save();
+
+        // Sign out every other device; keep this session.
+        $current = $user->currentAccessToken();
+        $others = $user->tokens();
+        if ($current && isset($current->id)) {
+            $others->where('id', '!=', $current->id);
+        }
+        $revoked = $others->delete();
+
+        AuditLogger::log($user, 'user.password_changed', User::class, $user->id, ['other_sessions_revoked' => $revoked]);
+        $emails->sendEvent('password_changed', $user->email, ['user_name' => $user->name]);
+
+        return response()->json([
+            'success' => true,
+            'message' => $revoked > 0
+                ? 'Password updated. You were signed out on your other devices.'
+                : 'Password updated.',
+        ]);
+    }
+
     /**
      * Upload or replace the authenticated user's avatar (JPG/PNG/WebP, max 2MB).
      */

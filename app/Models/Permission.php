@@ -22,6 +22,8 @@ class Permission extends Model
     public const VIEW_REPORTS = 'view_reports';
     public const REVIEW_KYC = 'review_kyc';
     public const PROCESS_PAYOUTS = 'process_payouts';
+    /** Edit referral commissions (L1/L2/L3). Super Admin only by default. */
+    public const MANAGE_REFERRAL_RULES = 'manage_referral_rules';
 
     // Contributor capabilities
     public const PERFORM_TASKS = 'perform_tasks';
@@ -56,6 +58,7 @@ class Permission extends Model
             self::PROCESS_PAYOUTS => ['Approve / reject withdrawals', 'staff'],
             self::VIEW_REPORTS => ['View reports, audit logs and analytics', 'staff'],
             self::MANAGE_SETTINGS => ['Manage platform settings and feature flags', 'staff'],
+            self::MANAGE_REFERRAL_RULES => ['Change referral commissions (L1 / L2 / L3)', 'staff'],
 
             self::PERFORM_TASKS => ['Start and submit tasks', 'contributor'],
             self::REQUEST_WITHDRAWALS => ['Request wallet withdrawals', 'contributor'],

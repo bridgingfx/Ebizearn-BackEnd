@@ -77,6 +77,7 @@ Route::prefix('v1')->group(function () {
 
         // Profile
         Route::put('/profile', [ProfileController::class, 'update']);
+        Route::put('/profile/password', [ProfileController::class, 'updatePassword'])->middleware('throttle:5,1');
         Route::post('/profile/avatar', [ProfileController::class, 'uploadAvatar']);
         Route::delete('/profile/avatar', [ProfileController::class, 'removeAvatar']);
         // KYC: submit identity documents (private disk, reviewed via /staff/kyc).
@@ -213,9 +214,13 @@ Route::prefix('v1')->group(function () {
                 Route::get('/demo-requests', [DemoRequestController::class, 'index']);
             });
 
+            // Referral commissions: any admin may view; changing L1/L2/L3 needs
+            // manage_referral_rules (Super Admin, or an admin they grant it to).
+            Route::get('/referral-rules', [AdminReferralController::class, 'rules']);
+            Route::patch('/referral-rules', [AdminReferralController::class, 'updateRules'])
+                ->middleware('permission:manage_referral_rules');
+
             Route::middleware('permission:manage_settings')->group(function () {
-                Route::get('/referral-rules', [AdminReferralController::class, 'rules']); // Phase 13: view admin-controllable referral rules
-                Route::patch('/referral-rules', [AdminReferralController::class, 'updateRules']); // Phase 13: update referral rules (audited)
                 Route::get('/feature-flags', [AdminSystemController::class, 'featureFlags']);
                 Route::patch('/feature-flags/{key}', [AdminSystemController::class, 'updateFeatureFlag']);
                 Route::get('/system-settings', [AdminSystemController::class, 'systemSettings']);

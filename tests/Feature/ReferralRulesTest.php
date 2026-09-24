@@ -113,6 +113,7 @@ class ReferralRulesTest extends TestCase
     public function test_admin_can_update_rules_and_changes_are_audited(): void
     {
         $admin = $this->makeUser('admin', 'rr-admin2@example.com');
+        $admin->syncPermissionOverrides(['manage_referral_rules'], []);
         Sanctum::actingAs($admin);
 
         $response = $this->patchJson('/api/v1/admin/referral-rules', [
@@ -145,6 +146,7 @@ class ReferralRulesTest extends TestCase
     public function test_rule_update_validation_is_honest(): void
     {
         $admin = $this->makeUser('admin', 'rr-admin3@example.com');
+        $admin->syncPermissionOverrides(['manage_referral_rules'], []);
         Sanctum::actingAs($admin);
 
         // Bad mode.
@@ -186,6 +188,42 @@ class ReferralRulesTest extends TestCase
         // Superadmin has full access.
         Sanctum::actingAs($this->makeUser('superadmin', 'rr-root@example.com'));
         $this->getJson('/api/v1/admin/referral-rules')->assertStatus(200);
+    }
+
+    public function test_admin_needs_superadmin_grant_to_change_commissions(): void
+    {
+        $admin = $this->makeUser('admin', 'rr-nogrant@example.com');
+        Sanctum::actingAs($admin);
+
+        // Viewing is open to admins; the UI is told it's read-only.
+        $this->getJson('/api/v1/admin/referral-rules')->assertOk()->assertJsonPath('data.can_edit', false);
+        $this->patchJson('/api/v1/admin/referral-rules', [
+            'levels' => [['level' => 1, 'reward_mode' => 'flat', 'reward_cents' => 999]],
+        ])->assertStatus(403);
+
+        // Super Admin changes L1/L2 directly...
+        Sanctum::actingAs($this->makeUser('superadmin', 'rr-root2@example.com'));
+        $this->getJson('/api/v1/admin/referral-rules')->assertJsonPath('data.can_edit', true);
+        $this->patchJson('/api/v1/admin/referral-rules', [
+            'levels' => [
+                ['level' => 1, 'reward_mode' => 'flat', 'reward_cents' => 200],
+                ['level' => 2, 'reward_mode' => 'percent', 'percent_bps' => 500],
+            ],
+        ])->assertOk();
+        $this->assertSame(200, ReferralRule::where('level', 1)->value('reward_cents'));
+
+        // ...and once they grant the permission, the admin can too.
+        $this->putJson("/api/v1/ops/users/{$admin->id}/permissions", [
+            'grants' => ['manage_referral_rules'],
+            'denies' => [],
+        ])->assertOk();
+
+        Sanctum::actingAs($admin->fresh());
+        $this->getJson('/api/v1/admin/referral-rules')->assertJsonPath('data.can_edit', true);
+        $this->patchJson('/api/v1/admin/referral-rules', [
+            'levels' => [['level' => 1, 'reward_mode' => 'flat', 'reward_cents' => 250]],
+        ])->assertOk();
+        $this->assertSame(250, ReferralRule::where('level', 1)->value('reward_cents'));
     }
 
     public function test_guests_are_unauthenticated(): void
