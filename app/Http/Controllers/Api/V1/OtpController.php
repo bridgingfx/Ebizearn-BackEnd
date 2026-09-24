@@ -115,7 +115,7 @@ class OtpController extends Controller
             'success' => true,
             'message' => 'Email verified. Welcome to eBizEarn.',
             'data' => [
-                'user' => $user->load(['profile', 'wallet', 'business']),
+                'user' => $user->load(['profile', 'wallet', 'business'])->withClientPermissions(),
                 'token' => $token,
             ],
         ]);

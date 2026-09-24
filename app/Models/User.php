@@ -114,24 +114,106 @@ class User extends Authenticatable
      */
     public function directPermissions(): BelongsToMany
     {
-        return $this->belongsToMany(Permission::class, 'permission_user')->withTimestamps();
+        return $this->belongsToMany(Permission::class, 'permission_user')
+            ->withPivot('is_denied')
+            ->withTimestamps();
     }
 
     /**
-     * Sync the user's direct permission grants (Super Admin only, via API).
+     * Replace the user's direct GRANTS (Super Admin only, via API). Deny
+     * overrides for permissions not in the list are left untouched.
      *
      * @param string[] $permissionNames
      */
     public function syncPermissions(array $permissionNames): void
     {
-        $ids = Permission::whereIn('name', $permissionNames)->pluck('id')->all();
-        $this->directPermissions()->sync($ids);
+        $this->syncPermissionOverrides($permissionNames, $this->deniedPermissionNames());
+    }
+
+    /**
+     * Replace both per-user override lists at once. A name in $denies wins
+     * over the same name in $grants.
+     *
+     * @param string[] $grants
+     * @param string[] $denies
+     */
+    public function syncPermissionOverrides(array $grants, array $denies): void
+    {
+        $denies = array_values(array_unique($denies));
+        $grants = array_values(array_diff(array_unique($grants), $denies));
+
+        $ids = Permission::whereIn('name', array_merge($grants, $denies))->pluck('id', 'name');
+
+        $sync = [];
+        foreach ($grants as $name) {
+            if (isset($ids[$name])) {
+                $sync[$ids[$name]] = ['is_denied' => false];
+            }
+        }
+        foreach ($denies as $name) {
+            if (isset($ids[$name])) {
+                $sync[$ids[$name]] = ['is_denied' => true];
+            }
+        }
+
+        $this->directPermissions()->sync($sync);
+    }
+
+    /** @return string[] */
+    public function deniedPermissionNames(): array
+    {
+        return $this->directPermissions()->wherePivot('is_denied', true)->pluck('permissions.name')->all();
+    }
+
+    /** @return string[] */
+    public function grantedPermissionNames(): array
+    {
+        return $this->directPermissions()->wherePivot('is_denied', false)->pluck('permissions.name')->all();
+    }
+
+    /** @return string[] Permissions granted by the user's role row. */
+    public function rolePermissionNames(): array
+    {
+        $role = Role::where('name', $this->role)->first();
+
+        return $role ? $role->permissions()->pluck('permissions.name')->all() : [];
+    }
+
+    /**
+     * Effective permissions: role grants + direct grants − direct denies.
+     * Super Admin implicitly holds the whole catalog.
+     *
+     * @return string[]
+     */
+    public function effectivePermissions(): array
+    {
+        if ($this->isSuperAdmin()) {
+            return Permission::orderBy('name')->pluck('name')->all();
+        }
+
+        $set = array_diff(
+            array_unique(array_merge($this->rolePermissionNames(), $this->grantedPermissionNames())),
+            $this->deniedPermissionNames()
+        );
+        sort($set);
+
+        return array_values($set);
+    }
+
+    /**
+     * Attach the effective permission list for client responses (login,
+     * /auth/me). Set as a relation so it serializes but can never be
+     * written back as a column.
+     */
+    public function withClientPermissions(): static
+    {
+        return $this->setRelation('permissions', collect($this->effectivePermissions()));
     }
 
     /**
      * Permission check: super_admin implicitly holds every permission;
-     * everyone else is evaluated against direct grants plus grants attached
-     * to their primary role row.
+     * everyone else gets their role's grants plus direct grants, minus any
+     * direct deny override.
      */
     public function hasPermission(string $permission): bool
     {
@@ -139,8 +221,9 @@ class User extends Authenticatable
             return true;
         }
 
-        if ($this->directPermissions()->where('permissions.name', $permission)->exists()) {
-            return true;
+        $direct = $this->directPermissions()->where('permissions.name', $permission)->first();
+        if ($direct) {
+            return !$direct->pivot->is_denied;
         }
 
         $role = Role::where('name', $this->role)->first();

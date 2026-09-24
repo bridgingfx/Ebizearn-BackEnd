@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\CampaignWizardController;
 use App\Http\Controllers\Api\V1\ConfigController;
 use App\Http\Controllers\Api\V1\DemoRequestController;
 use App\Http\Controllers\Api\V1\Ops\OpsAdminController;
+use App\Http\Controllers\Api\V1\Ops\OpsPermissionController;
 use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
 use App\Http\Controllers\Api\V1\Ops\OpsTaskTypeController;
 use App\Http\Controllers\Api\V1\OtpController;
@@ -80,14 +81,17 @@ Route::prefix('v1')->group(function () {
         Route::delete('/profile/avatar', [ProfileController::class, 'removeAvatar']);
         // KYC: submit identity documents (private disk, reviewed via /staff/kyc).
         Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
-            ->middleware(['role:contributor,business', 'throttle:10,1']);
+            ->middleware(['role:contributor,business', 'permission:submit_kyc', 'throttle:10,1']);
 
-        // In-app support tickets (own tickets only).
+        // In-app support tickets (own tickets only). Reading history is always
+        // allowed; opening/replying needs open_support_tickets.
         Route::middleware('role:contributor,business')->prefix('support/tickets')->group(function () {
             Route::get('/', [SupportTicketController::class, 'index']);
-            Route::post('/', [SupportTicketController::class, 'store'])->middleware('throttle:10,1');
+            Route::post('/', [SupportTicketController::class, 'store'])->middleware(['permission:open_support_tickets', 'throttle:10,1']);
             Route::get('/{uuid}', [SupportTicketController::class, 'show']);
-            Route::post('/{uuid}/messages', [SupportTicketController::class, 'reply'])->middleware('throttle:30,1');
+            Route::post('/{uuid}/messages', [SupportTicketController::class, 'reply'])->middleware(['permission:open_support_tickets', 'throttle:30,1']);
+            Route::get('/{uuid}/messages/{messageId}/attachments/{index}', [SupportTicketController::class, 'attachment'])
+                ->whereNumber(['messageId', 'index']);
         });
 
         // Contributor Endpoints
@@ -97,14 +101,16 @@ Route::prefix('v1')->group(function () {
             Route::get('/my-tasks', [TaskController::class, 'myTasks']);
 
             // Phase 8: affiliate endpoints (real ledger-backed data only)
-            Route::get('/referrals', [ReferralController::class, 'index']);
-            Route::get('/referrals/tree', [ReferralController::class, 'tree']);
-            Route::get('/referrals/earnings', [ReferralController::class, 'earnings']);
+            Route::middleware('permission:use_referrals')->group(function () {
+                Route::get('/referrals', [ReferralController::class, 'index']);
+                Route::get('/referrals/tree', [ReferralController::class, 'tree']);
+                Route::get('/referrals/earnings', [ReferralController::class, 'earnings']);
+            });
         });
 
         // Contributor Task Operations (Round 2: task write paths gated on
         // email verification).
-        Route::middleware(['role:contributor', 'email.verified'])->group(function () {
+        Route::middleware(['role:contributor', 'email.verified', 'permission:perform_tasks'])->group(function () {
             Route::post('/tasks/{id}/start', [TaskController::class, 'start']);
             Route::post('/tasks/{id}/submit', [TaskController::class, 'submit']);
         });
@@ -116,7 +122,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/transactions', [WalletController::class, 'transactions']);
             // Phase 7: breakdown computed from the real ledger + submissions
             Route::get('/breakdown', [WalletController::class, 'breakdown']);
-            Route::post('/withdraw', [WalletController::class, 'withdraw']);
+            Route::post('/withdraw', [WalletController::class, 'withdraw'])->middleware('permission:request_withdrawals');
         });
 
         // Business Endpoints
@@ -124,10 +130,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/dashboard', [BusinessCampaignController::class, 'dashboard']);
             Route::get('/campaigns', [BusinessCampaignController::class, 'index']);
             // Round 2: campaign creation + funding gated on verification.
-            Route::post('/campaigns', [BusinessCampaignController::class, 'store'])->middleware('email.verified');
+            Route::post('/campaigns', [BusinessCampaignController::class, 'store'])->middleware(['email.verified', 'permission:create_campaigns']);
             Route::get('/campaigns/{id}', [BusinessCampaignController::class, 'show']);
             Route::patch('/campaigns/{id}/status', [BusinessCampaignController::class, 'updateStatus']);
-            Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund'])->middleware('email.verified');
+            Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund'])->middleware(['email.verified', 'permission:fund_campaigns']);
             Route::post('/campaigns/{id}/logo', [BusinessCampaignController::class, 'uploadLogo']);
             Route::get('/submissions', [BusinessCampaignController::class, 'submissions']);
 
@@ -137,9 +143,9 @@ Route::prefix('v1')->group(function () {
             // Round 2: draft/launch gated on email verification.
             // ==============================================================
             Route::post('/campaigns/wizard/preview', [CampaignWizardController::class, 'preview']);
-            Route::post('/campaigns/wizard/draft', [CampaignWizardController::class, 'draft'])->middleware('email.verified');
-            Route::patch('/campaigns/wizard/draft/{id}', [CampaignWizardController::class, 'updateDraft'])->middleware('email.verified');
-            Route::post('/campaigns/{id}/launch', [CampaignWizardController::class, 'launch'])->middleware('email.verified');
+            Route::post('/campaigns/wizard/draft', [CampaignWizardController::class, 'draft'])->middleware(['email.verified', 'permission:create_campaigns']);
+            Route::patch('/campaigns/wizard/draft/{id}', [CampaignWizardController::class, 'updateDraft'])->middleware(['email.verified', 'permission:create_campaigns']);
+            Route::post('/campaigns/{id}/launch', [CampaignWizardController::class, 'launch'])->middleware(['email.verified', 'permission:create_campaigns']);
 
             // ==============================================================
             // Phase 4/13 — BUSINESS TASK CRUD (Worker C): strictly own-tenant
@@ -147,10 +153,10 @@ Route::prefix('v1')->group(function () {
             // Round 2: writes gated on email verification.
             // ==============================================================
             Route::get('/tasks', [BusinessTaskController::class, 'index']);
-            Route::post('/tasks', [BusinessTaskController::class, 'store'])->middleware('email.verified');
+            Route::post('/tasks', [BusinessTaskController::class, 'store'])->middleware(['email.verified', 'permission:manage_business_tasks']);
             Route::get('/tasks/{id}', [BusinessTaskController::class, 'show']);
-            Route::patch('/tasks/{id}', [BusinessTaskController::class, 'update'])->middleware('email.verified');
-            Route::delete('/tasks/{id}', [BusinessTaskController::class, 'destroy'])->middleware('email.verified');
+            Route::patch('/tasks/{id}', [BusinessTaskController::class, 'update'])->middleware(['email.verified', 'permission:manage_business_tasks']);
+            Route::delete('/tasks/{id}', [BusinessTaskController::class, 'destroy'])->middleware(['email.verified', 'permission:manage_business_tasks']);
 
             // Phase 9 — basic business analytics from REAL aggregates.
             Route::get('/analytics', [BusinessTaskController::class, 'analytics']);
@@ -182,30 +188,45 @@ Route::prefix('v1')->group(function () {
         });
 
         // Admin & Super Admin Endpoints
+        // Admin & Super Admin Endpoints. Each area is gated on its permission
+        // so Super Admin can narrow what an admin account may do.
         Route::middleware('role:admin,superadmin')->prefix('admin')->group(function () {
             Route::get('/dashboard', [AdminVerificationController::class, 'dashboard']);
-            Route::get('/verification-queue', [AdminVerificationController::class, 'verificationQueue']);
-            Route::get('/submissions/{id}', [AdminVerificationController::class, 'submissionDetail']);
-            Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
-            Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts']);
-            Route::get('/payouts', [AdminVerificationController::class, 'payouts']);
-            Route::post('/payouts/{id}/process', [AdminVerificationController::class, 'processPayout']);
-            Route::get('/referrals/overview', [AdminReferralController::class, 'overview']); // Phase 11: read-only referral overview
-            Route::get('/referral-rules', [AdminReferralController::class, 'rules']); // Phase 13: view admin-controllable referral rules
-            Route::patch('/referral-rules', [AdminReferralController::class, 'updateRules']); // Phase 13: update referral rules (audited)
-
-            // Super Admin Controls
-            Route::get('/feature-flags', [AdminSystemController::class, 'featureFlags']);
-            Route::patch('/feature-flags/{key}', [AdminSystemController::class, 'updateFeatureFlag']);
-            Route::get('/system-settings', [AdminSystemController::class, 'systemSettings']);
-            Route::patch('/system-settings', [AdminSystemController::class, 'updateSystemSetting']);
-            Route::get('/audit-logs', [AdminSystemController::class, 'auditLogs']);
-            Route::get('/users', [AdminSystemController::class, 'users']);
-            Route::patch('/users/{id}/status', [AdminSystemController::class, 'updateUserStatus']);
             Route::get('/health', [AdminSystemController::class, 'health']);
 
-            // Demo-request triage (public submissions, admin read only)
-            Route::get('/demo-requests', [DemoRequestController::class, 'index']);
+            Route::middleware('permission:review_submissions')->group(function () {
+                Route::get('/verification-queue', [AdminVerificationController::class, 'verificationQueue']);
+                Route::get('/submissions/{id}', [AdminVerificationController::class, 'submissionDetail']);
+                Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
+                Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts']);
+            });
+
+            Route::middleware('permission:process_payouts')->group(function () {
+                Route::get('/payouts', [AdminVerificationController::class, 'payouts']);
+                Route::post('/payouts/{id}/process', [AdminVerificationController::class, 'processPayout']);
+            });
+
+            Route::middleware('permission:view_reports')->group(function () {
+                Route::get('/referrals/overview', [AdminReferralController::class, 'overview']); // Phase 11: read-only referral overview
+                Route::get('/audit-logs', [AdminSystemController::class, 'auditLogs']);
+                // Demo-request triage (public submissions, admin read only)
+                Route::get('/demo-requests', [DemoRequestController::class, 'index']);
+            });
+
+            Route::middleware('permission:manage_settings')->group(function () {
+                Route::get('/referral-rules', [AdminReferralController::class, 'rules']); // Phase 13: view admin-controllable referral rules
+                Route::patch('/referral-rules', [AdminReferralController::class, 'updateRules']); // Phase 13: update referral rules (audited)
+                Route::get('/feature-flags', [AdminSystemController::class, 'featureFlags']);
+                Route::patch('/feature-flags/{key}', [AdminSystemController::class, 'updateFeatureFlag']);
+                Route::get('/system-settings', [AdminSystemController::class, 'systemSettings']);
+                Route::patch('/system-settings', [AdminSystemController::class, 'updateSystemSetting']);
+            });
+
+            Route::middleware('permission:manage_users')->group(function () {
+                Route::get('/users', [AdminSystemController::class, 'users']);
+                Route::get('/users/{id}', [AdminSystemController::class, 'showUser'])->whereNumber('id');
+                Route::patch('/users/{id}/status', [AdminSystemController::class, 'updateUserStatus']);
+            });
         });
 
         // ==================================================================
@@ -227,10 +248,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/tickets/{uuid}', [SupportTicketController::class, 'staffShow']);
             Route::post('/tickets/{uuid}/messages', [SupportTicketController::class, 'staffReply']);
             Route::patch('/tickets/{uuid}', [SupportTicketController::class, 'staffUpdate']);
+            Route::get('/tickets/{uuid}/messages/{messageId}/attachments/{index}', [SupportTicketController::class, 'staffAttachment'])
+                ->whereNumber(['messageId', 'index']);
         });
 
-        // KYC review queue (review_submissions — same staff who verify proofs).
-        Route::middleware(['role:moderator,admin,superadmin', 'permission:review_submissions'])->prefix('staff/kyc')->group(function () {
+        // KYC review queue (review_kyc).
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:review_kyc'])->prefix('staff/kyc')->group(function () {
             Route::get('/', [StaffKycController::class, 'index']);
             Route::get('/{userId}/documents/{side}', [StaffKycController::class, 'document'])
                 ->whereIn('side', ['front', 'back', 'selfie']);
@@ -265,6 +288,12 @@ Route::prefix('v1')->group(function () {
             Route::post('/admins', [OpsAdminController::class, 'store'])->middleware('throttle:15,1');
             Route::patch('/admins/{id}/permissions', [OpsAdminController::class, 'updatePermissions']);
             Route::get('/permissions', [OpsAdminController::class, 'permissions']);
+
+            // Permission management for every role + per-user overrides.
+            Route::get('/roles', [OpsPermissionController::class, 'roles']);
+            Route::put('/roles/{name}/permissions', [OpsPermissionController::class, 'updateRole']);
+            Route::get('/users/{id}/permissions', [OpsPermissionController::class, 'user'])->whereNumber('id');
+            Route::put('/users/{id}/permissions', [OpsPermissionController::class, 'updateUser'])->whereNumber('id');
 
             // Countries
             Route::get('/countries', [OpsSettingsController::class, 'countries']);

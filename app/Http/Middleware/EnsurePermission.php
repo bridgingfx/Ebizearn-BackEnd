@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Permission;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,10 +26,15 @@ class EnsurePermission
         }
 
         foreach ($permissions as $permission) {
-            if (!$user->hasPermission(trim($permission))) {
+            $permission = trim($permission);
+            if (!$user->hasPermission($permission)) {
+                $label = Permission::catalog()[$permission] ?? $permission;
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'You do not have the required permission: ' . $permission,
+                    'message' => 'Your account is not allowed to: ' . $label . '. Contact support if you think this is a mistake.',
+                    'code' => 'permission_denied',
+                    'permission' => $permission,
                 ], 403);
             }
         }

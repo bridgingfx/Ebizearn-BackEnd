@@ -9,7 +9,9 @@ use App\Services\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * In-app support tickets. Contributors and businesses open and reply to
@@ -21,6 +23,24 @@ class SupportTicketController extends Controller
     public const CATEGORIES = ['payout', 'dispute', 'social', 'bug', 'account', 'kyc', 'business', 'general'];
     private const STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
     private const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
+
+    /** A reply needs text, files, or both. */
+    private const REPLY_RULES = [
+        'message' => 'nullable|string|max:5000|required_without:attachments',
+    ];
+
+    /** Up to 5 files per message, 10MB each: images, PDFs, office docs, text, zip. */
+    private const ATTACHMENT_RULES = [
+        'attachments' => 'nullable|array|max:5',
+        'attachments.*' => 'file|max:10240|mimes:jpg,jpeg,png,webp,gif,pdf,doc,docx,xls,xlsx,csv,txt,zip',
+    ];
+
+    private const ATTACHMENT_MESSAGES = [
+        'message.required_without' => 'Type a message or attach a file.',
+        'attachments.max' => 'You can attach up to 5 files per message.',
+        'attachments.*.max' => 'Each file must be 10MB or smaller.',
+        'attachments.*.mimes' => 'Allowed files: images, PDF, Word, Excel, CSV, TXT or ZIP.',
+    ];
 
     // ------------------------------------------------------------------
     // User side
@@ -50,7 +70,7 @@ class SupportTicketController extends Controller
             'category' => 'required|string|in:' . implode(',', self::CATEGORIES),
             'message' => 'required|string|min:5|max:5000',
             'priority' => 'nullable|in:low,normal,high',
-        ]);
+        ] + self::ATTACHMENT_RULES, self::ATTACHMENT_MESSAGES);
 
         if ($validator->fails()) {
             return response()->json([
@@ -65,7 +85,7 @@ class SupportTicketController extends Controller
         $ticket = DB::transaction(function () use ($request, $user) {
             $ticket = SupportTicket::create([
                 'user_id' => $user->id,
-                'subject' => trim($request->input('subject')),
+                'subject' => self::cleanText($request->input('subject')),
                 'category' => $request->input('category'),
                 'priority' => $request->input('priority', 'normal'),
                 'status' => 'open',
@@ -74,7 +94,8 @@ class SupportTicketController extends Controller
             SupportMessage::create([
                 'ticket_id' => $ticket->id,
                 'sender_id' => $user->id,
-                'message' => trim($request->input('message')),
+                'message' => self::cleanText($request->input('message')),
+                'attachments_json' => $this->storeAttachments($request, $ticket),
                 'is_internal_note' => false,
             ]);
 
@@ -111,7 +132,7 @@ class SupportTicketController extends Controller
             ], 422);
         }
 
-        $validator = Validator::make($request->all(), ['message' => 'required|string|min:1|max:5000']);
+        $validator = Validator::make($request->all(), self::REPLY_RULES + self::ATTACHMENT_RULES, self::ATTACHMENT_MESSAGES);
         if ($validator->fails()) {
             return response()->json(['success' => false, 'message' => $validator->errors()->first()], 422);
         }
@@ -119,7 +140,8 @@ class SupportTicketController extends Controller
         SupportMessage::create([
             'ticket_id' => $ticket->id,
             'sender_id' => $request->user()->id,
-            'message' => trim($request->input('message')),
+            'message' => self::cleanText($request->input('message', '')),
+            'attachments_json' => $this->storeAttachments($request, $ticket),
             'is_internal_note' => false,
         ]);
 
@@ -201,10 +223,11 @@ class SupportTicketController extends Controller
     {
         $ticket = SupportTicket::where('uuid', $uuid)->firstOrFail();
 
-        $validator = Validator::make($request->all(), [
-            'message' => 'required|string|min:1|max:5000',
-            'internal' => 'sometimes|boolean',
-        ]);
+        $validator = Validator::make(
+            $request->all(),
+            self::REPLY_RULES + self::ATTACHMENT_RULES + ['internal' => 'sometimes|boolean'],
+            self::ATTACHMENT_MESSAGES
+        );
         if ($validator->fails()) {
             return response()->json(['success' => false, 'message' => $validator->errors()->first()], 422);
         }
@@ -214,7 +237,8 @@ class SupportTicketController extends Controller
         SupportMessage::create([
             'ticket_id' => $ticket->id,
             'sender_id' => $request->user()->id,
-            'message' => trim($request->input('message')),
+            'message' => self::cleanText($request->input('message', '')),
+            'attachments_json' => $this->storeAttachments($request, $ticket),
             'is_internal_note' => $internal,
         ]);
 
@@ -268,8 +292,84 @@ class SupportTicketController extends Controller
     }
 
     // ------------------------------------------------------------------
+    // Attachments (private disk, streamed only to the owner or staff)
+    // ------------------------------------------------------------------
+
+    /** GET /support/tickets/{uuid}/messages/{messageId}/attachments/{index} */
+    public function attachment(Request $request, string $uuid, string $messageId, string $index): Response
+    {
+        $ticket = $this->ownTicket($request, $uuid);
+        $message = SupportMessage::where('ticket_id', $ticket->id)
+            ->where('is_internal_note', false)
+            ->findOrFail($messageId);
+
+        return $this->streamAttachment($message, (int) $index);
+    }
+
+    /** GET /staff/support/tickets/{uuid}/messages/{messageId}/attachments/{index} */
+    public function staffAttachment(string $uuid, string $messageId, string $index): Response
+    {
+        $ticket = SupportTicket::where('uuid', $uuid)->firstOrFail();
+        $message = SupportMessage::where('ticket_id', $ticket->id)->findOrFail($messageId);
+
+        return $this->streamAttachment($message, (int) $index);
+    }
+
+    private function streamAttachment(SupportMessage $message, int $index): Response
+    {
+        $file = ($message->attachments_json ?? [])[$index] ?? null;
+
+        if (!$file || empty($file['path']) || !Storage::disk('local')->exists($file['path'])) {
+            return response()->json(['success' => false, 'message' => 'Attachment not found.'], 404);
+        }
+
+        $isImage = str_starts_with((string) ($file['mime'] ?? ''), 'image/');
+
+        return Storage::disk('local')->response(
+            $file['path'],
+            $file['name'] ?? basename($file['path']),
+            ['Cache-Control' => 'private, no-store'],
+            $isImage ? 'inline' : 'attachment'
+        );
+    }
+
+    /**
+     * Store uploaded files on the private disk; returns attachments_json
+     * rows ({name, path, mime, size}) or null when nothing was uploaded.
+     */
+    private function storeAttachments(Request $request, SupportTicket $ticket): ?array
+    {
+        $files = $request->file('attachments', []);
+        if (!is_array($files) || $files === []) {
+            return null;
+        }
+
+        $stored = [];
+        foreach ($files as $file) {
+            $stored[] = [
+                'name' => mb_substr(self::cleanText($file->getClientOriginalName()), 0, 150),
+                'path' => $file->store('support/' . $ticket->id, 'local'),
+                'mime' => $file->getMimeType(),
+                'size' => $file->getSize(),
+            ];
+        }
+
+        return $stored;
+    }
+
+    // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    /**
+     * Trim and force valid UTF-8. Invalid bytes (from a non-browser client)
+     * would otherwise be stored and make every later JSON response for the
+     * ticket fail to encode.
+     */
+    private static function cleanText(mixed $value): string
+    {
+        return trim(mb_scrub((string) $value, 'UTF-8'));
+    }
 
     private function ownTicket(Request $request, string $uuid): SupportTicket
     {
@@ -315,6 +415,14 @@ class SupportTicketController extends Controller
                 'id' => $m->id,
                 'message' => $m->message,
                 'is_internal_note' => (bool) $m->is_internal_note,
+                // Paths stay server-side; clients fetch by index.
+                'attachments' => collect($m->attachments_json ?? [])->values()->map(fn ($a, $i) => [
+                    'index' => $i,
+                    'name' => $a['name'] ?? 'file',
+                    'mime' => $a['mime'] ?? 'application/octet-stream',
+                    'size' => (int) ($a['size'] ?? 0),
+                    'is_image' => str_starts_with((string) ($a['mime'] ?? ''), 'image/'),
+                ])->all(),
                 'from_staff' => $m->sender_id !== $t->user_id,
                 'sender_name' => $m->sender_id === $t->user_id
                     ? ($m->sender?->name ?? 'You')

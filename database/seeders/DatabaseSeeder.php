@@ -431,19 +431,9 @@ class DatabaseSeeder extends Seeder
             $permissionModels[$name] = Permission::updateOrCreate(['name' => $name], ['label' => $label]);
         }
 
-        $grants = [
-            // Phase 4: moderators create tasks (manage_task_templates) and
-            // review submissions — the staff API gates on these permissions.
-            'moderator' => [Permission::REVIEW_SUBMISSIONS, Permission::HANDLE_DISPUTES, Permission::MANAGE_TASK_TEMPLATES],
-            'admin' => [
-                Permission::REVIEW_SUBMISSIONS,
-                Permission::MANAGE_CAMPAIGNS,
-                Permission::MANAGE_USERS,
-                Permission::HANDLE_DISPUTES,
-                Permission::MANAGE_TASK_TEMPLATES,
-                Permission::VIEW_REPORTS,
-            ],
-        ];
+        // Default grants for every role — the API gates each role's routes on
+        // these permissions; Super Admin edits them from the Permissions page.
+        $grants = Permission::defaultGrants();
 
         foreach ($grants as $roleName => $permissionNames) {
             $ids = collect($permissionNames)->map(fn ($n) => $permissionModels[$n]->id)->all();

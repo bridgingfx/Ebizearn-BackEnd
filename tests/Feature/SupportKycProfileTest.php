@@ -156,7 +156,11 @@ class SupportKycProfileTest extends TestCase
 
     public function test_staff_queue_requires_permission(): void
     {
-        Sanctum::actingAs($this->makeStaff([]));
+        // Moderators hold handle_disputes via their role; an explicit
+        // per-user deny must still lock them out.
+        $staff = $this->makeStaff([]);
+        $staff->syncPermissionOverrides([], ['handle_disputes']);
+        Sanctum::actingAs($staff);
         $this->getJson('/api/v1/staff/support/tickets')->assertForbidden();
 
         Sanctum::actingAs($this->makeUser());
@@ -190,7 +194,7 @@ class SupportKycProfileTest extends TestCase
             'document_front' => UploadedFile::fake()->image('p.jpg'),
         ], ['Accept' => 'application/json'])->assertStatus(422);
 
-        $staff = $this->makeStaff(['review_submissions']);
+        $staff = $this->makeStaff(['review_kyc']);
         Sanctum::actingAs($staff);
 
         $this->getJson('/api/v1/staff/kyc')
@@ -222,7 +226,7 @@ class SupportKycProfileTest extends TestCase
             'document_front' => UploadedFile::fake()->image('p.jpg'),
         ], ['Accept' => 'application/json'])->assertOk();
 
-        Sanctum::actingAs($this->makeStaff(['review_submissions']));
+        Sanctum::actingAs($this->makeStaff(['review_kyc']));
         $this->postJson("/api/v1/staff/kyc/{$contributor->id}/decision", ['decision' => 'reject', 'reason' => 'Blurry photo'])
             ->assertOk()
             ->assertJsonPath('data.kyc_rejection_reason', 'Blurry photo');

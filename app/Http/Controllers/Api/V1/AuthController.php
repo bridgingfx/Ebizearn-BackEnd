@@ -180,7 +180,7 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Account created. Enter the 6-digit code sent to your email to activate it.',
             'data' => [
-                'user' => $user->load(['profile', 'wallet', 'business']),
+                'user' => $user->load(['profile', 'wallet', 'business'])->withClientPermissions(),
                 'requires_otp' => true,
                 'otp' => [
                     'expires_in_seconds' => $expiresIn,
@@ -280,7 +280,7 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Login successful',
             'data' => [
-                'user' => $user->load(['profile', 'wallet', 'business']),
+                'user' => $user->load(['profile', 'wallet', 'business'])->withClientPermissions(),
                 'token' => $token,
             ],
         ]);
@@ -440,7 +440,7 @@ class AuthController extends Controller
             'success' => true,
             'message' => $isNewUser ? 'Account created with ' . ucfirst($provider) : 'Login successful',
             'data' => [
-                'user' => $user->load(['profile', 'wallet', 'business']),
+                'user' => $user->load(['profile', 'wallet', 'business'])->withClientPermissions(),
                 'token' => $token,
             ],
         ]);
@@ -488,7 +488,7 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Email verified successfully.',
             'data' => [
-                'user' => $user->load(['profile', 'wallet', 'business']),
+                'user' => $user->load(['profile', 'wallet', 'business'])->withClientPermissions(),
             ],
         ]);
     }
@@ -640,7 +640,7 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'user' => $request->user()->load(['profile', 'wallet', 'business']),
+                'user' => $request->user()->load(['profile', 'wallet', 'business'])->withClientPermissions(),
             ],
         ]);
     }

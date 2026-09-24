@@ -114,7 +114,8 @@ class OpsAccessTest extends TestCase
         $admin = User::where('email', 'alice-admin@example.com')->firstOrFail();
         $this->assertTrue($admin->hasPermission('review_submissions'));
         $this->assertTrue($admin->hasPermission('manage_users'));
-        $this->assertFalse($admin->hasPermission('manage_settings'));
+        // Contributor-only capability: granted to no staff role or user.
+        $this->assertFalse($admin->hasPermission('request_withdrawals'));
 
         $this->assertDatabaseHas('audit_logs', [
             'action' => 'staff.created',
@@ -150,10 +151,10 @@ class OpsAccessTest extends TestCase
 
         $this->assertTrue($admin->fresh()->hasPermission('review_submissions'));
         // Direct grants union with the admin role's default grants, so
-        // manage_users (a role default) still holds; manage_settings was
-        // never granted anywhere.
+        // manage_users (a role default) still holds; request_withdrawals (a
+        // contributor capability) was never granted to admins anywhere.
         $this->assertTrue($admin->fresh()->hasPermission('manage_users'));
-        $this->assertFalse($admin->fresh()->hasPermission('manage_settings'));
+        $this->assertFalse($admin->fresh()->hasPermission('request_withdrawals'));
 
         $this->assertDatabaseHas('audit_logs', [
             'action' => 'staff.permissions_updated',
