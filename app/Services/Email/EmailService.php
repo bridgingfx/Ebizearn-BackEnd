@@ -30,7 +30,7 @@ class EmailService
                 return false;
             }
 
-            $variables = array_merge([
+            $variables = array_merge(EmailLayout::variables(), [
                 'app_name' => config('app.name'),
                 'support_email' => config('platform.supportEmail'),
                 'login_url' => rtrim((string) config('platform.frontendUrl'), '/') . '/login',

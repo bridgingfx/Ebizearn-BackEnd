@@ -3,6 +3,7 @@
 namespace App\Services\Email;
 
 use App\Models\EmailCampaign;
+use App\Models\EmailTemplate;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\URL;
@@ -122,29 +123,54 @@ class EmailCampaignService
             ? rtrim((string) config('app.url'), '/') . URL::signedRoute('email.unsubscribe', ['user' => $user->id], null, false)
             : rtrim((string) config('platform.frontendUrl'), '/');
 
-        $paragraphs = collect(preg_split('/\n{2,}/', trim($body)))
-            ->map(fn ($p) => '<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#334155;">' . nl2br(e($p)) . '</p>')
-            ->implode('');
+        // A custom template chosen as the campaign design.
+        $template = $campaign->template_key ? EmailTemplate::where('event_key', $campaign->template_key)->first() : null;
+        if ($template) {
+            $vars = array_merge(EmailLayout::variables(), [
+                'app_name' => (string) config('app.name'),
+                'support_email' => (string) config('platform.supportEmail'),
+                'login_url' => rtrim((string) config('platform.frontendUrl'), '/') . '/login',
+                'user_name' => $firstName,
+                'unsubscribe_url' => $unsubscribe,
+            ]);
+            $html = $this->emails->render($template->html_body, $vars, true);
+            $text = $this->emails->render($template->text_body, $vars, false);
 
-        $button = '';
-        if ($campaign->button_label && $campaign->button_url) {
-            $button = '<p style="margin:22px 0 6px;"><a href="' . e($campaign->button_url) . '" style="display:inline-block;padding:12px 26px;border-radius:12px;background:#168BFF;background-image:linear-gradient(90deg,#168BFF,#7257FF);color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;">' . e($fill($campaign->button_label)) . '</a></p>';
+            // Marketing email must always carry an unsubscribe link.
+            if (!str_contains($template->html_body, '{{unsubscribe_url}}')) {
+                $link = '<p style="margin:0;padding:16px;text-align:center;font-family:Arial,sans-serif;font-size:12px;color:#98A2B3">'
+                    . '<a href="' . e($unsubscribe) . '" style="color:#667085">Unsubscribe from marketing emails</a></p>';
+                $html = str_contains($html, '</body>') ? str_replace('</body>', $link . '</body>', $html) : $html . $link;
+            }
+            if (!str_contains($template->text_body, '{{unsubscribe_url}}')) {
+                $text .= "\n\n---\nUnsubscribe from marketing emails: " . $unsubscribe;
+            }
+
+            return [$subject, $html, $text];
         }
 
-        $app = e((string) config('app.name'));
-        $html = '<!doctype html><html><body style="margin:0;padding:0;background:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Helvetica,Arial,sans-serif;">'
-            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1F5F9;padding:28px 12px;"><tr><td align="center">'
-            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:18px;overflow:hidden;">'
-            . '<tr><td style="background:#07182F;padding:20px 28px;color:#ffffff;font-size:20px;font-weight:800;">' . $app . '</td></tr>'
-            . '<tr><td style="padding:28px;">'
-            . ($heading ? '<h1 style="margin:0 0 16px;font-size:22px;line-height:1.3;color:#07182F;">' . e($heading) . '</h1>' : '')
-            . $paragraphs . $button
-            . '</td></tr>'
-            . '<tr><td style="padding:18px 28px;border-top:1px solid #E2E8F0;font-size:12px;line-height:1.5;color:#94A3B8;">'
-            . 'You are receiving this because you have an ' . $app . ' account. '
-            . '<a href="' . e($unsubscribe) . '" style="color:#64748B;">Unsubscribe from marketing emails</a>'
-            . '</td></tr></table></td></tr></table></body></html>';
+        $paragraphs = collect(preg_split('/\n{2,}/', trim($body)))
+            ->map(fn ($p) => nl2br(e($p)))
+            ->all();
 
+        $button = $campaign->button_label && $campaign->button_url
+            ? [e($fill($campaign->button_label)), e($campaign->button_url)]
+            : null;
+
+        // Same branded layout as every other eBizEarn email.
+        $layout = array_merge(EmailLayout::variables(), [
+            'app_name' => e((string) config('app.name')),
+            'support_email' => e((string) config('platform.supportEmail')),
+            'eyebrow' => 'News from eBizEarn',
+            'title' => e($heading ?: $subject),
+            'paragraphs' => $paragraphs,
+            'unsubscribe_url' => e($unsubscribe),
+        ]);
+        if ($button) {
+            $layout['button'] = $button;
+        }
+
+        $html = EmailLayout::render($layout);
         $text = ($heading ? $heading . "\n\n" : '') . $body
             . ($button ? "\n\n" . $fill((string) $campaign->button_label) . ': ' . $campaign->button_url : '')
             . "\n\n---\nUnsubscribe from marketing emails: " . $unsubscribe;

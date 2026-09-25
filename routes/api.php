@@ -189,6 +189,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/providers/{id}/active', [AdminEmailController::class, 'setActive']);
             Route::post('/providers/{id}/test', [AdminEmailController::class, 'testProvider']);
             Route::get('/templates', [AdminEmailController::class, 'templates']);
+            Route::post('/templates', [AdminEmailController::class, 'storeTemplate']);
+            Route::delete('/templates/{key}', [AdminEmailController::class, 'destroyTemplate']);
+            Route::post('/templates/{key}/test', [AdminEmailController::class, 'testTemplate'])->middleware('throttle:20,1');
+            Route::post('/assets', [AdminEmailController::class, 'uploadAsset'])->middleware('throttle:30,1');
             Route::put('/templates/{key}', [AdminEmailController::class, 'updateTemplate']);
             Route::post('/templates/{key}/reset', [AdminEmailController::class, 'resetTemplate']);
             Route::get('/logs', [AdminEmailController::class, 'logs']);

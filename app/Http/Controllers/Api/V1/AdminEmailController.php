@@ -7,12 +7,15 @@ use App\Models\AuditLog;
 use App\Models\EmailLog;
 use App\Models\EmailProvider;
 use App\Models\EmailTemplate;
+use App\Services\Email\EmailLayout;
 use App\Services\Email\EmailService;
 use App\Services\Email\EmailTemplateDefaults;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 /**
@@ -170,14 +173,129 @@ class AdminEmailController extends Controller
         return $this->ok(EmailTemplate::orderBy('id')->get());
     }
 
+    /**
+     * POST /admin/email/templates — a new custom template, started from the
+     * branded layout (or given HTML).
+     */
+    public function storeTemplate(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => 'required|string|max:120',
+            'subject' => 'required|string|max:255',
+            'html_body' => 'nullable|string|max:500000',
+            'text_body' => 'nullable|string|max:100000',
+        ]);
+
+        $base = 'custom_' . (Str::slug($data['name'], '_') ?: 'template');
+        $key = Str::limit($base, 50, '');
+        for ($i = 2; EmailTemplate::where('event_key', $key)->exists(); $i++) {
+            $key = Str::limit($base, 46, '') . '_' . $i;
+        }
+
+        $blank = EmailTemplateDefaults::blank();
+        $template = EmailTemplate::create([
+            'event_key' => $key,
+            'name' => $data['name'],
+            'subject' => $data['subject'],
+            'html_body' => ($data['html_body'] ?? null) ?: $blank['html_body'],
+            'text_body' => ($data['text_body'] ?? null) ?: $blank['text_body'],
+            'variables' => EmailTemplateDefaults::COMMON,
+            'is_enabled' => true,
+            'is_custom' => true,
+        ]);
+
+        $this->audit($request, 'email_template.created', $template);
+
+        return $this->ok($template, 'Template created.', 201);
+    }
+
+    /** DELETE /admin/email/templates/{key} — custom templates only. */
+    public function destroyTemplate(Request $request, string $key): JsonResponse
+    {
+        $template = EmailTemplate::where('event_key', $key)->firstOrFail();
+        abort_unless($template->is_custom, 422, 'Built-in templates are used by the platform and cannot be deleted. You can disable them instead.');
+
+        $this->audit($request, 'email_template.deleted', $template);
+        $template->delete();
+
+        return $this->ok(null, 'Template deleted.');
+    }
+
+    /**
+     * POST /admin/email/templates/{key}/test { to, subject?, html_body?, text_body? }
+     * Sends the template (or the unsaved draft from the editor) with sample values.
+     */
+    public function testTemplate(Request $request, string $key, EmailService $emails): JsonResponse
+    {
+        $data = $request->validate([
+            'to' => 'required|email',
+            'subject' => 'nullable|string|max:255',
+            'html_body' => 'nullable|string|max:500000',
+            'text_body' => 'nullable|string|max:100000',
+        ]);
+        $template = EmailTemplate::where('event_key', $key)->firstOrFail();
+
+        $vars = array_merge(EmailLayout::variables(), [
+            'app_name' => (string) config('app.name'),
+            'support_email' => (string) config('platform.supportEmail'),
+            'login_url' => rtrim((string) config('platform.frontendUrl'), '/') . '/login',
+            'user_name' => (string) $request->user()->name,
+        ], self::SAMPLE_VALUES);
+
+        $error = null;
+        $ok = $emails->sendRaw(
+            'template_test',
+            $data['to'],
+            '[Test] ' . $emails->render($data['subject'] ?? $template->subject, $vars, false),
+            $emails->render($data['html_body'] ?? $template->html_body, $vars, true),
+            $emails->render($data['text_body'] ?? $template->text_body, $vars, false),
+            $error,
+        );
+
+        return response()->json([
+            'success' => $ok,
+            'message' => $ok ? 'Test email sent to ' . $data['to'] . '.' : 'Test failed: ' . $error,
+        ], $ok ? 200 : 422);
+    }
+
+    /**
+     * POST /admin/email/assets (image) — upload a logo / picture for templates.
+     * Returns a public URL to use in <img src>.
+     */
+    public function uploadAsset(Request $request): JsonResponse
+    {
+        $request->validate([
+            'image' => 'required|image|mimes:png,jpg,jpeg,gif,webp|max:3072',
+        ], [
+            'image.max' => 'Images must be 3 MB or smaller.',
+        ]);
+
+        $path = $request->file('image')->store('email-assets', 'public');
+
+        return $this->ok([
+            'url' => Storage::disk('public')->url($path),
+            'path' => $path,
+        ], 'Image uploaded.', 201);
+    }
+
+    /** Example values for previews and test sends. */
+    public const SAMPLE_VALUES = [
+        'amount' => 'USD 25.00',
+        'task_title' => 'Follow @acmebrand on Instagram',
+        'reason' => 'The screenshot does not show the follow button.',
+        'verification_url' => 'https://ebizearn.com/verify-email',
+        'reset_url' => 'https://ebizearn.com/reset-password',
+    ];
+
     public function updateTemplate(Request $request, string $key): JsonResponse
     {
         $template = EmailTemplate::where('event_key', $key)->firstOrFail();
 
         $template->update($request->validate([
+            'name' => 'sometimes|required|string|max:120',
             'subject' => 'required|string|max:255',
-            'html_body' => 'required|string',
-            'text_body' => 'required|string',
+            'html_body' => 'required|string|max:500000',
+            'text_body' => 'required|string|max:100000',
             'is_enabled' => 'required|boolean',
         ]));
 

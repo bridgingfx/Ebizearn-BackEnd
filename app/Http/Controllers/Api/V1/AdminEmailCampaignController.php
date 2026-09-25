@@ -135,15 +135,23 @@ class AdminEmailCampaignController extends Controller
 
     private function validated(Request $request): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'name' => 'required|string|max:150',
             'subject' => 'required|string|max:255',
+            // A campaign uses either a custom template as its design, or a written message.
+            'template_key' => ['nullable', 'string', Rule::exists('email_templates', 'event_key')->where('is_custom', true)],
             'heading' => 'nullable|string|max:255',
-            'body' => 'required|string|max:20000',
+            'body' => 'required_without:template_key|nullable|string|max:20000',
             'button_label' => 'nullable|string|max:60|required_with:button_url',
             'button_url' => 'nullable|url|max:500|required_with:button_label',
             'audience' => ['required', Rule::in(EmailCampaign::AUDIENCES)],
+        ], [
+            'body.required_without' => 'Write a message, or choose a custom template as the design.',
+            'template_key.exists' => 'Choose one of your custom templates.',
         ]);
+        $data['body'] = $data['body'] ?? '';
+
+        return $data;
     }
 
     private function audit(string $action, EmailCampaign $campaign): void
