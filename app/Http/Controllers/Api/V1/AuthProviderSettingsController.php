@@ -44,11 +44,12 @@ class AuthProviderSettingsController extends Controller
             'google.enabled' => 'required|boolean',
             'google.client_id' => ['nullable', 'string', 'max:255', 'regex:' . SocialAuthSettings::GOOGLE_ID_PATTERN],
             'apple.enabled' => 'required|boolean',
-            'apple.client_id' => ['nullable', 'string', 'max:255', 'regex:' . SocialAuthSettings::APPLE_ID_PATTERN],
+            'apple.client_id' => ['nullable', 'string', 'max:255', 'regex:' . SocialAuthSettings::APPLE_ID_PATTERN, 'not_regex:/googleusercontent/i'],
             'apple.redirect_uri' => 'nullable|url|max:500',
         ], [
             'google.client_id.regex' => 'That is not a Google Client ID. It looks like 1234567890-abc123.apps.googleusercontent.com.',
             'apple.client_id.regex' => 'Enter your Apple Services ID, e.g. com.ebizearn.web.',
+            'apple.client_id.not_regex' => 'That is a Google Client ID. Apple needs its own Services ID, e.g. com.ebizearn.web.',
             'apple.redirect_uri.url' => 'The Apple return URL must be a full https:// address.',
         ]);
 

@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\V1\BusinessTaskController;
 use App\Http\Controllers\Api\V1\CampaignWizardController;
 use App\Http\Controllers\Api\V1\ConfigController;
 use App\Http\Controllers\Api\V1\DemoRequestController;
+use App\Http\Controllers\Api\V1\DepositController;
 use App\Http\Controllers\Api\V1\Ops\OpsAdminController;
 use App\Http\Controllers\Api\V1\Ops\OpsPermissionController;
 use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
@@ -146,6 +147,10 @@ Route::prefix('v1')->group(function () {
         // Business Endpoints
         Route::middleware('role:business')->prefix('business')->group(function () {
             Route::get('/dashboard', [BusinessCampaignController::class, 'dashboard']);
+            // Wallet deposits: card link / crypto / bank / email request (credited after staff approval).
+            Route::get('/deposit-methods', [DepositController::class, 'methods']);
+            Route::get('/deposits', [DepositController::class, 'index']);
+            Route::post('/deposits', [DepositController::class, 'store'])->middleware('throttle:10,1');
             Route::get('/campaigns', [BusinessCampaignController::class, 'index']);
             // Round 2: campaign creation + funding gated on verification.
             Route::post('/campaigns', [BusinessCampaignController::class, 'store'])->middleware(['email.verified', 'permission:create_campaigns']);
@@ -181,6 +186,12 @@ Route::prefix('v1')->group(function () {
 
             // Phase 9 — basic business analytics from REAL aggregates.
             Route::get('/analytics', [BusinessTaskController::class, 'analytics']);
+        });
+
+        // Super Admin only: which deposit methods businesses can use, and their details.
+        Route::middleware('role:superadmin')->prefix('admin/deposit-methods')->group(function () {
+            Route::get('/', [DepositController::class, 'adminMethods']);
+            Route::put('/{key}', [DepositController::class, 'updateMethod'])->whereIn('key', ['card', 'crypto', 'bank', 'email']);
         });
 
         // Super Admin only: Google / Apple sign-in settings.
@@ -247,6 +258,10 @@ Route::prefix('v1')->group(function () {
             Route::middleware('permission:process_payouts')->group(function () {
                 Route::get('/payouts', [AdminVerificationController::class, 'payouts']);
                 Route::post('/payouts/{id}/process', [AdminVerificationController::class, 'processPayout']);
+                // Business deposits: confirm the money arrived, then credit the wallet.
+                Route::get('/deposits', [DepositController::class, 'staffIndex']);
+                Route::get('/deposits/{id}/proof', [DepositController::class, 'proof'])->whereNumber('id');
+                Route::post('/deposits/{id}/decision', [DepositController::class, 'decision'])->whereNumber('id');
             });
 
             Route::middleware('permission:view_reports')->group(function () {
