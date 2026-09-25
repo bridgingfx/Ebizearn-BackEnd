@@ -151,6 +151,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund'])->middleware(['email.verified', 'permission:fund_campaigns']);
             Route::post('/campaigns/{id}/logo', [BusinessCampaignController::class, 'uploadLogo']);
             Route::get('/submissions', [BusinessCampaignController::class, 'submissions']);
+            // Two-step review: the business recommends, staff confirm and release payment.
+            Route::post('/submissions/{id}/decision', [BusinessCampaignController::class, 'reviewSubmission'])
+                ->middleware(['permission:review_campaign_proofs', 'throttle:60,1']);
 
             // ==============================================================
             // Phase 9 — CAMPAIGN WIZARD (Worker C): preview -> draft -> launch.

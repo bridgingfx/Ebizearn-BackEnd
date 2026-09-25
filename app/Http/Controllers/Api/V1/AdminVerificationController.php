@@ -71,12 +71,19 @@ class AdminVerificationController extends Controller
      */
     public function verificationQueue(Request $request): JsonResponse
     {
-        $query = TaskSubmission::with(['task.category', 'task.campaign.business', 'user.profile', 'aiResult', 'files']);
+        $query = TaskSubmission::with(['task.category', 'task.campaign.business', 'user.profile', 'aiResult', 'files', 'businessReviewer:id,name', 'reviewer:id,name']);
 
         $status = $request->input('status', 'under_review');
         if ($status !== 'all') {
             $query->where('status', $status);
         }
+
+        // Two-step review: filter by the campaign business's recommendation.
+        match ($request->input('business_decision')) {
+            'approved', 'rejected' => $query->where('business_decision', $request->input('business_decision')),
+            'none' => $query->whereNull('business_decision'),
+            default => null,
+        };
 
         if ($request->filled('search')) {
             $search = '%' . $request->input('search') . '%';
@@ -109,6 +116,7 @@ class AdminVerificationController extends Controller
             'aiResult',
             'files',
             'reviewer',
+            'businessReviewer:id,name',
         ])
         ->where('id', $id)
         ->orWhere('uuid', $id)
@@ -154,6 +162,7 @@ class AdminVerificationController extends Controller
         }
 
         $submission = TaskSubmission::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $previousStatus = $submission->status;
 
         try {
             $updated = $this->verificationService->recordDecision(
@@ -164,9 +173,29 @@ class AdminVerificationController extends Controller
                 $request->input('notes')
             );
 
+            // Tell the contributor (once, only when the status actually changed).
+            if ($previousStatus !== $updated->status && in_array($updated->status, ['approved', 'rejected'], true)) {
+                $contributor = $updated->user;
+                $task = $updated->task;
+                app(\App\Services\Email\EmailService::class)->sendEvent(
+                    $updated->status === 'approved' ? 'task_approved' : 'task_rejected',
+                    $contributor->email,
+                    [
+                        'user_name' => $contributor->name,
+                        'task_title' => (string) $task?->title,
+                        'amount' => 'USD ' . number_format(((int) $task?->reward_cents) / 100, 2),
+                        'reason' => (string) $request->input('notes'),
+                    ],
+                );
+            }
+
             return response()->json([
                 'success' => true,
-                'message' => "Submission has been marked as {$decision}.",
+                'message' => match ($decision) {
+                    'approved' => "Proof approved. The reward has been released to the contributor's wallet.",
+                    'rejected' => 'Proof rejected. The contributor has been notified.',
+                    default => 'The contributor has been asked for more proof.',
+                },
                 'data' => $updated->load(['task', 'user.wallet', 'reviewer', 'aiResult']),
             ]);
         } catch (Exception $e) {

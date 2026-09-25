@@ -34,6 +34,8 @@ class Permission extends Model
     public const CREATE_CAMPAIGNS = 'create_campaigns';
     public const FUND_CAMPAIGNS = 'fund_campaigns';
     public const MANAGE_BUSINESS_TASKS = 'manage_business_tasks';
+    /** First-step approve / reject of proofs on the business's own campaigns. */
+    public const REVIEW_CAMPAIGN_PROOFS = 'review_campaign_proofs';
 
     // Shared (contributor + business)
     public const SUBMIT_KYC = 'submit_kyc';
@@ -67,6 +69,7 @@ class Permission extends Model
             self::CREATE_CAMPAIGNS => ['Create and launch campaigns', 'business'],
             self::FUND_CAMPAIGNS => ['Fund campaigns (escrow deposits)', 'business'],
             self::MANAGE_BUSINESS_TASKS => ['Create / edit / delete own tasks', 'business'],
+            self::REVIEW_CAMPAIGN_PROOFS => ['Approve / reject proofs on own campaigns', 'business'],
 
             self::SUBMIT_KYC => ['Submit KYC identity documents', 'account'],
             self::OPEN_SUPPORT_TICKETS => ['Open and reply to support tickets', 'account'],
@@ -100,7 +103,7 @@ class Permission extends Model
                 self::SUBMIT_KYC, self::OPEN_SUPPORT_TICKETS,
             ],
             'business' => [
-                self::CREATE_CAMPAIGNS, self::FUND_CAMPAIGNS, self::MANAGE_BUSINESS_TASKS,
+                self::CREATE_CAMPAIGNS, self::FUND_CAMPAIGNS, self::MANAGE_BUSINESS_TASKS, self::REVIEW_CAMPAIGN_PROOFS,
                 self::SUBMIT_KYC, self::OPEN_SUPPORT_TICKETS,
             ],
         ];

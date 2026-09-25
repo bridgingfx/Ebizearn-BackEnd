@@ -512,7 +512,7 @@ class BusinessCampaignController extends Controller
     {
         $business = $request->user()->business;
         $submissions = TaskSubmission::whereHas('task.campaign', fn($q) => $q->where('business_id', $business->id))
-            ->with(['task.category', 'user.profile', 'files', 'aiResult'])
+            ->with(['task.category', 'user.profile', 'files', 'aiResult', 'businessReviewer:id,name', 'reviewer:id,name'])
             ->latest()
             ->paginate(20);
 
@@ -524,6 +524,62 @@ class BusinessCampaignController extends Controller
                 'last_page' => $submissions->lastPage(),
                 'total' => $submissions->total(),
             ],
+        ]);
+    }
+
+    /**
+     * POST /business/submissions/{id}/decision { decision: approve|reject, reason? }
+     *
+     * First step of the two-step review: the business approves or rejects a
+     * proof on its own campaign. No money moves here — staff confirm the
+     * final decision in the Verification Center, which credits the
+     * contributor. The business may change its mind until staff decide.
+     */
+    public function reviewSubmission(Request $request, string $id): JsonResponse
+    {
+        $data = $request->validate([
+            'decision' => 'required|in:approve,reject',
+            'reason' => 'required_if:decision,reject|nullable|string|min:3|max:1000',
+        ], [
+            'reason.required_if' => 'Tell the contributor why the proof is rejected.',
+        ]);
+
+        $business = $request->user()->business;
+        abort_unless($business, 403, 'Business profile not found.');
+
+        $submission = TaskSubmission::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))
+            ->whereHas('task.campaign', fn ($q) => $q->where('business_id', $business->id))
+            ->firstOrFail();
+
+        abort_if(in_array($submission->status, ['approved', 'rejected'], true), 422,
+            'This proof has already been ' . $submission->status . ' by the eBizEarn review team.');
+
+        $approve = $data['decision'] === 'approve';
+        $before = ['business_decision' => $submission->business_decision];
+
+        $submission->update([
+            'business_decision' => $approve ? 'approved' : 'rejected',
+            'business_reason' => $data['reason'] ?? null,
+            'business_reviewer_id' => $request->user()->id,
+            'business_reviewed_at' => now(),
+        ]);
+
+        \App\Services\Audit\AuditLogger::log(
+            $request->user(),
+            $approve ? 'submission.business_approved' : 'submission.business_rejected',
+            TaskSubmission::class,
+            $submission->id,
+            ['task_id' => $submission->task_id, 'contributor_id' => $submission->user_id],
+            $before,
+            ['business_decision' => $submission->business_decision, 'reason' => $submission->business_reason],
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $approve
+                ? 'Proof approved. Our review team will confirm it and release the payment to the contributor.'
+                : 'Proof rejected. Our review team will confirm the rejection.',
+            'data' => $submission->fresh()->load(['task.category', 'user.profile', 'files', 'businessReviewer:id,name', 'reviewer:id,name']),
         ]);
     }
 

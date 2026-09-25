@@ -30,11 +30,17 @@ class TaskSubmission extends Model
         'review_reason_code',
         'triggered_referral_reward_ids_json',
         'verification_stage',
+        // Two-step review: the campaign business's recommendation.
+        'business_decision',
+        'business_reason',
+        'business_reviewer_id',
+        'business_reviewed_at',
     ];
 
     protected $casts = [
         'proof_data_json' => 'array',
         'reviewed_at' => 'datetime',
+        'business_reviewed_at' => 'datetime',
         'triggered_referral_reward_ids_json' => 'array',
     ];
 
@@ -65,6 +71,12 @@ class TaskSubmission extends Model
     public function reviewer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'reviewer_id');
+    }
+
+    /** The business user who gave the first-step decision. */
+    public function businessReviewer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'business_reviewer_id');
     }
 
     public function files(): HasMany
