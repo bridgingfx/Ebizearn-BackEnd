@@ -9,6 +9,7 @@ use App\Models\EmailProvider;
 use App\Models\EmailTemplate;
 use App\Services\Email\EmailService;
 use App\Services\Email\EmailTemplateDefaults;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +24,80 @@ class AdminEmailController extends Controller
     {
         return $this->ok(EmailProvider::orderByDesc('is_active')->orderBy('name')->get());
     }
+
+    /**
+     * What is sending email right now: the provider applied here, the
+     * BREVO_API_KEY fallback from .env, or nothing (emails only logged).
+     */
+    public function status(EmailService $emails): JsonResponse
+    {
+        $provider = $emails->currentProvider();
+
+        return $this->ok([
+            'source' => !$provider ? 'none' : ($provider->exists ? 'admin' : 'env'),
+            'provider_id' => $provider?->id,
+            'name' => $provider?->name,
+            'driver' => $provider?->driver,
+            'from_email' => $provider?->from_email,
+            'from_name' => $provider?->from_name,
+            'env_brevo_key' => (string) config('services.brevo.key') !== '',
+        ]);
+    }
+
+    /**
+     * One-step setup from the provider picker: save the settings for the
+     * chosen driver (one saved configuration per driver) and make it the
+     * active sender.
+     */
+    public function apply(Request $request): JsonResponse
+    {
+        $driver = (string) $request->input('driver');
+        $existing = EmailProvider::where('driver', $driver)->orderByDesc('is_active')->first();
+
+        // A secret saved under a different APP_KEY can't be decrypted (or even
+        // compared on save): drop it so the admin simply enters it again.
+        if ($existing && $existing->has_secret) {
+            try {
+                $existing->secret;
+            } catch (DecryptException) {
+                $existing->setRawAttributes(array_merge($existing->getAttributes(), ['secret' => null]), true);
+            }
+        }
+
+        $request->merge(['name' => $request->input('name') ?: ($existing?->name ?? self::DRIVER_NAMES[$driver] ?? 'Email provider')]);
+        $data = $this->validateProvider($request, $existing);
+
+        if (empty($data['secret'])) {
+            unset($data['secret']);
+        }
+
+        $provider = DB::transaction(function () use ($existing, $data) {
+            $provider = $existing ?? new EmailProvider();
+            $provider->fill($data);
+            $provider->is_active = true;
+            if (!$provider->exists || isset($data['secret']) || $provider->isDirty(['host', 'port', 'username', 'encryption', 'region', 'from_email'])) {
+                $provider->status = 'untested';
+            }
+            $provider->save();
+
+            EmailProvider::where('id', '!=', $provider->id)->update(['is_active' => false]);
+
+            return $provider;
+        });
+
+        $this->audit($request, 'email_provider.applied', $provider);
+
+        return $this->ok($provider->fresh(), self::DRIVER_NAMES[$driver] . ' is now sending all platform emails.');
+    }
+
+    private const DRIVER_NAMES = [
+        'brevo' => 'Brevo',
+        'smtp' => 'SMTP',
+        'sendgrid' => 'SendGrid',
+        'mailgun' => 'Mailgun',
+        'ses' => 'Amazon SES',
+        'log' => 'Test mode (log only)',
+    ];
 
     public function storeProvider(Request $request): JsonResponse
     {

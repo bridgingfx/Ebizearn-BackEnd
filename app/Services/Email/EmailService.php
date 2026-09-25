@@ -5,6 +5,7 @@ namespace App\Services\Email;
 use App\Models\EmailLog;
 use App\Models\EmailProvider;
 use App\Models\EmailTemplate;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Message;
@@ -50,25 +51,47 @@ class EmailService
     }
 
     /**
-     * The provider used for sending. BREVO_API_KEY in .env always wins (Brevo
-     * HTTP API, no SMTP); otherwise the provider marked active in Admin → Email.
+     * The provider used for sending: the one Super Admin applied in Admin → Email
+     * wins; BREVO_API_KEY in .env is only the fallback when none is active.
      */
     public function currentProvider(): ?EmailProvider
     {
-        $key = (string) config('services.brevo.key');
-
-        if ($key !== '') {
-            return new EmailProvider([
-                'name' => 'Brevo (.env)',
-                'driver' => 'brevo',
-                'secret' => $key,
-                'from_email' => config('services.brevo.from_email'),
-                'from_name' => config('services.brevo.from_name'),
-                'is_active' => true,
-            ]);
+        $active = EmailProvider::where('is_active', true)->first();
+        if ($active) {
+            return $active;
         }
 
-        return EmailProvider::where('is_active', true)->first();
+        $key = (string) config('services.brevo.key');
+        if ($key === '') {
+            return null;
+        }
+
+        return new EmailProvider([
+            'name' => 'Brevo (.env)',
+            'driver' => 'brevo',
+            'secret' => $key,
+            'from_email' => config('services.brevo.from_email'),
+            'from_name' => config('services.brevo.from_name'),
+            'is_active' => true,
+        ]);
+    }
+
+    /**
+     * Send one ready-made message through the current provider (used by
+     * marketing campaigns). Returns false with $error set when it fails or
+     * when no real provider is configured.
+     */
+    public function sendRaw(string $eventKey, string $toEmail, string $subject, string $html, string $text, ?string &$error = null): bool
+    {
+        $provider = $this->activeDeliveringProvider();
+
+        if (!$provider) {
+            $error = 'No email provider is active. Choose one in Admin → Email → Delivery.';
+            $this->logFailure($eventKey, $toEmail, $error);
+            return false;
+        }
+
+        return $this->deliver($eventKey, $provider, $toEmail, $subject, $html, $text, $error);
     }
 
     /**
@@ -169,7 +192,9 @@ class EmailService
             $this->log($eventKey, $provider, $to, $subject, 'sent');
             return true;
         } catch (Throwable $e) {
-            $error = mb_substr($e->getMessage(), 0, 500);
+            $error = $e instanceof DecryptException
+                ? "The saved API key / password for {$provider->name} can't be read (the server APP_KEY changed). Re-enter it in Admin → Email → Delivery."
+                : mb_substr($e->getMessage(), 0, 500);
             Log::error('Email delivery failed', ['event' => $eventKey, 'provider' => $provider->name, 'error' => $error]);
             $this->log($eventKey, $provider, $to, $subject, 'failed', $error);
             return false;

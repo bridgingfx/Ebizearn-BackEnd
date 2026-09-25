@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\AdminEmailCampaignController;
 use App\Http\Controllers\Api\V1\AdminEmailController;
 use App\Http\Controllers\Api\V1\AdminPaymentController;
 use App\Http\Controllers\Api\V1\AdminReferralController;
@@ -36,6 +37,12 @@ Route::prefix('v1')->group(function () {
     // Phase 4 (public): task-type catalog with proof contracts and
     // enforceable reward bands.
     Route::get('/task-types', [TaskTypeController::class, 'index']);
+
+    // Public: one-click unsubscribe link inside marketing campaign emails (signed URL).
+    Route::get('/email/unsubscribe/{user}', [AdminEmailCampaignController::class, 'unsubscribe'])
+        ->whereNumber('user')
+        ->middleware(['signed:relative', 'throttle:30,1'])
+        ->name('email.unsubscribe');
 
     // 2. Public Authentication
     Route::prefix('auth')->group(function () {
@@ -175,6 +182,18 @@ Route::prefix('v1')->group(function () {
             Route::put('/templates/{key}', [AdminEmailController::class, 'updateTemplate']);
             Route::post('/templates/{key}/reset', [AdminEmailController::class, 'resetTemplate']);
             Route::get('/logs', [AdminEmailController::class, 'logs']);
+            Route::get('/status', [AdminEmailController::class, 'status']);
+            Route::post('/apply', [AdminEmailController::class, 'apply']);
+
+            // Marketing campaigns, sent in batches through the active provider.
+            Route::get('/campaigns', [AdminEmailCampaignController::class, 'index']);
+            Route::get('/campaigns/audiences', [AdminEmailCampaignController::class, 'audienceCounts']);
+            Route::post('/campaigns', [AdminEmailCampaignController::class, 'store']);
+            Route::put('/campaigns/{id}', [AdminEmailCampaignController::class, 'update']);
+            Route::delete('/campaigns/{id}', [AdminEmailCampaignController::class, 'destroy']);
+            Route::post('/campaigns/{id}/test', [AdminEmailCampaignController::class, 'test']);
+            Route::post('/campaigns/{id}/send', [AdminEmailCampaignController::class, 'send']);
+            Route::post('/campaigns/{id}/cancel', [AdminEmailCampaignController::class, 'cancel']);
         });
 
         // Super Admin only: payment gateways and payment attempt logs
