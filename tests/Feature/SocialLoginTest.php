@@ -89,20 +89,22 @@ class SocialLoginTest extends TestCase
         $this->assertSame(1, User::where('email', 'owner@acme.com')->count());
     }
 
-    public function test_google_cannot_create_staff_accounts_but_linked_staff_can_sign_in(): void
+    public function test_staff_portals_never_accept_social_sign_in(): void
     {
-        $this->fakeVerifier(['sub' => 'g-new', 'email' => 'newperson@example.com', 'email_verified' => true]);
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'moderator'])->assertStatus(403);
-        $this->assertDatabaseMissing('users', ['email' => 'newperson@example.com']);
-
+        // Not even for an existing staff member with a matching verified email.
         User::create([
             'uuid' => (string) \Illuminate\Support\Str::uuid(),
             'name' => 'Mod', 'email' => 'mod@example.com', 'password' => Hash::make('V3r1fy!Strong'),
             'role' => 'moderator', 'status' => 'active', 'email_verified_at' => now(),
         ]);
         $this->fakeVerifier(['sub' => 'g-mod', 'email' => 'mod@example.com', 'email_verified' => true]);
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'moderator'])
-            ->assertOk()->assertJsonPath('data.user.role', 'moderator');
+
+        foreach (['moderator', 'superadmin'] as $portal) {
+            $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => $portal])
+                ->assertStatus(403)
+                ->assertJsonFragment(['message' => 'Staff sign in with their work email and password only.']);
+        }
+        $this->assertDatabaseMissing('social_accounts', ['provider_sub' => 'g-mod']);
     }
 
     public function test_unconfigured_google_client_id_gives_a_clear_503(): void

@@ -330,6 +330,14 @@ class AuthController extends Controller
         $portal = $request->input('portal') ?: null;
         $label = ucfirst($provider);
 
+        // Staff consoles are email + password only.
+        if (in_array($portal, ['moderator', 'superadmin'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Staff sign in with their work email and password only.',
+            ], 403);
+        }
+
         // Super Admin can switch each provider off in Admin → Settings.
         if (!app(\App\Services\Auth\SocialAuthSettings::class)->enabled($provider)) {
             return response()->json([
