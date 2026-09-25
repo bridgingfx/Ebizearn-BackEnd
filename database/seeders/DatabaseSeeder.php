@@ -84,9 +84,9 @@ class DatabaseSeeder extends Seeder
             ['user_id' => $sarah->id],
             [
                 'avatar_url' => 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400',
-                'country_code' => 'AE',
-                'city' => 'Dubai',
-                'phone' => '+971501234567',
+                'country_code' => 'GE',
+                'city' => 'Tbilisi',
+                'phone' => '+995555123456',
                 'language' => 'en',
                 'bio' => 'Digital creator & verified task contributor.',
                 'contributor_level' => 'trusted',
@@ -183,7 +183,7 @@ class DatabaseSeeder extends Seeder
                 'status' => 'active',
                 'tasks' => [
                     [
-                        'title' => 'Post in Facebook Group — Real Estate & Tech Dubai',
+                        'title' => 'Post in Facebook Group — Real Estate & Tech Tbilisi',
                         'reward_cents' => 40,
                         'estimated_minutes' => 5,
                         'difficulty' => 'easy',
@@ -345,10 +345,10 @@ class DatabaseSeeder extends Seeder
                     'assignment_id' => $assignment->id,
                     'status' => 'under_review',
                     'proof_data_json' => [
-                        'url' => 'https://facebook.com/groups/uaetechentrepreneurs/permalink/982341908234/',
-                        'note' => 'Posted in UAE Tech Entrepreneurs (45k members). Followed all hashtag rules.',
+                        'url' => 'https://facebook.com/groups/georgiatechentrepreneurs/permalink/982341908234/',
+                        'note' => 'Posted in Georgia Tech Entrepreneurs (45k members). Followed all hashtag rules.',
                         'device' => 'iPhone 15 Pro, iOS 18',
-                        'location' => 'Dubai, UAE',
+                        'location' => 'Tbilisi, Georgia',
                     ],
                 ]
             );
@@ -447,7 +447,7 @@ class DatabaseSeeder extends Seeder
     protected function seedCountries(): void
     {
         $countries = [
-            ['code' => 'AE', 'name' => 'United Arab Emirates', 'currency' => 'AED', 'sort_order' => 1],
+            ['code' => 'GE', 'name' => 'Georgia', 'currency' => 'GEL', 'sort_order' => 1],
             ['code' => 'US', 'name' => 'United States', 'currency' => 'USD', 'sort_order' => 2],
             ['code' => 'GB', 'name' => 'United Kingdom', 'currency' => 'GBP', 'sort_order' => 3],
             ['code' => 'IN', 'name' => 'India', 'currency' => 'INR', 'sort_order' => 4],

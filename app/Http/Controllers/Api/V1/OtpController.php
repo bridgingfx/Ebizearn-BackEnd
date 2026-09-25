@@ -101,8 +101,28 @@ class OtpController extends Controller
             ], 404);
         }
 
+        // Consent proof: a pending signup created under an older terms
+        // version must accept the current version before the account is
+        // activated (the frontend shows the terms and resends
+        // `terms_version`). Legacy accounts with no recorded version are
+        // left alone — consent is never backfilled.
+        $currentTerms = config('legal.terms_version');
+        if ($user->status === 'pending_verification'
+            && $user->terms_version !== null
+            && $user->terms_version !== $currentTerms
+        ) {
+            if ($request->input('terms_version') !== $currentTerms) {
+                return response()->json([
+                    'success' => false,
+                    'code' => 'terms_outdated',
+                    'message' => 'Our Terms of Service were updated since you registered. Please review and accept the current version to activate your account.',
+                ], 422);
+            }
+            $user->forceFill(['terms_version' => $currentTerms])->save();
+        }
+
         try {
-            $user = $otps->verify($user, $request->input('code'));
+            $user = $otps->verify($user, $request->input('code'), $request->ip());
         } catch (EmailOtpException $e) {
             return $this->otpError($e);
         }

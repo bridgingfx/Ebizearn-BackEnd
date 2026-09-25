@@ -21,7 +21,7 @@ class User extends Authenticatable
         'uuid',
         'name',
         'email',
-        // Signup hardening: E.164 phone ("+971501234567"), nullable.
+        // Signup hardening: E.164 phone ("+995555123456"), nullable.
         'phone',
         'password',
         'role',
@@ -33,6 +33,11 @@ class User extends Authenticatable
         // timestamp. The raw token is never persisted.
         'email_verification_token',
         'email_verification_sent_at',
+        // Consent proof: which terms version the user accepted + when/from
+        // which IP. Stamped at activation (OTP verify) or at social signup.
+        'terms_version',
+        'terms_accepted_at',
+        'terms_accepted_ip',
     ];
 
     protected $hidden = [
@@ -41,6 +46,8 @@ class User extends Authenticatable
         // Round 2: the token digest is internal; clients get email_verified.
         'email_verification_token',
         'email_verification_sent_at',
+        // Consent proof: the acceptance IP is internal, never serialized.
+        'terms_accepted_ip',
     ];
 
     /**
@@ -54,6 +61,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'email_verification_sent_at' => 'datetime',
+        'terms_accepted_at' => 'datetime',
         'password' => 'hashed',
     ];
 

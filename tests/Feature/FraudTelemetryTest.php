@@ -33,6 +33,7 @@ class FraudTelemetryTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
+            "terms_version" => "1.0",
         ]);
         $resp->assertStatus(201);
         // Fraud telemetry tests exercise the login path, not verification:

@@ -47,7 +47,7 @@ class WalletIntegrityTest extends TestCase
 
     protected function registerContributor(string $name, string $email, ?string $refCode = null): User
     {
-        $payload = ['name' => $name, 'email' => $email, 'password' => 'V3r1fy!Strong', 'role' => 'contributor', 'phone_country_code' => '+971', 'phone_number' => '501234567'];
+        $payload = ['name' => $name, 'email' => $email, 'password' => 'V3r1fy!Strong', 'role' => 'contributor', 'phone_country_code' => '+971', 'phone_number' => '501234567', 'terms_version' => '1.0'];
         if ($refCode) {
             $payload['referral_code'] = $refCode;
         }

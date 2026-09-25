@@ -23,7 +23,7 @@ return [
         'youtube' => 'https://youtube.com/@ebizearn',
     ],
     'supportedCountries' => [
-        'AE' => ['name' => 'United Arab Emirates', 'currency' => 'AED', 'active' => true],
+        'GE' => ['name' => 'Georgia', 'currency' => 'GEL', 'active' => true],
         'US' => ['name' => 'United States', 'currency' => 'USD', 'active' => true],
         'GB' => ['name' => 'United Kingdom', 'currency' => 'GBP', 'active' => true],
         'IN' => ['name' => 'India', 'currency' => 'INR', 'active' => true],

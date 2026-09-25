@@ -25,6 +25,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class AuthController extends Controller
 {
@@ -71,8 +72,15 @@ class AuthController extends Controller
             // Persisted as a single E.164 value on users.phone.
             'phone_country_code' => ['required', 'string', new PhoneCountryCode()],
             'phone_number' => ['required', 'string', 'regex:/^\d{4,15}$/'],
+            // Consent proof: the frontend sends the terms version it showed
+            // the user. It must match the current version (config/legal.php)
+            // — a missing or stale version is rejected so nobody signs up
+            // under outdated terms.
+            'terms_version' => ['required', 'string', Rule::in([config('legal.terms_version')])],
         ], [
             'phone_number.regex' => 'The phone number must contain 4-15 digits only.',
+            'terms_version.required' => 'Please review and accept the Terms of Service to continue.',
+            'terms_version.in' => 'The Terms of Service were updated. Please review and accept the current version to continue.',
         ]);
 
         if ($validator->fails()) {
@@ -122,12 +130,16 @@ class AuthController extends Controller
                     'status' => 'pending_verification',
                     'referrer_id' => $referrer?->id,
                     'email_verified_at' => null,
+                    // Consent proof: which terms version the user accepted.
+                    // terms_accepted_at/_ip are stamped at OTP activation
+                    // (EmailOtpService@verify) — the account is pending here.
+                    'terms_version' => $validated['terms_version'],
                 ]);
 
                 // Create Profile
                 Profile::create([
                     'user_id' => $user->id,
-                    'country_code' => $validated['country_code'] ?? 'AE',
+                    'country_code' => $validated['country_code'] ?? 'GE',
                     'language' => 'en',
                     'contributor_level' => 'starter',
                     'fraud_score' => 0,
@@ -384,6 +396,19 @@ class AuthController extends Controller
             // reused — mint a deterministic placeholder instead of violating
             // the unique email constraint.
             if (!$user) {
+                // Consent proof: a brand-new social signup must accept the
+                // current Terms of Service (config/legal.php). Returning
+                // users and provider-linking never reach this branch, so
+                // their sign-in is unaffected.
+                $expectedTerms = config('legal.terms_version');
+                if ($request->input('terms_version') !== $expectedTerms) {
+                    return response()->json([
+                        'success' => false,
+                        'code' => 'terms_outdated',
+                        'message' => 'Please review and accept the current Terms of Service to create your account.',
+                    ], 422);
+                }
+
                 // Staff accounts are created by a Super Admin, never by social sign-up.
                 if (in_array($portal, ['moderator', 'superadmin'], true)) {
                     return response()->json([
@@ -411,11 +436,16 @@ class AuthController extends Controller
                     'status' => 'active',
                     // The provider already verified this address out-of-band.
                     'email_verified_at' => $claims['email_verified'] === true ? now() : null,
+                    // Consent proof, stamped at creation — the account is
+                    // active the moment it is created here.
+                    'terms_version' => $expectedTerms,
+                    'terms_accepted_at' => now(),
+                    'terms_accepted_ip' => $request->ip(),
                 ]);
 
                 Profile::create([
                     'user_id' => $user->id,
-                    'country_code' => 'AE',
+                    'country_code' => 'GE',
                     'language' => 'en',
                     'contributor_level' => 'starter',
                     'fraud_score' => 0,

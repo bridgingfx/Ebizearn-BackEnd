@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 /**
  * Signup hardening — phone number on the account.
  *
- * DESIGN DECISION: a single E.164 `phone` column (e.g. "+971501234567")
+ * DESIGN DECISION: a single E.164 `phone` column (e.g. "+995555123456")
  * rather than separate country-code/number columns. Rationale:
  *  - one source of truth (no drift between two columns),
  *  - trivially comparable / searchable / unique-able,
