@@ -245,9 +245,11 @@ class EmailOtpService
         // A non-delivering driver in production pretends success while the
         // user never gets a code — fail LOUD instead.
         if (!$emails->activeDeliveringProvider() && app()->environment('production') && in_array($mailer, ['log', 'array'], true)) {
-            // Operator detail goes to the log; the user sees a plain message.
-            Log::error('Email delivery is not configured (MAIL_MAILER='.$mailer.'). '
-                .'Activate a provider in Admin → Email settings (e.g. Brevo) or set a real SMTP mailer.');
+            // Operator detail goes to the logs; the user sees a plain message.
+            $reason = 'Email is not configured on this server: BREVO_API_KEY is missing from .env '
+                .'(run php artisan config:clear after adding it).';
+            Log::error($reason);
+            $emails->logFailure('email_otp', $user->email, $reason);
 
             throw new EmailOtpException(
                 'email_failed',

@@ -72,6 +72,14 @@ class EmailService
     }
 
     /**
+     * Record a send that never reached a provider, so it shows in Admin → Email → Delivery log.
+     */
+    public function logFailure(string $eventKey, string $toEmail, string $reason): void
+    {
+        $this->log($eventKey, null, $toEmail, null, 'failed', mb_substr($reason, 0, 500));
+    }
+
+    /**
      * The active provider that actually delivers mail (not the "log" driver), if any.
      */
     public function activeDeliveringProvider(): ?EmailProvider
