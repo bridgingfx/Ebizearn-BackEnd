@@ -72,6 +72,58 @@ class SocialLoginTest extends TestCase
         $this->assertNotNull($user->profile);
     }
 
+    public function test_google_signup_from_business_pages_creates_a_business_account(): void
+    {
+        $this->fakeVerifier(['sub' => 'g-biz', 'email' => 'owner@acme.com', 'email_verified' => true, 'name' => 'Acme Owner']);
+
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'business'])
+            ->assertOk()
+            ->assertJsonPath('data.user.role', 'business')
+            ->assertJsonPath('data.user.business.company_name', 'Acme Owner Co');
+
+        // Signing in again from the business login works; from the contributor login it is refused.
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'business'])->assertOk();
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'contributor'])
+            ->assertStatus(403)
+            ->assertJsonFragment(['message' => 'This Google account is registered as a business account. Please use the business sign-in.']);
+        $this->assertSame(1, User::where('email', 'owner@acme.com')->count());
+    }
+
+    public function test_google_cannot_create_staff_accounts_but_linked_staff_can_sign_in(): void
+    {
+        $this->fakeVerifier(['sub' => 'g-new', 'email' => 'newperson@example.com', 'email_verified' => true]);
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'moderator'])->assertStatus(403);
+        $this->assertDatabaseMissing('users', ['email' => 'newperson@example.com']);
+
+        User::create([
+            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'name' => 'Mod', 'email' => 'mod@example.com', 'password' => Hash::make('V3r1fy!Strong'),
+            'role' => 'moderator', 'status' => 'active', 'email_verified_at' => now(),
+        ]);
+        $this->fakeVerifier(['sub' => 'g-mod', 'email' => 'mod@example.com', 'email_verified' => true]);
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'moderator'])
+            ->assertOk()->assertJsonPath('data.user.role', 'moderator');
+    }
+
+    public function test_unconfigured_google_client_id_gives_a_clear_503(): void
+    {
+        $this->app->singleton(SocialTokenVerifier::class, fn () => new class implements SocialTokenVerifier {
+            public function verifyGoogle(string $idToken): array
+            {
+                throw new SocialTokenVerificationException('Google client ID is not configured.');
+            }
+
+            public function verifyApple(string $idToken): array
+            {
+                throw new SocialTokenVerificationException('Apple client ID is not configured.');
+            }
+        });
+
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't'])
+            ->assertStatus(503)
+            ->assertJsonFragment(['message' => 'Google sign-in is not available right now. Please use your email and password.']);
+    }
+
     public function test_invalid_token_is_rejected_with_401(): void
     {
         $this->fakeVerifier(throw: true);

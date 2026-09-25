@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\AdminSystemController;
 use App\Http\Controllers\Api\V1\AdminTaskController;
 use App\Http\Controllers\Api\V1\AdminVerificationController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\AuthProviderSettingsController;
 use App\Http\Controllers\Api\V1\BusinessCampaignController;
 use App\Http\Controllers\Api\V1\BusinessTaskController;
 use App\Http\Controllers\Api\V1\CampaignWizardController;
@@ -33,6 +34,8 @@ Route::prefix('v1')->group(function () {
 
     // 1. Public Configuration & Metadata
     Route::get('/config/brand', [ConfigController::class, 'brandConfig']);
+    // Which social sign-in buttons the login / register pages show.
+    Route::get('/config/auth-providers', [AuthProviderSettingsController::class, 'publicConfig']);
     Route::get('/task-categories', [ConfigController::class, 'categories']);
 
     // Phase 4 (public): task-type catalog with proof contracts and
@@ -178,6 +181,12 @@ Route::prefix('v1')->group(function () {
 
             // Phase 9 — basic business analytics from REAL aggregates.
             Route::get('/analytics', [BusinessTaskController::class, 'analytics']);
+        });
+
+        // Super Admin only: Google / Apple sign-in settings.
+        Route::middleware('role:superadmin')->prefix('admin/auth-providers')->group(function () {
+            Route::get('/', [AuthProviderSettingsController::class, 'show']);
+            Route::put('/', [AuthProviderSettingsController::class, 'update']);
         });
 
         // Super Admin only: email providers, templates, logs

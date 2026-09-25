@@ -28,6 +28,14 @@ use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
+    /** Which roles may sign in on each portal (password and social sign-in). */
+    private const PORTAL_ROLES = [
+        'contributor' => ['contributor'],
+        'business' => ['business'],
+        'moderator' => ['moderator', 'admin'],
+        'superadmin' => ['superadmin'],
+    ];
+
     /**
      * Register a new Contributor or Business account.
      *
@@ -246,15 +254,8 @@ class AuthController extends Controller
         // that portal. This runs BEFORE any token revocation or minting so
         // a portal mismatch never destroys existing sessions and never
         // issues a token for the wrong portal.
-        $portalRoles = [
-            'contributor' => ['contributor'],
-            'business' => ['business'],
-            'moderator' => ['moderator', 'admin'],
-            'superadmin' => ['superadmin'],
-        ];
-
         $portal = $request->input('portal');
-        if ($portal !== null && $portal !== '' && !in_array($user->role, $portalRoles[$portal], true)) {
+        if ($portal !== null && $portal !== '' && !in_array($user->role, self::PORTAL_ROLES[$portal], true)) {
             return response()->json([
                 'success' => false,
                 'message' => "This account does not belong to the {$portal} portal. Please use the correct sign-in.",
@@ -314,6 +315,8 @@ class AuthController extends Controller
             'id_token' => 'required|string',
             'name' => 'nullable|string|max:255',
             'email' => 'nullable|email|max:255',
+            // Which sign-in / sign-up page the button was on.
+            'portal' => 'nullable|in:contributor,business,moderator,superadmin',
         ]);
 
         if ($validator->fails()) {
@@ -324,17 +327,31 @@ class AuthController extends Controller
             ], 422);
         }
 
+        $portal = $request->input('portal') ?: null;
+        $label = ucfirst($provider);
+
+        // Super Admin can switch each provider off in Admin → Settings.
+        if (!app(\App\Services\Auth\SocialAuthSettings::class)->enabled($provider)) {
+            return response()->json([
+                'success' => false,
+                'message' => "{$label} sign-in is turned off. Please use your email and password.",
+            ], 403);
+        }
+
         try {
             $claims = $provider === 'google'
                 ? $verifier->verifyGoogle($request->input('id_token'))
                 : $verifier->verifyApple($request->input('id_token'));
         } catch (SocialTokenVerificationException $e) {
-            Log::warning('Social login token rejected', ['provider' => $provider]);
+            $notConfigured = str_contains($e->getMessage(), 'not configured');
+            Log::warning('Social login token rejected', ['provider' => $provider, 'reason' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Social sign-in failed. Please try again.',
-            ], 401);
+                'message' => $notConfigured
+                    ? "{$label} sign-in is not available right now. Please use your email and password."
+                    : "{$label} sign-in failed. Please try again.",
+            ], $notConfigured ? 503 : 401);
         }
 
         // 1. Already linked? Sign straight in.
@@ -359,6 +376,14 @@ class AuthController extends Controller
             // reused — mint a deterministic placeholder instead of violating
             // the unique email constraint.
             if (!$user) {
+                // Staff accounts are created by a Super Admin, never by social sign-up.
+                if (in_array($portal, ['moderator', 'superadmin'], true)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "No staff account is linked to this {$label} account. Sign in with your staff email and password.",
+                    ], 403);
+                }
+
                 if ($email && User::where('email', $email)->exists()) {
                     $email = $this->placeholderEmail($provider, $claims['sub']);
                 }
@@ -373,7 +398,8 @@ class AuthController extends Controller
                     // No usable password: social-only account. A random
                     // 40-char secret means password login is impossible.
                     'password' => Hash::make(Str::random(40)),
-                    'role' => 'contributor',
+                    // Signing up from the business pages creates a business account.
+                    'role' => $portal === 'business' ? 'business' : 'contributor',
                     'status' => 'active',
                     // The provider already verified this address out-of-band.
                     'email_verified_at' => $claims['email_verified'] === true ? now() : null,
@@ -396,9 +422,18 @@ class AuthController extends Controller
                     'total_withdrawn_cents' => 0,
                 ]);
 
+                if ($user->role === 'business') {
+                    // Company details can be completed later in Business → Settings.
+                    Business::create([
+                        'owner_id' => $user->id,
+                        'company_name' => $user->name . ' Co',
+                        'status' => 'active',
+                    ]);
+                }
+
                 $isNewUser = true;
                 $this->screenRegistrationForDuplicates($request, $user);
-                $emails->sendEvent('welcome_contributor', $user->email, ['user_name' => $user->name]);
+                $emails->sendEvent('welcome_' . $user->role, $user->email, ['user_name' => $user->name]);
 
                 // Round 2: unverified social accounts get the verification
                 // email (Apple hides email after first auth; provider-
@@ -424,6 +459,17 @@ class AuthController extends Controller
             ]);
         }
 
+        // Same portal rule as password login: the account's role must belong
+        // to the page it signed in from (checked before any token is issued).
+        if ($portal !== null && !in_array($user->role, self::PORTAL_ROLES[$portal], true)) {
+            $home = ['contributor' => 'contributor', 'business' => 'business', 'moderator' => 'staff', 'admin' => 'staff', 'superadmin' => 'admin console'][$user->role] ?? $user->role;
+
+            return response()->json([
+                'success' => false,
+                'message' => "This {$label} account is registered as a {$home} account. Please use the {$home} sign-in.",
+            ], 403);
+        }
+
         if ($user->status === 'suspended') {
             return response()->json([
                 'success' => false,
@@ -438,7 +484,7 @@ class AuthController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => $isNewUser ? 'Account created with ' . ucfirst($provider) : 'Login successful',
+            'message' => $isNewUser ? "Welcome! Your account was created with {$label}." : 'Signed in successfully.',
             'data' => [
                 'user' => $user->load(['profile', 'wallet', 'business'])->withClientPermissions(),
                 'token' => $token,

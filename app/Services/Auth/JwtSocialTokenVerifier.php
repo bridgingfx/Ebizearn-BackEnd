@@ -38,7 +38,7 @@ class JwtSocialTokenVerifier implements SocialTokenVerifier
 
     public function verifyGoogle(string $idToken): array
     {
-        $audience = (string) config('services.google.client_id');
+        $audience = app(SocialAuthSettings::class)->clientId('google');
 
         if ($audience === '' || str_starts_with($audience, 'YOUR_')) {
             throw new SocialTokenVerificationException('Google client ID is not configured.');
@@ -54,7 +54,7 @@ class JwtSocialTokenVerifier implements SocialTokenVerifier
 
     public function verifyApple(string $idToken): array
     {
-        $audience = (string) config('services.apple.client_id');
+        $audience = app(SocialAuthSettings::class)->clientId('apple');
 
         if ($audience === '' || str_starts_with($audience, 'YOUR_')) {
             throw new SocialTokenVerificationException('Apple client ID is not configured.');
