@@ -4,7 +4,7 @@ namespace App\Services\Auth;
 
 use App\Mail\VerifyEmail;
 use App\Models\User;
-use Illuminate\Support\Facades\Mail;
+use App\Services\Email\EmailService;
 use Illuminate\Support\Str;
 
 /**
@@ -33,7 +33,7 @@ class EmailVerificationService
 
         $url = $this->verifyUrl($raw);
 
-        Mail::to($user->email)->send(new VerifyEmail($user, $url));
+        app(EmailService::class)->sendMailable('verify_email', $user->email, new VerifyEmail($user, $url));
 
         return $url;
     }

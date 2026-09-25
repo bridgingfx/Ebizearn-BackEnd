@@ -6,6 +6,7 @@ use App\Models\EmailLog;
 use App\Models\EmailProvider;
 use App\Models\EmailTemplate;
 use Illuminate\Http\Client\Response;
+use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Message;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -36,7 +37,7 @@ class EmailService
 
             return $this->deliver(
                 $eventKey,
-                EmailProvider::where('is_active', true)->first(),
+                $this->currentProvider(),
                 $toEmail,
                 $this->render($template->subject, $variables, false),
                 $this->render($template->html_body, $variables, true),
@@ -45,6 +46,64 @@ class EmailService
         } catch (Throwable $e) {
             Log::error('Email event failed', ['event' => $eventKey, 'error' => $e->getMessage()]);
             return false;
+        }
+    }
+
+    /**
+     * The provider used for sending. BREVO_API_KEY in .env always wins (Brevo
+     * HTTP API, no SMTP); otherwise the provider marked active in Admin → Email.
+     */
+    public function currentProvider(): ?EmailProvider
+    {
+        $key = (string) config('services.brevo.key');
+
+        if ($key !== '') {
+            return new EmailProvider([
+                'name' => 'Brevo (.env)',
+                'driver' => 'brevo',
+                'secret' => $key,
+                'from_email' => config('services.brevo.from_email'),
+                'from_name' => config('services.brevo.from_name'),
+                'is_active' => true,
+            ]);
+        }
+
+        return EmailProvider::where('is_active', true)->first();
+    }
+
+    /**
+     * The active provider that actually delivers mail (not the "log" driver), if any.
+     */
+    public function activeDeliveringProvider(): ?EmailProvider
+    {
+        $provider = $this->currentProvider();
+
+        return $provider && $provider->driver !== 'log' ? $provider : null;
+    }
+
+    /**
+     * Send a Blade mailable (OTP code, verify link) to one recipient. Uses the
+     * active email provider from Admin → Email settings (e.g. Brevo) when one is
+     * configured, otherwise Laravel's mailer. Unlike sendEvent, this THROWS when
+     * delivery fails so callers can fail loudly.
+     */
+    public function sendMailable(string $eventKey, string $toEmail, Mailable $mailable): void
+    {
+        $provider = $this->activeDeliveringProvider();
+
+        if (!$provider) {
+            Mail::to($toEmail)->send($mailable);
+            return;
+        }
+
+        $content = $mailable->content();
+        $subject = (string) $mailable->envelope()->subject;
+        $html = view($content->view, $content->with)->render();
+        $text = $content->text ? view($content->text, $content->with)->render() : trim(strip_tags($html));
+
+        $error = null;
+        if (!$this->deliver($eventKey, $provider, $toEmail, $subject, $html, $text, $error)) {
+            throw new RuntimeException('Email delivery failed via ' . $provider->name . ': ' . $error);
         }
     }
 

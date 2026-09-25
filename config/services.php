@@ -53,6 +53,13 @@ return [
         'private_key' => env('APPLE_PRIVATE_KEY'),
     ],
 
+    'brevo' => [
+        // Brevo transactional email (HTTP API, no SMTP). Used for all app email when set.
+        'key' => env('BREVO_API_KEY'),
+        'from_email' => env('MAIL_FROM_ADDRESS', 'info@ebizearn.com'),
+        'from_name' => env('MAIL_FROM_NAME', 'eBizEarn'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

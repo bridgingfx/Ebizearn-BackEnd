@@ -6,9 +6,9 @@ use App\Exceptions\EmailOtpException;
 use App\Mail\EmailOtpMail;
 use App\Models\EmailOtp;
 use App\Models\User;
+use App\Services\Email\EmailService;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 /**
@@ -233,27 +233,30 @@ class EmailOtpService
     }
 
     /**
-     * Send the code via Laravel's mailer. Throws loudly when SMTP (or the
-     * configured mailer) cannot actually deliver.
+     * Send the code via the active email provider (Admin → Email settings,
+     * e.g. Brevo), falling back to Laravel's mailer. Throws loudly when the
+     * mail cannot actually be delivered.
      */
     protected function sendMail(User $user, string $code): void
     {
+        $emails = app(EmailService::class);
         $mailer = (string) config('mail.default');
 
         // A non-delivering driver in production pretends success while the
         // user never gets a code — fail LOUD instead.
-        if (app()->environment('production') && in_array($mailer, ['log', 'array'], true)) {
+        if (!$emails->activeDeliveringProvider() && app()->environment('production') && in_array($mailer, ['log', 'array'], true)) {
+            // Operator detail goes to the log; the user sees a plain message.
+            Log::error('Email delivery is not configured (MAIL_MAILER='.$mailer.'). '
+                .'Activate a provider in Admin → Email settings (e.g. Brevo) or set a real SMTP mailer.');
+
             throw new EmailOtpException(
                 'email_failed',
-                'Email delivery is not configured on this server (MAIL_MAILER='.$mailer.'). '
-                .'Configure a real SMTP provider (MAIL_MAILER=smtp, MAIL_HOST, MAIL_PORT, '
-                .'MAIL_USERNAME, MAIL_PASSWORD, MAIL_ENCRYPTION, MAIL_FROM_ADDRESS) before launch — '
-                .'signup cannot complete without it.',
+                'We could not send the verification email right now. Please try again in a few minutes.',
                 503,
             );
         }
 
-        Mail::to($user->email)->send(new EmailOtpMail($user, $code));
+        $emails->sendMailable('email_otp', $user->email, new EmailOtpMail($user, $code));
     }
 
     /**
