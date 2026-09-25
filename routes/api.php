@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\V1\Ops\OpsTaskTypeController;
 use App\Http\Controllers\Api\V1\OtpController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\ReferralController;
+use App\Http\Controllers\Api\V1\SocialChannelController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
 use App\Http\Controllers\Api\V1\SupportTicketController;
@@ -107,6 +108,12 @@ Route::prefix('v1')->group(function () {
             // Round 2: dashboard data is gated on email verification.
             Route::get('/dashboard', [TaskController::class, 'contributorDashboard'])->middleware('email.verified');
             Route::get('/my-tasks', [TaskController::class, 'myTasks']);
+
+            // Social channels, verified with a bio code by staff.
+            Route::get('/social-channels', [SocialChannelController::class, 'index']);
+            Route::post('/social-channels', [SocialChannelController::class, 'store'])->middleware('throttle:20,1');
+            Route::post('/social-channels/{id}/submit', [SocialChannelController::class, 'submit'])->whereNumber('id')->middleware('throttle:20,1');
+            Route::delete('/social-channels/{id}', [SocialChannelController::class, 'destroy'])->whereNumber('id');
 
             // Phase 8: affiliate endpoints (real ledger-backed data only)
             Route::middleware('permission:use_referrals')->group(function () {
@@ -282,6 +289,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/{userId}/documents/{side}', [StaffKycController::class, 'document'])
                 ->whereIn('side', ['front', 'back', 'selfie']);
             Route::post('/{userId}/decision', [StaffKycController::class, 'decision']);
+        });
+
+        // Social channel review queue (same reviewers as KYC).
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:review_kyc'])->prefix('staff/social-channels')->group(function () {
+            Route::get('/', [SocialChannelController::class, 'staffIndex']);
+            Route::post('/{id}/decision', [SocialChannelController::class, 'decision'])->whereNumber('id');
         });
 
         Route::middleware(['role:moderator,admin,superadmin', 'permission:manage_task_templates'])->prefix('staff')->group(function () {

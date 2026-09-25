@@ -247,6 +247,12 @@ class User extends Authenticatable
         return $this->hasMany(SocialAccount::class);
     }
 
+    /** Social channels the contributor completes tasks with (bio-code verified). */
+    public function socialChannels(): HasMany
+    {
+        return $this->hasMany(SocialChannel::class);
+    }
+
     /**
      * Round 2: serialized convenience boolean for the verification gate.
      */
