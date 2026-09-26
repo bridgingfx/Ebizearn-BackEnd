@@ -5,7 +5,7 @@
  *
  * Codes are stored WITHOUT the leading "+" (normalization strips it).
  * Registration validates `phone_country_code` against this list, then
- * persists the E.164 form ("+971501234567") on users.phone.
+ * persists the E.164 form ("+995555123456") on users.phone.
  *
  * Coverage: real ITU country calling codes. If the business expands to a
  * market whose code is missing here, add it — signup validation is driven
@@ -14,6 +14,8 @@
 return [
 
     'allowed_codes' => [
+        // Georgia (primary market)
+        '995',
         // North America / Caribbean (NANP)
         '1',
         // Europe
@@ -23,8 +25,8 @@ return [
         '374', '375', '376', '377', '378', '380', '381', '382', '383',
         '385', '386', '387', '389', '420', '421', '423',
         // Russia / Central Asia
-        '7', '992', '993', '994', '995', '996', '997', '998',
-        // Middle East (UAE first — primary market)
+        '7', '992', '993', '994', '996', '997', '998',
+        // Middle East
         '971', '966', '965', '973', '974', '968', '967', '962', '963',
         '964', '961', '972', '970', '90', '98', '93',
         // Asia-Pacific

@@ -179,7 +179,7 @@ class SupportKycProfileTest extends TestCase
         Sanctum::actingAs($contributor);
 
         $this->post('/api/v1/profile/kyc', [
-            'document_type' => 'emirates_id',
+            'document_type' => 'national_id',
             'document_front' => UploadedFile::fake()->image('front.jpg'),
             'document_back' => UploadedFile::fake()->image('back.jpg'),
         ], ['Accept' => 'application/json'])

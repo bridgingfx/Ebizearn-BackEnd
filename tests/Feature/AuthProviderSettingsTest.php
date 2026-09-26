@@ -92,7 +92,7 @@ class AuthProviderSettingsTest extends TestCase
             ->assertJsonPath('data.google.client_id', '999-newclient.apps.googleusercontent.com');
         $this->assertSame('999-newclient.apps.googleusercontent.com', app(\App\Services\Auth\SocialAuthSettings::class)->clientId('google'));
 
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't'])->assertOk();
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'terms_version' => '1.0'])->assertOk();
         $this->assertDatabaseHas('audit_logs', ['action' => 'settings.auth_providers_updated']);
     }
 

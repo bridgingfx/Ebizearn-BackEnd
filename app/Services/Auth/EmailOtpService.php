@@ -143,10 +143,15 @@ class EmailOtpService
      * Verify a code. On success marks the email verified and activates a
      * pending signup account. Returns the verified user.
      *
+     * When a pending signup is activated, the terms-consent proof is
+     * stamped (terms_accepted_at/_ip) — but only when a terms version was
+     * recorded at signup; legacy accounts keep nulls, never fabricated
+     * consent.
+     *
      * @throws EmailOtpException not_found | already_verified | expired |
      *                           invalid | too_many_attempts
      */
-    public function verify(User $user, string $code): User
+    public function verify(User $user, string $code, ?string $ip = null): User
     {
         if ($user->email_verified_at) {
             throw new EmailOtpException(
@@ -224,12 +229,32 @@ class EmailOtpService
             ->whereNull('invalidated_at')
             ->update(['invalidated_at' => $now]);
 
-        $user->forceFill([
+        $activating = $user->status === 'pending_verification';
+
+        $user->forceFill(array_merge([
             'email_verified_at' => $now,
-            'status' => $user->status === 'pending_verification' ? 'active' : $user->status,
-        ])->save();
+            'status' => $activating ? 'active' : $user->status,
+        ], $this->consentStamp($user, $activating, $now, $ip)))->save();
 
         return $user->fresh();
+    }
+
+    /**
+     * Consent proof for OTP activation. Returns the fields to stamp when a
+     * pending signup is activated — empty for legacy accounts with no
+     * recorded terms version (no consent means no proof, never a
+     * fabricated record).
+     */
+    protected function consentStamp(User $user, bool $activating, \Carbon\Carbon $now, ?string $ip): array
+    {
+        if (!$activating || $user->terms_version === null) {
+            return [];
+        }
+
+        return [
+            'terms_accepted_at' => $now,
+            'terms_accepted_ip' => $ip,
+        ];
     }
 
     /**

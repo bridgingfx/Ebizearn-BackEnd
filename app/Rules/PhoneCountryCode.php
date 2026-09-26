@@ -7,7 +7,7 @@ use Illuminate\Contracts\Validation\ValidationRule;
 
 /**
  * Signup hardening — validates a phone dial code against the real
- * allow-list (config/phone.php). Accepts "+971" or "971".
+ * allow-list (config/phone.php). Accepts "+995" or "995".
  *
  * Single source of truth for the dial-code rule, shared by
  * AuthController@register and ProfileController@update.

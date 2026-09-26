@@ -100,7 +100,7 @@ class ProfileController extends Controller
         }
 
         $user = $request->user();
-        $profile = $user->profile ?? Profile::create(['user_id' => $user->id, 'country_code' => 'AE', 'language' => 'en']);
+        $profile = $user->profile ?? Profile::create(['user_id' => $user->id, 'country_code' => 'GE', 'language' => 'en']);
 
         $this->deleteStored($profile);
         $path = $request->file('avatar')->store('avatars', 'public');
@@ -140,7 +140,7 @@ class ProfileController extends Controller
      * profile page. Every field is optional, but at least one must be sent:
      *
      * PUT /api/v1/profile  { phone_country_code, phone_number }
-     *                      { phone: "+971501234567" }   (single E.164 value)
+     *                      { phone: "+995555123456" }   (single E.164 value)
      *                      { name, country_code, city, bio }
      *
      * Email is the login identity and is intentionally not editable here.
@@ -187,7 +187,7 @@ class ProfileController extends Controller
         } elseif (!empty($validated['phone'])) {
             $phone = $this->normalizeE164($validated['phone']);
             if ($phone === null) {
-                return $this->phoneError('phone', 'Enter your phone with country code, e.g. +971501234567.');
+                return $this->phoneError('phone', 'Enter your phone with country code, e.g. +995555123456.');
             }
         }
 
@@ -212,7 +212,7 @@ class ProfileController extends Controller
             $profileData['phone'] = $phone;
         }
         if ($profileData !== []) {
-            $profile = Profile::firstOrCreate(['user_id' => $user->id], ['country_code' => 'AE', 'language' => 'en']);
+            $profile = Profile::firstOrCreate(['user_id' => $user->id], ['country_code' => 'GE', 'language' => 'en']);
             $profile->update($profileData);
         }
 
@@ -226,7 +226,7 @@ class ProfileController extends Controller
     }
 
     /**
-     * "+971 50-123 4567" -> "+971501234567" when the dial code is on the
+     * "+995 555-12 3456" -> "+995555123456" when the dial code is on the
      * allow-list (config/phone.php) and 4-15 national digits follow. ITU
      * calling codes are prefix-free, so the first matching length wins.
      */
@@ -261,13 +261,13 @@ class ProfileController extends Controller
      * `local` disk; staff review them through /staff/kyc.
      *
      * POST /api/v1/profile/kyc  (multipart)
-     *   document_type: emirates_id | passport | national_id
+     *   document_type: passport | national_id
      *   document_front (required), document_back, selfie
      */
     public function submitKyc(Request $request, EmailService $emails): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'document_type' => 'required|in:emirates_id,passport,national_id',
+            'document_type' => 'required|in:passport,national_id',
             'document_front' => 'required|file|mimes:jpg,jpeg,png,webp,pdf|max:5120',
             'document_back' => 'nullable|file|mimes:jpg,jpeg,png,webp,pdf|max:5120',
             'selfie' => 'nullable|file|mimes:jpg,jpeg,png,webp|max:5120',
@@ -292,7 +292,7 @@ class ProfileController extends Controller
         $user = $request->user();
         // Read the profile fresh: the status checks below must see the
         // current row, not a relation cached on the user instance.
-        $profile = Profile::firstOrCreate(['user_id' => $user->id], ['country_code' => 'AE', 'language' => 'en']);
+        $profile = Profile::firstOrCreate(['user_id' => $user->id], ['country_code' => 'GE', 'language' => 'en']);
 
         if ($profile->kyc_status === 'verified') {
             return response()->json(['success' => false, 'message' => 'Your identity is already verified.'], 422);
