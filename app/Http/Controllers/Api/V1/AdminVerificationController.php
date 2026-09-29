@@ -11,6 +11,7 @@ use App\Models\TaskSubmission;
 use App\Models\User;
 use App\Models\WithdrawalRequest;
 use App\Services\Verification\VerificationService;
+use App\Services\Idempotency\IdempotencyConflictException;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
@@ -237,6 +238,11 @@ class AdminVerificationController extends Controller
             $query->where('status', $request->input('status'));
         }
 
+        // Lets admins queue one rail at a time (e.g. ?payout_method=usdt).
+        if ($request->filled('payout_method')) {
+            $query->where('payout_method', $request->input('payout_method'));
+        }
+
         $payouts = $query->latest()->paginate(20);
 
         return response()->json([
@@ -259,6 +265,8 @@ class AdminVerificationController extends Controller
             'action' => 'required|in:approve,reject',
             'reason' => 'required_if:action,reject|nullable|string',
             'provider_tx_id' => 'nullable|string',
+            // On-chain tx hash when the admin already sent USDT manually.
+            'tx_hash' => 'nullable|string|max:128',
             'idempotency_key' => 'nullable|string|max:128',
         ]);
 
@@ -275,7 +283,12 @@ class AdminVerificationController extends Controller
 
         try {
             if ($request->input('action') === 'approve') {
-                $processed = $this->walletService->approveWithdrawal($withdrawal, $request->input('provider_tx_id'), $idempotencyKey);
+                $processed = $this->walletService->approveWithdrawal(
+                    $withdrawal,
+                    $request->input('provider_tx_id'),
+                    $idempotencyKey,
+                    $request->input('tx_hash')
+                );
                 $msg = 'Payout approved and logged for manual processing — funds not yet sent.';
             } else {
                 $processed = $this->walletService->rejectWithdrawal($withdrawal, $request->input('reason', 'Compliance criteria not met'), $idempotencyKey);
@@ -287,11 +300,62 @@ class AdminVerificationController extends Controller
                 'message' => $msg,
                 'data' => $processed,
             ]);
+        } catch (IdempotencyConflictException $e) {
+            // Same key replayed concurrently or with different parameters:
+            // a conflict, not a bad request.
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 409);
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], 400);
         }
+    }
+
+    /**
+     * Record the on-chain tx hash for a USDT payout after the admin sends
+     * USDT manually from the company wallet. Only valid while the payout
+     * is `processing` (approved, awaiting/just-sent manual payout).
+     */
+    public function recordTxHash(Request $request, string $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'tx_hash' => 'required|string|max:128',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $withdrawal = WithdrawalRequest::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+
+        if ($withdrawal->payout_method !== 'usdt') {
+            return response()->json([
+                'success' => false,
+                'message' => 'A tx hash can only be recorded for USDT payouts.',
+            ], 422);
+        }
+
+        if ($withdrawal->status !== 'processing') {
+            return response()->json([
+                'success' => false,
+                'message' => 'A tx hash can only be recorded on an approved (processing) payout.',
+            ], 422);
+        }
+
+        $withdrawal->update(['tx_hash' => $request->input('tx_hash')]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Tx hash recorded.',
+            'data' => $withdrawal->fresh(),
+        ]);
     }
 }

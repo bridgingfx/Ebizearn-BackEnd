@@ -63,6 +63,15 @@ class FraudAnalysisService
             ?? $taskType?->proof_required_json
             ?? [];
 
+        // Legacy campaigns stored proof requirements as an assoc map
+        // (['screenshot' => true]); the canonical format is a plain list of
+        // names. Normalize so old rows still enforce their requirements —
+        // without this, the match() below sees only boolean values and every
+        // requirement silently passes.
+        if (is_array($required) && !array_is_list($required)) {
+            $required = array_keys(array_filter($required));
+        }
+
         // 1. Missing requirements: every proof type the type contract demands
         // must be present.
         $missing = [];

@@ -6,7 +6,10 @@ use Illuminate\Database\Eloquent\Model;
 
 class PaymentGateway extends Model
 {
-    public const DRIVERS = ['bank_transfer', 'paypal', 'wise', 'crypto', 'stripe', 'log'];
+    // No crypto in MVP (owner-adjudicated rule): admins cannot register a
+    // crypto gateway; crypto payout methods resolve to no gateway and can
+    // only ever be log-only.
+    public const DRIVERS = ['bank_transfer', 'paypal', 'wise', 'stripe', 'log'];
 
     protected $fillable = [
         'name', 'driver', 'display_name', 'credentials', 'is_active', 'status',

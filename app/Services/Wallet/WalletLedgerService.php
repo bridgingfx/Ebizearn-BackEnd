@@ -483,6 +483,16 @@ class WalletLedgerService
                         'currency' => $lockedWallet->currency,
                         'payout_method' => $payoutMethod,
                         'payout_details_json' => $payoutDetails,
+                        // USDT payouts (manual-approved): the receiving
+                        // address + network live on dedicated columns so the
+                        // admin queue can show them without parsing JSON.
+                        // Ledger stays USD (1 USDT = $1) — no conversion.
+                        'wallet_address' => $payoutMethod === 'usdt'
+                            ? ($payoutDetails['wallet_address'] ?? null)
+                            : null,
+                        'network' => $payoutMethod === 'usdt'
+                            ? strtoupper($payoutDetails['network'] ?? 'TRC-20')
+                            : null,
                         'status' => 'requested',
                     ]);
 
@@ -517,14 +527,15 @@ class WalletLedgerService
     public function approveWithdrawal(
         WithdrawalRequest $request,
         ?string $providerTxId = null,
-        ?string $idempotencyKey = null
+        ?string $idempotencyKey = null,
+        ?string $txHash = null
     ): WithdrawalRequest {
         return $this->withIdempotency(
             $idempotencyKey,
             'wallet.withdrawal.approve',
             $request->user_id,
-            ['withdrawal_id' => $request->id, 'provider_tx_id' => $providerTxId],
-            function () use ($request, $providerTxId) {
+            ['withdrawal_id' => $request->id, 'provider_tx_id' => $providerTxId, 'tx_hash' => $txHash],
+            function () use ($request, $providerTxId, $txHash) {
                 // The gateway call lives inside the idempotent unit so a retried
                 // request never triggers a second payout attempt.
                 if (!$providerTxId) {
@@ -535,7 +546,7 @@ class WalletLedgerService
                     $providerTxId = $payment['provider_transaction_id'] ?? null;
                 }
 
-                return DB::transaction(function () use ($request, $providerTxId) {
+                return DB::transaction(function () use ($request, $providerTxId, $txHash) {
                     $lockedRequest = WithdrawalRequest::where('id', $request->id)->lockForUpdate()->firstOrFail();
                     if (in_array($lockedRequest->status, ['paid', 'processing'], true)) {
                         return $lockedRequest;
@@ -551,8 +562,11 @@ class WalletLedgerService
                         'status' => 'processing',
                         'processed_at' => now(),
                         'provider_transaction_id' => $providerTxId ?? 'PAY_' . strtoupper(uniqid()),
+                        // On-chain tx hash when the admin already sent USDT.
+                        'tx_hash' => $txHash,
                         'admin_notes' => 'Logged for manual processing'
                             . ($providerTxId ? " (ref {$providerTxId})" : '')
+                            . ($txHash ? " (tx {$txHash})" : '')
                             . ' — funds not yet sent.',
                     ]);
 
@@ -578,7 +592,11 @@ class WalletLedgerService
             function () use ($request, $reason) {
                 return DB::transaction(function () use ($request, $reason) {
                     $lockedRequest = WithdrawalRequest::where('id', $request->id)->lockForUpdate()->firstOrFail();
-                    if ($lockedRequest->status === 'rejected' || $lockedRequest->status === 'paid') {
+                    // An approved withdrawal already moved the funds out of
+                    // pending (into total_withdrawn) — rejecting afterwards
+                    // must NOT touch balances again (it would drive pending
+                    // negative and double-credit available).
+                    if (in_array($lockedRequest->status, ['rejected', 'paid', 'processing'], true)) {
                         return $lockedRequest;
                     }
 

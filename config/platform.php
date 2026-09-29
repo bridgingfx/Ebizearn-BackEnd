@@ -1,8 +1,8 @@
 <?php
 
 return [
-    'name' => env('PLATFORM_NAME', 'BizNetwork'),
-    'shortName' => env('PLATFORM_SHORT_NAME', 'BizNetwork'),
+    'name' => env('PLATFORM_NAME', 'eBizEarn'),
+    'shortName' => env('PLATFORM_SHORT_NAME', 'eBizEarn'),
     'tagline' => 'Small Tasks. Big Opportunities.',
     'supportingTagline' => 'Complete verified digital tasks from real businesses, submit your work and receive rewards securely.',
     'domain' => env('PLATFORM_DOMAIN', 'ebizearn.com'),
@@ -36,7 +36,7 @@ return [
     ],
     'featureFlags' => [
         'referrals' => true,
-        'multiLevelAffiliate' => false, // disabled by default per policy
+        'multiLevelAffiliate' => true, // three-level affiliate per owner mission brief (Phase 8)
         'cryptoPayout' => false,
         'ugcTasks' => true,
         'socialTasks' => true,

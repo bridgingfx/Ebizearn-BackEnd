@@ -59,45 +59,77 @@ class BusinessDepositTest extends TestCase
         Sanctum::actingAs($this->user('superadmin'));
 
         // Details are required before a method can go live.
-        $this->putJson('/api/v1/admin/deposit-methods/crypto', [
-            'is_active' => true, 'title' => 'Crypto (USDT)', 'details' => ['network' => 'TRC20'], 'min_amount' => 10,
-        ])->assertStatus(422)->assertJsonFragment(['message' => 'Fill in the wallet address and network before turning Crypto (USDT) on.']);
+        $this->putJson('/api/v1/admin/deposit-methods/card', [
+            'is_active' => true, 'title' => 'Card payment', 'details' => ['provider' => 'AcmePay'], 'min_amount' => 10,
+        ])->assertStatus(422)->assertJsonFragment(['message' => 'Fill in a valid payment link (https://…) before turning Card payment on.']);
 
-        $this->enable('crypto', ['currency' => 'USDT', 'network' => 'TRC20', 'wallet_address' => 'TXabc123', 'junk' => 'dropped']);
+        $this->enable('card', ['payment_link' => 'https://pay.example.com/x', 'provider' => 'AcmePay', 'junk' => 'dropped']);
         $this->enable('bank', ['account_name' => 'eBiz Network FZ LLC', 'iban' => 'AE070331234567890123456', 'bank_name' => 'Emirates NBD']);
-        $this->assertArrayNotHasKey('junk', DepositMethod::where('key', 'crypto')->first()->details);
+        $this->assertArrayNotHasKey('junk', DepositMethod::where('key', 'card')->first()->details);
 
         Sanctum::actingAs($this->user('business'));
         $methods = $this->getJson('/api/v1/business/deposit-methods')->assertOk()->json('data');
-        $this->assertSame(['bank', 'crypto'], collect($methods)->pluck('key')->sort()->values()->all());
-        $this->assertSame('TXabc123', collect($methods)->firstWhere('key', 'crypto')['details']['wallet_address']);
+        $this->assertSame(['bank', 'card'], collect($methods)->pluck('key')->sort()->values()->all());
+        $this->assertSame('https://pay.example.com/x', collect($methods)->firstWhere('key', 'card')['details']['payment_link']);
 
         // Admins cannot change deposit methods.
         Sanctum::actingAs($this->user('admin'));
         $this->putJson('/api/v1/admin/deposit-methods/card', ['is_active' => false, 'title' => 'x', 'min_amount' => 1])->assertForbidden();
     }
 
+    public function test_crypto_deposit_method_is_disabled_in_mvp(): void
+    {
+        Sanctum::actingAs($this->user('superadmin'));
+
+        // Super Admin cannot turn crypto on — even through the route's key list.
+        $this->putJson('/api/v1/admin/deposit-methods/crypto', [
+            'is_active' => true,
+            'title' => 'Crypto (USDT)',
+            'instructions' => 'Pay here.',
+            'details' => ['currency' => 'USDT', 'network' => 'TRC20', 'wallet_address' => 'TXabc123'],
+            'min_amount' => 10,
+        ])->assertStatus(422)->assertJsonFragment(['message' => 'Crypto deposits are disabled in the MVP.']);
+
+        // A crypto gateway cannot be registered either.
+        $this->postJson('/api/v1/admin/payments/gateways', [
+            'name' => 'CryptoX',
+            'driver' => 'crypto',
+            'credentials' => ['api_key' => 'x'],
+        ])->assertStatus(422);
+
+        // A legacy crypto row forced active in the DB is still hidden from
+        // businesses and rejected on submit.
+        DepositMethod::where('key', 'crypto')->update(['is_active' => true]);
+
+        Sanctum::actingAs($this->user('business'));
+        $methods = $this->getJson('/api/v1/business/deposit-methods')->assertOk()->json('data');
+        $this->assertNotContains('crypto', collect($methods)->pluck('key')->all());
+
+        $this->post('/api/v1/business/deposits', ['method' => 'crypto', 'amount' => 100, 'reference' => '0xhash1'], ['Accept' => 'application/json'])
+            ->assertStatus(422)->assertJsonValidationErrors('method');
+    }
+
     public function test_deposit_is_credited_only_after_approval_and_only_once(): void
     {
         Storage::fake('local');
-        $this->enable('crypto', ['currency' => 'USDT', 'network' => 'TRC20', 'wallet_address' => 'TXabc123']);
+        $this->enable('card', ['payment_link' => 'https://pay.example.com/x', 'provider' => 'AcmePay']);
         $business = $this->user('business');
         Sanctum::actingAs($business);
 
-        // Inactive method, missing hash, too small.
-        $this->post('/api/v1/business/deposits', ['method' => 'card', 'amount' => 50], ['Accept' => 'application/json'])->assertStatus(422);
-        $this->post('/api/v1/business/deposits', ['method' => 'crypto', 'amount' => 50], ['Accept' => 'application/json'])
+        // Inactive method, missing reference, too small.
+        $this->post('/api/v1/business/deposits', ['method' => 'bank', 'amount' => 50], ['Accept' => 'application/json'])->assertStatus(422);
+        $this->post('/api/v1/business/deposits', ['method' => 'card', 'amount' => 50], ['Accept' => 'application/json'])
             ->assertStatus(422)->assertJsonValidationErrors('reference');
-        $this->post('/api/v1/business/deposits', ['method' => 'crypto', 'amount' => 5, 'reference' => '0xhash1'], ['Accept' => 'application/json'])
+        $this->post('/api/v1/business/deposits', ['method' => 'card', 'amount' => 5, 'reference' => 'PAY-1'], ['Accept' => 'application/json'])
             ->assertStatus(422)->assertJsonValidationErrors('amount');
 
         $id = $this->post('/api/v1/business/deposits', [
-            'method' => 'crypto', 'amount' => '250.50', 'reference' => '0xhash1',
-            'proof' => UploadedFile::fake()->image('receipt.png'),
+            'method' => 'card', 'amount' => '250.50', 'reference' => 'PAY-1',
+            'proof' => UploadedFile::fake()->create('receipt.pdf', 100, 'application/pdf'),
         ], ['Accept' => 'application/json'])->assertCreated()->assertJsonPath('data.amount_cents', 25050)->json('data.id');
 
-        // Same hash cannot be claimed twice.
-        $this->post('/api/v1/business/deposits', ['method' => 'crypto', 'amount' => 100, 'reference' => '0xhash1'], ['Accept' => 'application/json'])
+        // Same reference cannot be claimed twice.
+        $this->post('/api/v1/business/deposits', ['method' => 'card', 'amount' => 100, 'reference' => 'PAY-1'], ['Accept' => 'application/json'])
             ->assertStatus(422)->assertJsonValidationErrors('reference');
 
         $wallet = Wallet::where('user_id', $business->id)->first();

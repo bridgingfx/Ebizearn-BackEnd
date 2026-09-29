@@ -31,7 +31,7 @@ class PlatformApiTest extends TestCase
             ->assertJson([
                 'success' => true,
                 'data' => [
-                    'name' => 'BizNetwork',
+                    'name' => 'eBizEarn',
                     'defaultCurrency' => 'USD',
                 ],
             ]);

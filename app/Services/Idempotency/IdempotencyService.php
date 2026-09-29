@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
  * A retry with the same key and identical parameters returns the stored
  * result instead of re-applying; the same key with different parameters is
  * rejected with an exception; a concurrent in-flight request with the same
- * key gets an "already being processed" error instead of double-applying.
+ * key gets an IdempotencyConflictException instead of double-applying.
  *
  * Extracted from WalletLedgerService::withIdempotency so campaign funding,
  * launches and any future non-ledger operations can share the same
@@ -60,14 +60,14 @@ class IdempotencyService
                 $record = IdempotencyKey::where('idempotency_key', $key)->lockForUpdate()->firstOrFail();
 
                 if (!hash_equals((string) $record->fingerprint, $fingerprint)) {
-                    throw new \Exception('Idempotency key was already used with different parameters.');
+                    throw new IdempotencyConflictException('Idempotency key was already used with different parameters.');
                 }
 
                 if ($record->result_type && $record->result_id) {
                     return $resolveResult ? $resolveResult($record) : $this->resolveStoredResult($record);
                 }
 
-                throw new \Exception('A request with this idempotency key is already being processed.');
+                throw new IdempotencyConflictException('A request with this idempotency key is already being processed.');
             }
 
             $result = $work();

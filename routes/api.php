@@ -95,6 +95,9 @@ Route::prefix('v1')->group(function () {
         // KYC: submit identity documents (private disk, reviewed via /staff/kyc).
         Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
             ->middleware(['role:contributor,business', 'permission:submit_kyc', 'throttle:10,1']);
+        // Saved USDT payout details (address + network) for manual payouts.
+        Route::get('/profile/usdt-payout', [ProfileController::class, 'getUsdtPayout']);
+        Route::put('/profile/usdt-payout', [ProfileController::class, 'updateUsdtPayout']);
 
         // In-app support tickets (own tickets only). Reading history is always
         // allowed; opening/replying needs open_support_tickets.
@@ -147,7 +150,7 @@ Route::prefix('v1')->group(function () {
         // Business Endpoints
         Route::middleware('role:business')->prefix('business')->group(function () {
             Route::get('/dashboard', [BusinessCampaignController::class, 'dashboard']);
-            // Wallet deposits: card link / crypto / bank / email request (credited after staff approval).
+            // Wallet deposits: card link / bank / email request (credited after staff approval). Crypto is excluded from the MVP.
             Route::get('/deposit-methods', [DepositController::class, 'methods']);
             Route::get('/deposits', [DepositController::class, 'index']);
             Route::post('/deposits', [DepositController::class, 'store'])->middleware('throttle:10,1');
@@ -191,7 +194,7 @@ Route::prefix('v1')->group(function () {
         // Super Admin only: which deposit methods businesses can use, and their details.
         Route::middleware('role:superadmin')->prefix('admin/deposit-methods')->group(function () {
             Route::get('/', [DepositController::class, 'adminMethods']);
-            Route::put('/{key}', [DepositController::class, 'updateMethod'])->whereIn('key', ['card', 'crypto', 'bank', 'email']);
+            Route::put('/{key}', [DepositController::class, 'updateMethod'])->whereIn('key', ['card', 'bank', 'email', 'crypto']);
         });
 
         // Super Admin only: Google / Apple sign-in settings.
@@ -258,6 +261,9 @@ Route::prefix('v1')->group(function () {
             Route::middleware('permission:process_payouts')->group(function () {
                 Route::get('/payouts', [AdminVerificationController::class, 'payouts']);
                 Route::post('/payouts/{id}/process', [AdminVerificationController::class, 'processPayout']);
+                // Record the on-chain tx hash after a USDT payout is sent
+                // manually from the company wallet.
+                Route::post('/payouts/{id}/tx-hash', [AdminVerificationController::class, 'recordTxHash']);
                 // Business deposits: confirm the money arrived, then credit the wallet.
                 Route::get('/deposits', [DepositController::class, 'staffIndex']);
                 Route::get('/deposits/{id}/proof', [DepositController::class, 'proof'])->whereNumber('id');

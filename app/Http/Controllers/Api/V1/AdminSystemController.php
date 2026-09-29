@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class AdminSystemController extends Controller
 {
@@ -69,14 +70,42 @@ class AdminSystemController extends Controller
     }
 
     /**
-     * Update system setting.
+     * Update system setting. The key is required (an absent key previously
+     * hit SystemSetting::set()'s string type-hint and 500'd) and every
+     * change is audited like the rest of the settings surface.
      */
     public function updateSystemSetting(Request $request): JsonResponse
     {
-        $key = $request->input('key');
-        $value = $request->input('value');
+        $validator = Validator::make($request->all(), [
+            'key' => 'required|string|max:128',
+            'value' => 'nullable|string|max:65535',
+        ]);
 
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $key = $validator->validated()['key'];
+        $value = $validator->validated()['value'] ?? null;
+
+        $before = SystemSetting::get($key);
         SystemSetting::set($key, $value);
+
+        AuditLog::create([
+            'actor_id' => $request->user()->id,
+            'action' => 'system_setting.updated',
+            'entity_type' => SystemSetting::class,
+            'entity_id' => 0,
+            'before_state_json' => ['key' => $key, 'value' => $before],
+            'after_state_json' => ['key' => $key, 'value' => $value],
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'created_at' => now(),
+        ]);
 
         return response()->json([
             'success' => true,
@@ -219,6 +248,17 @@ class AdminSystemController extends Controller
 
     /**
      * Toggle user status (active/suspended).
+     *
+     * Guards:
+     *  - nobody can change their own status (a self-suspension would lock
+     *    the account — and the team — out with nobody left to reverse it);
+     *  - staff accounts (admin/moderator/superadmin) are managed by Super
+     *    Admin only — an admin must never suspend a superadmin, a peer
+     *    admin, or a moderator;
+     *  - suspending revokes every Sanctum token on the spot. Suspension is
+     *    otherwise enforced only at the NEXT login (AuthController@socialLogin,
+     *    AuthController@login), so without the revocation an already-issued
+     *    token would keep working indefinitely.
      */
     public function updateUserStatus(Request $request, string $id): JsonResponse
     {
@@ -229,16 +269,37 @@ class AdminSystemController extends Controller
             return response()->json(['success' => false, 'message' => 'Invalid status'], 422);
         }
 
+        $actor = $request->user();
+
+        if ((int) $user->id === (int) $actor->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You cannot change your own account status.',
+            ], 422);
+        }
+
+        if (!$actor->isSuperAdmin() && in_array($user->role, ['admin', 'moderator', 'superadmin'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only a Super Admin can change the status of staff accounts.',
+            ], 403);
+        }
+
         $before = $user->status;
         $user->update(['status' => $status]);
 
+        $tokensRevoked = 0;
+        if ($status === 'suspended') {
+            $tokensRevoked = $user->tokens()->delete();
+        }
+
         AuditLog::create([
-            'actor_id' => $request->user()->id,
+            'actor_id' => $actor->id,
             'action' => 'user.status_changed',
             'entity_type' => User::class,
             'entity_id' => $user->id,
             'before_state_json' => ['status' => $before],
-            'after_state_json' => ['status' => $status],
+            'after_state_json' => ['status' => $status, 'tokens_revoked' => $tokensRevoked],
             'ip_address' => $request->ip(),
             'user_agent' => $request->userAgent(),
             'created_at' => now(),

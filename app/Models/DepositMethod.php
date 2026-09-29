@@ -5,17 +5,20 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * A way for a business to add funds (card link, crypto, bank, email request),
+ * A way for a business to add funds (card link, bank, email request),
  * configured by Super Admin.
+ *
+ * No crypto in MVP (owner-adjudicated rule): the 'crypto' method is
+ * excluded from KEYS, so businesses can neither see nor submit crypto
+ * deposits. Legacy crypto rows in the DB are ignored by the API.
  */
 class DepositMethod extends Model
 {
-    public const KEYS = ['card', 'crypto', 'bank', 'email'];
+    public const KEYS = ['card', 'bank', 'email'];
 
     /** Detail fields each method may carry (shown to the business). */
     public const DETAIL_FIELDS = [
         'card' => ['payment_link', 'provider'],
-        'crypto' => ['currency', 'network', 'wallet_address'],
         'bank' => ['bank_name', 'account_name', 'account_number', 'iban', 'swift', 'branch', 'country'],
         'email' => ['contact_email'],
     ];

@@ -51,7 +51,7 @@ class DatabaseSeeder extends Seeder
         // 2. Feature Flags
         $flags = [
             ['key' => 'referrals', 'name' => 'Direct Referrals', 'description' => 'Enable single-level referral links and cash bonuses.', 'is_enabled' => true],
-            ['key' => 'multiLevelAffiliate', 'name' => 'Multi-Level Affiliate', 'description' => '3-tier affiliate network (requires compliance signoff).', 'is_enabled' => false],
+            ['key' => 'multiLevelAffiliate', 'name' => 'Multi-Level Affiliate', 'description' => '3-tier affiliate network (L1/L2/L3) per mission brief Phase 8.', 'is_enabled' => true],
             ['key' => 'aiVerification', 'name' => 'AI Verification Engine', 'description' => 'Pre-screens proof uploads with computer vision heuristics.', 'is_enabled' => true],
             ['key' => 'cryptoPayout', 'name' => 'Crypto Payouts (USDT)', 'description' => 'Permit USDT TRC20/ERC20 cashouts.', 'is_enabled' => false],
             ['key' => 'ugcTasks', 'name' => 'User Generated Content', 'description' => 'Video and high-touch media submissions.', 'is_enabled' => true],
@@ -62,7 +62,7 @@ class DatabaseSeeder extends Seeder
         }
 
         // 3. System Settings
-        SystemSetting::set('platform_name', 'BizNetwork', 'general', true);
+        SystemSetting::set('platform_name', 'eBizEarn', 'general', true);
         SystemSetting::set('platform_tagline', 'Small Tasks. Big Opportunities.', 'general', true);
         SystemSetting::set('min_withdrawal_cents', '5000', 'finance', true); // legacy setting, kept in sync; config('payouts.withdrawal_min_cents') wins at runtime
         SystemSetting::set('platform_fee_percent', '15', 'finance', true);

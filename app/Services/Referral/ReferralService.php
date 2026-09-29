@@ -149,15 +149,19 @@ class ReferralService
         $out = [];
 
         for ($level = 1; $level <= $levels; $level++) {
-            $rule = ReferralRule::forLevel($level);
+            // Display the true DB row when one exists (even when disabled);
+            // forLevel() is the payout resolution and would mask a disabled
+            // row as a zero-payout synthetic.
+            $dbRow = ReferralRule::where('level', $level)->first();
+            $rule = $dbRow ?? ReferralRule::forLevel($level);
             $out[$level] = [
                 'level' => $level,
                 'reward_mode' => $rule->reward_mode,
                 'reward_cents' => $rule->reward_cents ?? ReferralRule::configFlatCents($level),
                 'percent_bps' => (int) $rule->percent_bps,
                 'percent' => round(((int) $rule->percent_bps) / 100, 2),
-                'is_enabled' => (bool) $rule->is_enabled,
-                'from_database' => $rule->exists,
+                'is_enabled' => $dbRow ? (bool) $dbRow->is_enabled : true,
+                'from_database' => $dbRow !== null,
                 'description' => $rule->describe(),
             ];
         }

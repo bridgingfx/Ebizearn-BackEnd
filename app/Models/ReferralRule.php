@@ -41,12 +41,24 @@ class ReferralRule extends Model
     ];
 
     /**
-     * The rule for a level: the DB row when present and enabled, otherwise
-     * the config fallback shaped like a row.
+     * The rule for a level: the DB row when present and enabled, a zero
+     * payout when the row exists but is disabled (disabling a level must
+     * pay nothing — never fall back to config), otherwise the config
+     * fallback shaped like a row.
      */
     public static function forLevel(int $level): self
     {
-        $row = static::where('level', $level)->where('is_enabled', true)->first();
+        $row = static::where('level', $level)->first();
+
+        if ($row && !$row->is_enabled) {
+            return new static([
+                'level' => $level,
+                'reward_mode' => static::MODE_FLAT,
+                'reward_cents' => 0,
+                'percent_bps' => 0,
+                'is_enabled' => false,
+            ]);
+        }
 
         if ($row) {
             return $row;

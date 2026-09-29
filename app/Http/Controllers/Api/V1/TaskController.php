@@ -74,7 +74,7 @@ class TaskController extends Controller
             default => $query->latest(),
         };
 
-        $tasks = $query->paginate($request->input('per_page', 12));
+        $tasks = $query->paginate(max(1, min(100, (int) $request->input('per_page', 12))));
 
         return response()->json([
             'success' => true,

@@ -244,4 +244,61 @@ class WalletBreakdownTest extends TestCase
         $this->assertSame(12000, $response->json('data.available_cents'));
         $this->assertSame(12000, $response->json('data.lifetime_earnings_cents'));
     }
+
+    public function test_retention_hold_cancel_derives_zero_lifetime_and_pending(): void
+    {
+        $user = $this->makeUser('ret0@example.com');
+        $wallet = $this->walletOf($user);
+
+        $this->ledger->credit($wallet, 10000, 'task_reward', 'Reward', TaskSubmission::class, 1);
+        $holdTx = $this->ledger->hold(
+            $wallet->fresh(),
+            10000,
+            'retention_hold',
+            'Retention hold',
+            TaskSubmission::class,
+            1,
+            ['release_at' => now()->addDay()->toIso8601String()],
+            'retention-hold-bd-test-1'
+        );
+
+        $b = $this->breakdown->breakdown($user);
+        $this->assertSame(0, $b['available_cents']);
+        $this->assertSame(10000, $b['pending_cents']);
+        $this->assertSame(10000, $b['lifetime_earnings_cents']);
+
+        // Reject-before-mature cancels the hold: the reward never reached
+        // the owner, so lifetime AND pending must unwind to zero in the
+        // ledger-derived breakdown too.
+        $this->ledger->cancelRetentionHold($wallet->fresh(), $holdTx->fresh(), 'test cancel');
+
+        $b = $this->breakdown->breakdown($user);
+        $this->assertSame(0, $b['available_cents']);
+        $this->assertSame(0, $b['pending_cents']);
+        $this->assertSame(0, $b['lifetime_earnings_cents']);
+
+        $wallet = $this->walletOf($user)->fresh();
+        $this->assertSame(0, $wallet->pending_balance_cents);
+        $this->assertSame(0, $wallet->lifetime_earnings_cents);
+    }
+
+    public function test_transaction_history_is_newest_first_by_ledger_order(): void
+    {
+        $user = $this->makeUser('txo1@example.com');
+        $wallet = $this->walletOf($user);
+
+        // All rows share a timestamp here (created_at = now()), so the
+        // endpoint must order by the append-only id sequence.
+        $this->ledger->credit($wallet, 1000, 'task_reward', 'First', TaskSubmission::class, 1);
+        $this->ledger->credit($wallet->fresh(), 2000, 'referral_reward', 'Second', TaskSubmission::class, 2);
+        $this->ledger->credit($wallet->fresh(), 3000, 'task_reward', 'Third', TaskSubmission::class, 3);
+
+        $response = $this->actingAs($user, 'sanctum')->getJson('/api/v1/wallet/transactions');
+
+        $response->assertStatus(200);
+        $this->assertSame(
+            ['Third', 'Second', 'First'],
+            array_column($response->json('data'), 'description')
+        );
+    }
 }

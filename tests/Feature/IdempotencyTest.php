@@ -131,13 +131,46 @@ class IdempotencyTest extends TestCase
             ->postJson('/api/v1/wallet/withdraw', $base + ['amount_cents' => 6000])
             ->assertStatus(201);
 
-        // Same key, different amount -> honest rejection, no second debit.
+        // Same key, different amount -> 409 conflict, no second debit.
         $response = $this->withHeaders(['Idempotency-Key' => 'idem-withdraw-2'])
             ->postJson('/api/v1/wallet/withdraw', $base + ['amount_cents' => 7000]);
 
-        $response->assertStatus(400);
+        $response->assertStatus(409);
         $this->assertStringContainsString('different parameters', (string) $response->json('message'));
         $this->assertSame(1, WithdrawalRequest::where('user_id', $user->id)->count());
+    }
+
+    public function test_withdrawal_conflicting_inflight_key_returns_409_not_500_or_400(): void
+    {
+        // Simulate a key whose first request reserved the key but has no
+        // result yet (in-flight): a second request must get 409, and the
+        // ledger must stay untouched.
+        $user = $this->contributorWithBalance(20000);
+        Sanctum::actingAs($user);
+
+        \App\Models\IdempotencyKey::create([
+            'idempotency_key' => 'idem-withdraw-inflight',
+            'user_id' => $user->id,
+            'action' => 'wallet.withdraw',
+            'fingerprint' => hash('sha256', 'wallet.withdraw|' . json_encode([
+                'user_id' => $user->id,
+                'amount_cents' => 6000,
+                'payout_method' => 'bank_transfer',
+                'payout_details_hash' => hash('sha256', json_encode(['account' => '123'])),
+            ])),
+        ]);
+
+        $this->withHeaders(['Idempotency-Key' => 'idem-withdraw-inflight'])
+            ->postJson('/api/v1/wallet/withdraw', [
+                'amount_cents' => 6000,
+                'payout_method' => 'bank_transfer',
+                'payout_details' => ['account' => '123'],
+            ])
+            ->assertStatus(409)
+            ->assertJsonFragment(['success' => false]);
+
+        $this->assertSame(0, WithdrawalRequest::where('user_id', $user->id)->count());
+        $this->assertSame(20000, $user->wallet->fresh()->available_balance_cents);
     }
 
     public function test_campaign_create_double_submit_creates_one_campaign(): void

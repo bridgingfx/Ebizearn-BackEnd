@@ -52,10 +52,17 @@ class PaymentService
 
     private function resolveGateway(string $payoutMethod): ?PaymentGateway
     {
+        // USDT payouts are ALWAYS manual: the admin sends USDT from the
+        // company wallet and records the tx hash. They must never be routed
+        // to a real payment rail — resolve to no gateway so the payout is
+        // only ever logged for manual processing.
+        if (str_contains($payoutMethod, 'crypto') || str_contains($payoutMethod, 'usdc') || $payoutMethod === 'usdt') {
+            return null;
+        }
+
         $driver = match (true) {
             str_contains($payoutMethod, 'paypal') => 'paypal',
             str_contains($payoutMethod, 'wise') => 'wise',
-            str_contains($payoutMethod, 'crypto'), str_contains($payoutMethod, 'usdc') => 'crypto',
             str_contains($payoutMethod, 'stripe') => 'stripe',
             default => 'bank_transfer',
         };

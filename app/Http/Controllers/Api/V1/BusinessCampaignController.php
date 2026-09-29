@@ -196,7 +196,10 @@ class BusinessCampaignController extends Controller
                     'objective' => $validated['objective'] ?? null,
                     'description' => $validated['description'],
                     'instructions_markdown' => $validated['instructions_markdown'],
-                    'proof_requirements_json' => $validated['proof_requirements_json'] ?? ['screenshot' => true, 'url' => true],
+                    // Proof contract is stored as a LIST of requirement names
+                    // (e.g. ['screenshot', 'url']) — the format the fraud
+                    // screens enforce in FraudAnalysisService::screenProofOrReject.
+                    'proof_requirements_json' => $validated['proof_requirements_json'] ?? ['screenshot', 'url'],
                     'status' => 'draft', // goes active only after the funding gate below
                     'total_budget_cents' => $totalBudget,
                     'remaining_budget_cents' => $tasksBudget, // rewards pool only; the platform fee is taken at launch
@@ -436,10 +439,22 @@ class BusinessCampaignController extends Controller
 
     /**
      * Toggle campaign status (pause/resume).
+     *
+     * Transition whitelist: a business may pause/resume and cancel its LIVE
+     * campaigns only. Drafts go live exclusively through the wizard launch
+     * (atomic escrow funding gate); pending_review campaigns are activated
+     * exclusively by staff approval. Letting a business flip draft /
+     * pending_review straight to 'active' would bypass both gates and expose
+     * unfunded tasks to contributors (approvals would credit from a phantom
+     * budget with no escrow behind it).
      */
     public function updateStatus(Request $request, string $id): JsonResponse
     {
         $business = $request->user()->business;
+        if (!$business) {
+            return response()->json(['success' => false, 'message' => 'Business profile not found.'], 404);
+        }
+
         $campaign = Campaign::where('business_id', $business->id)
             ->where(fn($q) => $q->where('id', $id)->orWhere('uuid', $id))
             ->firstOrFail();
@@ -452,8 +467,25 @@ class BusinessCampaignController extends Controller
         $isTerminalRefund = fn (string $s) => in_array($s, ['cancelled', 'expired'], true);
 
         try {
-            DB::transaction(function () use ($business, $campaign, $status, $isTerminalRefund) {
+            $locked = DB::transaction(function () use ($business, $campaign, $status, $isTerminalRefund) {
                 $locked = Campaign::where('id', $campaign->id)->lockForUpdate()->firstOrFail();
+
+                // The current status is read from the locked row so a
+                // concurrent staff decision cannot be raced around.
+                $allowed = [
+                    'active' => ['paused', 'cancelled', 'expired'],
+                    'paused' => ['active', 'cancelled', 'expired'],
+                    'pending_review' => ['cancelled'],
+                ];
+
+                if (!in_array($status, $allowed[$locked->status] ?? [], true)) {
+                    throw new Exception(
+                        "Cannot move campaign from '{$locked->status}' to '{$status}'. " .
+                        'Drafts go live through the campaign wizard launch, and campaigns ' .
+                        'awaiting review are activated by our review team.',
+                        422
+                    );
+                }
 
                 // Cancelling OR expiring refunds the unspent escrowed rewards
                 // budget back to the business wallet (platform fee stays earned).
@@ -488,6 +520,8 @@ class BusinessCampaignController extends Controller
                 }
 
                 $locked->update(['status' => $status]);
+
+                return $locked;
             });
 
             $campaign->tasks()->update(['status' => $status === 'active' ? 'available' : 'paused']);
@@ -495,13 +529,13 @@ class BusinessCampaignController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
-            ], 400);
+            ], $e->getCode() === 422 ? 422 : 400);
         }
 
         return response()->json([
             'success' => true,
             'message' => "Campaign is now {$status}.",
-            'data' => $campaign->fresh(),
+            'data' => $locked->fresh(),
         ]);
     }
 
@@ -511,6 +545,10 @@ class BusinessCampaignController extends Controller
     public function submissions(Request $request): JsonResponse
     {
         $business = $request->user()->business;
+        if (!$business) {
+            return response()->json(['success' => false, 'message' => 'Business profile not found.'], 404);
+        }
+
         $submissions = TaskSubmission::whereHas('task.campaign', fn($q) => $q->where('business_id', $business->id))
             ->with(['task.category', 'user.profile', 'files', 'aiResult', 'businessReviewer:id,name', 'reviewer:id,name'])
             ->latest()

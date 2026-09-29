@@ -34,10 +34,13 @@ class WalletBreakdownService
     public const IN_REVIEW_STATUSES = ['submitted', 'checking', 'under_review', 'action_required'];
 
     /**
-     * Reversal types written by WalletLedgerService::reverseCredit(), which
-     * are the only rows besides credits that move lifetime earnings.
+     * Compensating reversal types that reduce lifetime earnings, written by
+     * WalletLedgerService::reverseCredit() (task_reward_reversal,
+     * referral_reward_reversal) and
+     * WalletLedgerService::cancelRetentionHold() (retention_hold_cancel).
+     * These are the only rows besides credits that move lifetime earnings.
      */
-    public const REVERSAL_TYPES = ['task_reward_reversal', 'referral_reward_reversal'];
+    public const REVERSAL_TYPES = ['task_reward_reversal', 'referral_reward_reversal', 'retention_hold_cancel'];
 
     /**
      * @return array<string, int>
@@ -139,8 +142,8 @@ class WalletBreakdownService
     /**
      * All-time earnings: every credit row adds, every compensating reversal
      * row subtracts — mirroring exactly how the ledger maintains the
-     * lifetime column (credit() increments, reverseCredit() decrements,
-     * nothing else touches it).
+     * lifetime column (credit() increments; reverseCredit() and
+     * cancelRetentionHold() decrement; nothing else touches it).
      */
     protected function lifetimeFromLedger(Wallet $wallet): int
     {

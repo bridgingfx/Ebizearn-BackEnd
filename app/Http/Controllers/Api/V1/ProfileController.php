@@ -7,6 +7,7 @@ use App\Models\Profile;
 use App\Models\User;
 use App\Rules\PhoneCountryCode;
 use App\Rules\StrongPassword;
+use App\Rules\UsdtAddress;
 use App\Services\Audit\AuditLogger;
 use App\Services\Auth\EmailOtpService;
 use App\Services\Email\EmailService;
@@ -338,6 +339,57 @@ class ProfileController extends Controller
                 Storage::disk('local')->delete($path);
             }
         }
+    }
+
+    /**
+     * Saved USDT payout details (contributor's receiving address + network).
+     * Stored on the profile's preferences_json — used to prefill the USDT
+     * withdrawal form. Never exposed publicly.
+     *
+     * GET /api/v1/profile/usdt-payout
+     * PUT /api/v1/profile/usdt-payout  { wallet_address, network }
+     */
+    public function getUsdtPayout(Request $request): JsonResponse
+    {
+        // Query fresh: $request->user()->profile may hold a stale cached
+        // relation (null) when the profile was created after first access.
+        $profile = Profile::where('user_id', $request->user()->id)->first();
+
+        return response()->json([
+            'success' => true,
+            'data' => $profile?->preferences_json['usdt_payout'] ?? null,
+        ]);
+    }
+
+    public function updateUsdtPayout(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'network' => 'required|in:TRC-20,ERC-20',
+            'wallet_address' => ['required', 'string', 'max:128', new UsdtAddress($request->input('network'))],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $profile = Profile::firstOrCreate(['user_id' => $request->user()->id]);
+        $prefs = $profile->preferences_json ?? [];
+        $prefs['usdt_payout'] = [
+            'wallet_address' => $validator->validated()['wallet_address'],
+            'network' => $validator->validated()['network'],
+            'updated_at' => now()->toIso8601String(),
+        ];
+        $profile->update(['preferences_json' => $prefs]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'USDT payout details saved.',
+            'data' => $prefs['usdt_payout'],
+        ]);
     }
 
     private function deleteStored(Profile $profile): void

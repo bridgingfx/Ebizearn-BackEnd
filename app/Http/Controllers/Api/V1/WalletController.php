@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Models\WithdrawalRule;
+use App\Rules\UsdtAddress;
+use App\Services\Idempotency\IdempotencyConflictException;
 use App\Services\Wallet\WalletBreakdownService;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
@@ -73,7 +75,10 @@ class WalletController extends Controller
             $query->where('type', $request->input('type'));
         }
 
-        $transactions = $query->latest('created_at')->paginate(20);
+        // Ledger order is the append-only id sequence: created_at is not
+        // unique (several rows can share a timestamp), so ordering by id
+        // keeps pagination stable and matches the ledger's own ordering.
+        $transactions = $query->latest('id')->paginate(20);
 
         return response()->json([
             'success' => true,
@@ -95,13 +100,28 @@ class WalletController extends Controller
         // (Super-Admin-selectable $10/$25/$50/$100), config as fallback.
         $minWithdrawalCents = WithdrawalRule::currentMinCents();
 
-        $validator = Validator::make($request->all(), [
+        $rules = [
             'amount_cents' => 'required|integer|min:' . $minWithdrawalCents,
-            // No crypto in MVP (owner-adjudicated rule): only fiat rails.
-            'payout_method' => 'required|in:bank_transfer,paypal,wise',
+            // USDT payouts are manual-approved (admin sends from the company
+            // wallet and records the tx hash). Ledger stays USD (1 USDT = $1).
+            'payout_method' => 'required|in:bank_transfer,paypal,wise,usdt',
             'payout_details' => 'required|array',
             'idempotency_key' => 'nullable|string|max:128',
-        ]);
+        ];
+
+        // USDT needs a validated on-chain address; other rails keep their
+        // free-form payout_details untouched.
+        if ($request->input('payout_method') === 'usdt') {
+            $rules['payout_details.network'] = 'required|in:TRC-20,ERC-20';
+            $rules['payout_details.wallet_address'] = [
+                'required',
+                'string',
+                'max:128',
+                new UsdtAddress($request->input('payout_details.network', 'TRC-20')),
+            ];
+        }
+
+        $validator = Validator::make($request->all(), $rules);
 
         if ($validator->fails()) {
             return response()->json([
@@ -125,6 +145,13 @@ class WalletController extends Controller
                 'message' => 'Withdrawal request submitted successfully.',
                 'data' => $withdrawal,
             ], 201);
+        } catch (IdempotencyConflictException $e) {
+            // Same key replayed concurrently or with different parameters:
+            // a conflict, not a bad request.
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 409);
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,

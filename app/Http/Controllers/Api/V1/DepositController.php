@@ -32,7 +32,9 @@ class DepositController extends Controller
     public function methods(): JsonResponse
     {
         return $this->ok(
-            DepositMethod::where('is_active', true)->orderBy('sort_order')
+            // No crypto in MVP: only the whitelisted fiat keys are ever
+            // shown, even if a legacy crypto row is still active in the DB.
+            DepositMethod::where('is_active', true)->whereIn('key', DepositMethod::KEYS)->orderBy('sort_order')
                 ->get(['key', 'title', 'instructions', 'details', 'min_amount_cents', 'max_amount_cents'])
         );
     }
@@ -75,10 +77,8 @@ class DepositController extends Controller
         if ($method->max_amount_cents && $amountCents > $method->max_amount_cents) {
             return $this->fail('amount', 'The maximum deposit with ' . $method->title . ' is ' . $this->money($method->max_amount_cents) . '.');
         }
-        if (in_array($method->key, ['crypto', 'card'], true) && empty($data['reference'])) {
-            return $this->fail('reference', $method->key === 'crypto'
-                ? 'Paste the transaction hash of your crypto transfer.'
-                : 'Enter the payment reference from your card payment receipt.');
+        if ($method->key === 'card' && empty($data['reference'])) {
+            return $this->fail('reference', 'Enter the payment reference from your card payment receipt.');
         }
 
         $user = $request->user();
@@ -241,6 +241,10 @@ class DepositController extends Controller
     /** PUT /admin/deposit-methods/{key} { is_active, title, instructions, details, min_amount, max_amount } */
     public function updateMethod(Request $request, string $key): JsonResponse
     {
+        // No crypto in MVP (owner-adjudicated rule): the route's whereIn
+        // still names 'crypto', so refuse it here explicitly.
+        abort_if($key === 'crypto', 422, 'Crypto deposits are disabled in the MVP.');
+
         $method = DepositMethod::where('key', $key)->firstOrFail();
 
         $data = $request->validate([
@@ -298,7 +302,6 @@ class DepositController extends Controller
 
         return match ($key) {
             'card' => filter_var($d['payment_link'] ?? '', FILTER_VALIDATE_URL) ? null : 'a valid payment link (https://…)',
-            'crypto' => $has('wallet_address') && $has('network') ? null : 'the wallet address and network',
             'bank' => $has('account_name') && ($has('iban') || $has('account_number')) ? null : 'the account name and IBAN or account number',
             'email' => filter_var($d['contact_email'] ?? '', FILTER_VALIDATE_EMAIL) ? null : 'a valid contact email',
             default => null,

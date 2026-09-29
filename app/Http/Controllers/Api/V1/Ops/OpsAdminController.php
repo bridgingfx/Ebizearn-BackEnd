@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Ops;
 use App\Http\Controllers\Controller;
 use App\Models\Permission;
 use App\Models\User;
+use App\Rules\StrongPassword;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -41,7 +42,10 @@ class OpsAdminController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255|unique:users,email',
-            'password' => 'required|string|min:12',
+            // Staff accounts hold privileged access: the same strong-password
+            // policy as public signup (min 10, mixed classes), not just a
+            // length floor.
+            'password' => ['required', 'string', new StrongPassword()],
             'role' => 'required|in:admin,moderator',
             'permissions' => 'nullable|array',
             'permissions.*' => 'string|exists:permissions,name',

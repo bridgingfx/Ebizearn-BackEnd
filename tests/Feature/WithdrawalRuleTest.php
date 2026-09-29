@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use App\Models\Wallet;
+use App\Models\WalletTransaction;
 use App\Models\WithdrawalRule;
 use App\Services\Wallet\WalletLedgerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -158,5 +159,54 @@ class WithdrawalRuleTest extends TestCase
 
         $this->assertSame(1, WithdrawalRule::where('is_active', true)->count());
         $this->assertSame(10000, WithdrawalRule::currentMinCents());
+    }
+
+    public function test_reject_after_approve_is_a_noop_and_never_double_credits(): void
+    {
+        $user = $this->makeContributorWithBalance(10000);
+        $service = app(WalletLedgerService::class);
+
+        $withdrawal = $service->requestWithdrawal($user, 6000, 'bank_transfer', ['account' => '123']);
+        $service->approveWithdrawal($withdrawal);
+
+        $wallet = $user->wallet->fresh();
+        $this->assertSame(4000, $wallet->available_balance_cents);
+        $this->assertSame(0, $wallet->pending_balance_cents);
+
+        // Rejecting an already-approved (processing) withdrawal must not
+        // touch balances again: no negative pending, no double credit.
+        $result = $service->rejectWithdrawal($withdrawal, 'changed my mind');
+        $this->assertSame('processing', $result->status);
+
+        $wallet = $user->wallet->fresh();
+        $this->assertSame(4000, $wallet->available_balance_cents);
+        $this->assertSame(0, $wallet->pending_balance_cents);
+        $this->assertSame(6000, $wallet->total_withdrawn_cents);
+        $this->assertSame(
+            0,
+            WalletTransaction::where('wallet_id', $wallet->id)->where('type', 'withdrawal_reversal')->count()
+        );
+    }
+
+    public function test_approve_withdrawal_never_marks_paid_while_payout_is_mocked(): void
+    {
+        $user = $this->makeContributorWithBalance(10000);
+        $service = app(WalletLedgerService::class);
+
+        $withdrawal = $service->requestWithdrawal($user, 6000, 'bank_transfer', ['account' => '123']);
+        $approved = $service->approveWithdrawal($withdrawal);
+
+        // Payouts are log-only until a real PSP is wired: status must be
+        // 'processing' ("logged for manual processing"), never 'paid'.
+        $this->assertSame('processing', $approved->status);
+        $this->assertSame(
+            0,
+            \App\Models\WithdrawalRequest::where('user_id', $user->id)->where('status', 'paid')->count()
+        );
+        $this->assertDatabaseHas('payment_logs', [
+            'event_key' => 'withdrawal.payout',
+            'status' => 'logged',
+            'reference_id' => $withdrawal->id,
+        ]);
     }
 }

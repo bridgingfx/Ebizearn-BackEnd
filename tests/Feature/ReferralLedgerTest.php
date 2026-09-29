@@ -4,9 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\Referral;
 use App\Models\ReferralReward;
+use App\Models\ReferralRule;
 use App\Models\User;
+use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Services\Referral\ReferralService;
+use App\Services\Wallet\WalletLedgerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -229,5 +232,91 @@ class ReferralLedgerTest extends TestCase
 
         $this->getJson('/api/v1/contributor/referrals')->assertStatus(403);
         $this->getJson('/api/v1/contributor/referrals/tree')->assertStatus(403);
+    }
+
+    public function test_earnings_total_spans_all_pages(): void
+    {
+        $a = $this->registerContributor('A', 'a2@example.com');
+        Sanctum::actingAs($a);
+
+        for ($i = 0; $i < 25; $i++) {
+            $referee = User::factory()->create(['role' => 'contributor']);
+            ReferralReward::create([
+                'referrer_id' => $a->id,
+                'referred_user_id' => $referee->id,
+                'level' => 1,
+                'amount_cents' => 100,
+                'status' => ReferralReward::STATUS_REWARDED,
+                'qualified_at' => now(),
+            ]);
+        }
+
+        $page1 = $this->getJson('/api/v1/contributor/referrals/earnings');
+        $page1->assertStatus(200);
+        $this->assertSame(25, $page1->json('meta.total'));
+        $this->assertSame(2500, $page1->json('meta.total_earned_cents'));
+
+        // Page 2 undercounted when the total was summed from the page
+        // collection instead of the whole reward set.
+        $page2 = $this->getJson('/api/v1/contributor/referrals/earnings?page=2');
+        $page2->assertStatus(200);
+        $this->assertSame(2500, $page2->json('meta.total_earned_cents'));
+    }
+
+    public function test_index_earnings_net_out_reversed_rewards(): void
+    {
+        $a = $this->registerContributor('A', 'a3@example.com');
+        $b = $this->registerContributor('B', 'b3@example.com', $a->referral_code);
+
+        app(ReferralService::class)->qualifyAndReward($b->fresh(), 'first_task_approved');
+
+        Sanctum::actingAs($a);
+        $this->assertSame(100, $this->getJson('/api/v1/contributor/referrals')->json('data.total_earned_cents'));
+
+        // Reject-after-approve reverses the referral reward in the ledger...
+        $reward = ReferralReward::where('referrer_id', $a->id)
+            ->where('status', ReferralReward::STATUS_REWARDED)
+            ->firstOrFail();
+        $tx = WalletTransaction::findOrFail($reward->wallet_transaction_id);
+        $wallet = Wallet::where('user_id', $a->id)->firstOrFail();
+
+        app(WalletLedgerService::class)->reverseCredit($wallet, $tx, 'test reversal');
+
+        // ...so the earnings figure must drop to zero, not keep the
+        // original credit.
+        $this->assertSame(0, $this->getJson('/api/v1/contributor/referrals')->json('data.total_earned_cents'));
+    }
+
+    public function test_disabled_level_pays_zero_with_no_ledger_movement(): void
+    {
+        $a = $this->registerContributor('A', 'a4@example.com');
+        $b = $this->registerContributor('B', 'b4@example.com', $a->referral_code);
+        $c = $this->registerContributor('C', 'c4@example.com', $b->referral_code);
+
+        // Admin disables level 2 (the rule row exists but is switched off).
+        ReferralRule::where('level', 2)->update(['is_enabled' => false]);
+
+        // Resolution must pay zero — never fall back to the config amount.
+        $this->assertSame(0, ReferralRule::forLevel(2)->payoutCents(10000));
+
+        app(ReferralService::class)->qualifyAndReward($c->fresh(), 'first_task_approved');
+
+        // L1 (referrer B) still pays the config amount.
+        $l1 = ReferralReward::where('referrer_id', $b->id)->where('level', 1)->firstOrFail();
+        $this->assertSame(ReferralReward::STATUS_REWARDED, $l1->status);
+        $this->assertGreaterThan(0, $l1->amount_cents);
+        $this->assertNotNull($l1->wallet_transaction_id);
+
+        // L2 (referrer A) is marked rewarded with zero and no ledger entry.
+        $l2 = ReferralReward::where('referrer_id', $a->id)->where('level', 2)->firstOrFail();
+        $this->assertSame(ReferralReward::STATUS_REWARDED, $l2->status);
+        $this->assertSame(0, $l2->amount_cents);
+        $this->assertNull($l2->wallet_transaction_id);
+        $this->assertSame(
+            0,
+            WalletTransaction::where('reference_type', ReferralReward::class)
+                ->where('reference_id', $l2->id)
+                ->count()
+        );
     }
 }

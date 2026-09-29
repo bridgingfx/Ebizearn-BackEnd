@@ -49,7 +49,7 @@ class StaffCampaignController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $query->paginate($request->input('per_page', 20)),
+            'data' => $query->paginate(max(1, min(100, (int) $request->input('per_page', 20)))),
         ]);
     }
 

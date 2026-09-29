@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\FeatureFlag;
 use App\Models\SystemSetting;
 use App\Models\TaskCategory;
+use App\Models\WithdrawalRule;
 use Illuminate\Http\JsonResponse;
 
 class ConfigController extends Controller
@@ -32,10 +33,11 @@ class ConfigController extends Controller
                 'supportEmail' => SystemSetting::get('support_email', $platform['supportEmail']),
                 'defaultCurrency' => $platform['defaultCurrency'],
                 'defaultLocale' => $platform['defaultLocale'],
-                // Minimum withdrawal: config is the single source of truth. The legacy
-                // admin-editable `min_withdrawal_cents` system setting is intentionally
-                // NOT consulted here (it previously had no effect on enforcement).
-                'minWithdrawalCents' => (int) config('payouts.withdrawal_min_cents', 5000),
+                // Minimum withdrawal: the active DB rule is the single source of
+                // truth (Super-Admin-selectable $10/$25/$50/$100) — the same
+                // value the withdrawal endpoint enforces — so the UI and the
+                // backend can never disagree. Config is only the fallback.
+                'minWithdrawalCents' => WithdrawalRule::currentMinCents(),
                 'platformFeePercent' => (int) SystemSetting::get('platform_fee_percent', $platform['platformFeePercent']),
                 'socials' => $platform['socials'],
                 'supportedCountries' => $platform['supportedCountries'],

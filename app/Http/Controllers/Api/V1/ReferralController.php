@@ -45,9 +45,15 @@ class ReferralController extends Controller
             ];
         }
 
-        $totalEarnedCents = (int) WalletTransaction::where('wallet_id', $user->wallet?->id)
-            ->where('type', 'referral_reward')
-            ->sum('amount_cents');
+        // Ledger-backed total: referral_reward credits minus their
+        // compensating referral_reward_reversal rows (reversed rewards must
+        // not stay in the contributor's earnings figure).
+        $walletId = $user->wallet?->id;
+        $totalEarnedCents = $walletId
+            ? (int) WalletTransaction::where('wallet_id', $walletId)
+                ->whereIn('type', ['referral_reward', 'referral_reward_reversal'])
+                ->sum('amount_cents')
+            : 0;
 
         return response()->json([
             'success' => true,
@@ -104,6 +110,12 @@ class ReferralController extends Controller
             ->latest('qualified_at')
             ->paginate(20);
 
+        // The all-time total is a separate aggregate over every rewarded
+        // row — the page collection would undercount on page 2+.
+        $totalEarnedCents = (int) ReferralReward::where('referrer_id', $user->id)
+            ->where('status', ReferralReward::STATUS_REWARDED)
+            ->sum('amount_cents');
+
         return response()->json([
             'success' => true,
             'data' => $rewards->items(),
@@ -111,37 +123,59 @@ class ReferralController extends Controller
                 'current_page' => $rewards->currentPage(),
                 'last_page' => $rewards->lastPage(),
                 'total' => $rewards->total(),
-                'total_earned_cents' => (int) $rewards->getCollection()->sum('amount_cents'),
+                'total_earned_cents' => $totalEarnedCents,
             ],
         ]);
     }
 
     /**
+     * Downline tree built breadth-first: one query per level (never one
+     * query per node), then the nesting is assembled in memory from the
+     * direct-referral edge rows.
+     *
      * @return array<int, array>
      */
     protected function buildTree(int $referrerId, int $level, int $maxLevels): array
     {
-        if ($level > $maxLevels) {
+        if ($maxLevels < 1) {
             return [];
         }
 
-        $rows = Referral::with('referredUser:id,name,created_at')
-            ->where('referrer_id', $referrerId)
-            ->where('level', 1) // L1 edges only; deeper levels are reached recursively
-            ->get();
+        // Level N holds every user reached at depth N under the root.
+        $byLevel = [];
+        $referrerIds = [$referrerId];
 
-        return $rows->map(function (Referral $row) use ($level, $maxLevels) {
-            $referee = $row->referredUser;
+        for ($depth = 1; $depth <= $maxLevels; $depth++) {
+            // level=1 rows are the direct-referral edges (deeper chain rows
+            // for the same referee carry higher levels).
+            $rows = Referral::with('referredUser:id,name,created_at')
+                ->where('level', 1)
+                ->whereIn('referrer_id', $referrerIds)
+                ->get();
 
-            return [
-                'user_id' => $row->referred_user_id,
-                'name' => $referee?->name,
-                'level' => $level,
-                'status' => $row->status,
-                'reward_cents' => $row->reward_cents,
-                'joined_at' => $referee?->created_at,
-                'downline' => $referee ? $this->buildTree($referee->id, $level + 1, $maxLevels) : [],
-            ];
-        })->values()->all();
+            if ($rows->isEmpty()) {
+                break;
+            }
+
+            $byLevel[$depth] = $rows;
+            $referrerIds = $rows->pluck('referred_user_id')->unique()->all();
+        }
+
+        $build = function (int $depth, int $parentId) use (&$build, $byLevel): array {
+            $rows = $byLevel[$depth] ?? collect();
+
+            return $rows->where('referrer_id', $parentId)
+                ->map(fn (Referral $row) => [
+                    'user_id' => $row->referred_user_id,
+                    'name' => $row->referredUser?->name,
+                    'level' => $depth,
+                    'status' => $row->status,
+                    'reward_cents' => $row->reward_cents,
+                    'joined_at' => $row->referredUser?->created_at,
+                    'downline' => $build($depth + 1, $row->referred_user_id),
+                ])->values()->all();
+        };
+
+        return $build($level, $referrerId);
     }
 }

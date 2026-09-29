@@ -104,7 +104,7 @@ class OpsAccessTest extends TestCase
         $response = $this->postJson('/api/v1/ops/admins', [
             'name' => 'Alice Admin',
             'email' => 'alice-admin@example.com',
-            'password' => 'adminpassword123',
+            'password' => 'Admin!Strong1',
             'role' => 'admin',
             'permissions' => ['review_submissions', 'manage_users'],
         ]);
@@ -189,6 +189,96 @@ class OpsAccessTest extends TestCase
         $this->getJson('/api/v1/ops/countries')->assertStatus(403);
         $this->getJson('/api/v1/ops/withdrawal-rules')->assertStatus(403);
         $this->getJson('/api/v1/ops/audit-logs')->assertStatus(403);
+    }
+
+    public function test_staff_password_must_meet_strong_policy(): void
+    {
+        Sanctum::actingAs($this->makeSuperAdmin());
+
+        // 12+ chars but no mixed classes: weaker than what public signup
+        // requires, so it must be rejected for staff accounts.
+        $this->postJson('/api/v1/ops/admins', [
+            'name' => 'Weak Staff',
+            'email' => 'weak-staff@example.com',
+            'password' => 'adminpassword123',
+            'role' => 'admin',
+        ])->assertStatus(422);
+
+        $this->assertDatabaseMissing('users', ['email' => 'weak-staff@example.com']);
+    }
+
+    /**
+     * PATCH /api/v1/admin/users/{id}/status guards:
+     *  - nobody can change their own status (self-suspension = lockout);
+     *  - an admin cannot touch staff accounts (admin/moderator/superadmin)
+     *    — staff management is Super Admin only;
+     *  - suspending revokes every existing Sanctum token immediately, so
+     *    the suspension actually locks the account out (there is no
+     *    per-request status check — login only blocks the NEXT login).
+     */
+    public function test_user_status_change_guards(): void
+    {
+        $super = $this->makeSuperAdmin('status-root@example.com');
+        $admin = User::factory()->create(['role' => 'admin']);
+        $contributor = User::factory()->create(['role' => 'contributor']);
+
+        // An admin cannot change their own status…
+        Sanctum::actingAs($admin);
+        $this->patchJson("/api/v1/admin/users/{$admin->id}/status", ['status' => 'suspended'])
+            ->assertStatus(422);
+        $this->assertSame('active', $admin->fresh()->status);
+
+        // …nor a superadmin's…
+        $this->patchJson("/api/v1/admin/users/{$super->id}/status", ['status' => 'suspended'])
+            ->assertStatus(403);
+        $this->assertSame('active', $super->fresh()->status);
+
+        // …but a regular user account is fair game, and suspension kills
+        // their existing sessions on the spot.
+        $contributor->createToken('session_one');
+        $this->assertSame(1, $contributor->tokens()->count());
+
+        $this->patchJson("/api/v1/admin/users/{$contributor->id}/status", ['status' => 'suspended'])
+            ->assertStatus(200);
+        $this->assertSame('suspended', $contributor->fresh()->status);
+        $this->assertSame(0, $contributor->fresh()->tokens()->count());
+
+        // Re-activating works without re-issuing anything.
+        $this->patchJson("/api/v1/admin/users/{$contributor->id}/status", ['status' => 'active'])
+            ->assertStatus(200);
+        $this->assertSame('active', $contributor->fresh()->status);
+
+        // A superadmin CAN manage staff statuses (but still not their own).
+        Sanctum::actingAs($super);
+        $this->patchJson("/api/v1/admin/users/{$admin->id}/status", ['status' => 'suspended'])
+            ->assertStatus(200);
+        $this->assertSame('suspended', $admin->fresh()->status);
+
+        $this->patchJson("/api/v1/admin/users/{$super->id}/status", ['status' => 'suspended'])
+            ->assertStatus(422);
+        $this->assertSame('active', $super->fresh()->status);
+    }
+
+    /**
+     * PATCH /api/v1/admin/system-settings validates the key (a missing key
+     * previously 500'd inside SystemSetting::set()) and audits the change.
+     */
+    public function test_system_setting_update_validates_and_audits(): void
+    {
+        Sanctum::actingAs($this->makeSuperAdmin('settings-root@example.com'));
+
+        $this->patchJson('/api/v1/admin/system-settings', ['value' => 'x'])
+            ->assertStatus(422);
+
+        $this->patchJson('/api/v1/admin/system-settings', [
+            'key' => 'platform_name',
+            'value' => 'Test Platform',
+        ])->assertStatus(200);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'system_setting.updated',
+            'entity_type' => \App\Models\SystemSetting::class,
+        ]);
     }
 
     public function test_audit_log_is_append_only(): void

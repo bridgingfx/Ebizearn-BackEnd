@@ -16,6 +16,7 @@ use App\Services\AI\AIProviderInterface;
 use App\Services\AI\ManualAIProvider;
 use App\Services\AI\MockAIProvider;
 use App\Services\Audit\AuditLogger;
+use App\Services\Contributors\ContributorTierService;
 use App\Services\Fraud\FraudAnalysisService;
 use App\Services\Referral\ReferralService;
 use App\Services\Wallet\WalletLedgerService;
@@ -358,11 +359,9 @@ class VerificationService
             $campaign->increment('completed_contributors_count');
         }
 
-        // 4. Update Contributor Profile Stats
-        $profile = $submission->user->profile;
-        if ($profile) {
-            $profile->increment('completed_tasks_count');
-        }
+        // 4. Reconcile contributor stats + earned tier from real submission
+        // history (the tier is earned, never assigned by hand).
+        (new ContributorTierService())->recalculateFor($submission->user);
 
         // 5. Affiliate qualification (Phase 8, three-level ledger): on the
         // contributor's FIRST approved task, pay every pending referral level
@@ -567,11 +566,9 @@ class VerificationService
                 $campaign->decrement('completed_contributors_count', min($campaign->completed_contributors_count, 1));
             }
 
-            // 3. Roll back contributor stats.
-            $profile = $submission->user->profile;
-            if ($profile) {
-                $profile->decrement('completed_tasks_count', min($profile->completed_tasks_count, 1));
-            }
+            // 3. Reconcile contributor stats + earned tier from real history
+            // (a reversed approval can demote).
+            (new ContributorTierService())->recalculateFor($submission->user);
         }
 
         // 4. Reverse the multi-level referral rewards THIS approval paid.
