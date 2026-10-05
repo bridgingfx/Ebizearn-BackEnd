@@ -3,11 +3,16 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Business;
 use App\Models\Campaign;
 use App\Models\TaskSubmission;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Services\Audit\AuditLogger;
+use App\Services\Campaigns\CampaignCreationService;
+use App\Services\Campaigns\InsufficientCampaignFundsException;
+use App\Services\Idempotency\IdempotencyService;
+use App\Services\TaskTypes\RewardBandViolationException;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
@@ -69,6 +74,88 @@ class StaffCampaignController extends Controller
             'success' => true,
             'data' => array_merge($campaign->toArray(), ['spent_cents' => $spent]),
         ]);
+    }
+
+    /**
+     * Staff-created campaign (admin posting on behalf of a business).
+     * Same creation pipeline as the business portal — reward band check,
+     * P0 funding gate against the TARGET business owner's wallet, escrow
+     * hold + fee debit, task pool, parked in pending_review for approval.
+     * The admin only chooses the business; the money always comes from
+     * that business's wallet, never from thin air.
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'business_id' => 'required|integer|exists:businesses,id',
+            'title' => 'required|string|max:255',
+            'objective' => 'nullable|string|max:255',
+            'description' => 'required|string',
+            'category_id' => 'required|exists:task_categories,id',
+            'platform' => 'nullable|string|max:64',
+            'reward_per_task_cents' => 'required|integer|min:20', // Min $0.20
+            'task_type_key' => 'required|string|exists:task_types,key',
+            'target_contributors_count' => 'required|integer|min:5',
+            'instructions_markdown' => 'required|string',
+            'proof_requirements_json' => 'nullable|array',
+            'target_countries' => 'nullable|array',
+            'target_languages' => 'nullable|array',
+            'min_contributor_level' => 'nullable|in:starter,explorer,trusted,pro,elite',
+            'retention_hours' => 'nullable|integer|min:0',
+            'idempotency_key' => 'nullable|string|max:128',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $business = Business::findOrFail($request->input('business_id'));
+        $actor = $request->user();
+
+        try {
+            $campaign = app(CampaignCreationService::class)->create(
+                $business,
+                $validator->validated(),
+                $actor->id,
+                IdempotencyService::keyFromRequest($request)
+            );
+        } catch (RewardBandViolationException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        } catch (InsufficientCampaignFundsException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Insufficient funded balance. This needs '
+                    . '$' . number_format($e->requiredCents / 100, 2) . ' USD, but the business wallet ('
+                    . $business->company_name . ') only has '
+                    . '$' . number_format($e->availableCents / 100, 2) . ' USD available. '
+                    . 'Add funds to the wallet and try again.',
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        }
+
+        AuditLogger::log(
+            $actor,
+            'campaign.created_by_staff',
+            Campaign::class,
+            $campaign->id,
+            ['business_id' => $business->id, 'title' => $campaign->title]
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $campaign->wasRecentlyCreated
+                ? 'Campaign created and funded successfully.'
+                : 'Campaign already created — returning the existing record.',
+            'data' => $campaign->load(['business', 'category', 'tasks']),
+        ], $campaign->wasRecentlyCreated ? 201 : 200);
     }
 
     /**

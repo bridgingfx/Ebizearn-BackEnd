@@ -8,6 +8,8 @@ use App\Models\Campaign;
 use App\Models\Task;
 use App\Models\TaskSubmission;
 use App\Models\Wallet;
+use App\Services\Campaigns\CampaignCreationService;
+use App\Services\Campaigns\InsufficientCampaignFundsException;
 use App\Services\Idempotency\IdempotencyService;
 use App\Services\TaskTypes\RewardBandService;
 use App\Services\TaskTypes\RewardBandViolationException;
@@ -137,147 +139,18 @@ class BusinessCampaignController extends Controller
             ], 422);
         }
 
-        // Phase 4/12: every campaign task carries a type contract — the
-        // reward must sit inside the type's band, otherwise an honest 422
-        // names the band. There is no untyped bypass.
         try {
-            $bands = new RewardBandService();
-            $type = $bands->resolveType($request->input('task_type_key'));
-            $bands->assertWithinBand($type, (int) $request->input('reward_per_task_cents'));
+            $campaign = app(CampaignCreationService::class)->create(
+                $business,
+                $validator->validated(),
+                $request->user()->id,
+                IdempotencyService::keyFromRequest($request)
+            );
         } catch (RewardBandViolationException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        } catch (InsufficientCampaignFundsException $e) {
+            return $this->insufficientFundingResponse($e->availableCents, $e->requiredCents);
         } catch (Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
-        }
-
-        $validated = $validator->validated();
-
-        // Calculate budget & platform fee
-        $rewardPerTask = (int) $validated['reward_per_task_cents'];
-        $contributorCount = (int) $validated['target_contributors_count'];
-        $tasksBudget = $rewardPerTask * $contributorCount;
-        $feePercent = config('platform.platformFeePercent', 15);
-        $platformFee = (int) round($tasksBudget * ($feePercent / 100));
-        $totalBudget = $tasksBudget + $platformFee;
-
-        // FUNDING GATE PRE-CHECK (P0): fail fast with an honest 422 before
-        // touching the database. The atomic hold() inside the transaction
-        // below remains the final authority against concurrent races.
-        $ownerWallet = Wallet::firstOrCreate(
-            ['user_id' => $business->owner_id],
-            ['currency' => 'USD', 'available_balance_cents' => 0]
-        );
-
-        if ((int) $ownerWallet->available_balance_cents < $totalBudget) {
-            return $this->insufficientFundingResponse(
-                (int) $ownerWallet->available_balance_cents,
-                $totalBudget
-            );
-        }
-
-        try {
-            // Idempotent: a retried create (double-click / network retry) with
-            // the same key + identical parameters returns the original
-            // campaign instead of creating a second one and double-charging
-            // the escrow hold.
-            $campaign = app(IdempotencyService::class)->run(
-                IdempotencyService::keyFromRequest($request),
-                'campaign.create',
-                $request->user()->id,
-                ['business_id' => $business->id, 'payload_hash' => hash('sha256', json_encode($validated))],
-                function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $ownerWallet, $type) {
-                    return DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $ownerWallet, $type) {
-                $camp = Campaign::create([
-                    'uuid' => (string) Str::uuid(),
-                    'business_id' => $business->id,
-                    'category_id' => $validated['category_id'],
-                    'platform' => $validated['platform'] ?? null,
-                    'title' => $validated['title'],
-                    'objective' => $validated['objective'] ?? null,
-                    'description' => $validated['description'],
-                    'instructions_markdown' => $validated['instructions_markdown'],
-                    // Proof contract is stored as a LIST of requirement names
-                    // (e.g. ['screenshot', 'url']) — the format the fraud
-                    // screens enforce in FraudAnalysisService::screenProofOrReject.
-                    'proof_requirements_json' => $validated['proof_requirements_json'] ?? ['screenshot', 'url'],
-                    'status' => 'draft', // goes active only after the funding gate below
-                    'total_budget_cents' => $totalBudget,
-                    'remaining_budget_cents' => $tasksBudget, // rewards pool only; the platform fee is taken at launch
-                    'reserved_budget_cents' => 0,
-                    'reward_per_task_cents' => $rewardPerTask,
-                    'platform_fee_cents' => $platformFee,
-                    'target_contributors_count' => $contributorCount,
-                    'target_countries_json' => $validated['target_countries'] ?? ['ALL'],
-                    'target_languages_json' => $validated['target_languages'] ?? ['en'],
-                    'min_contributor_level' => $validated['min_contributor_level'] ?? 'starter',
-                    'retention_hours' => $validated['retention_hours'] ?? 24,
-                    'starts_at' => now(),
-                ]);
-
-                // FUNDING GATE (P0): the business wallet must cover the campaign
-                // budget before the campaign goes active. Rewards are escrow-held
-                // (available -> pending); the platform fee is debited immediately
-                // and is non-refundable. Insufficient funds abort the launch and
-                // the whole transaction (including the draft row) is rolled back,
-                // so a campaign can never sit 'active' with zero backing.
-                $this->ledger->hold(
-                    $ownerWallet,
-                    $tasksBudget,
-                    'campaign_funding',
-                    "Escrow hold — campaign rewards: {$camp->title}",
-                    Campaign::class,
-                    $camp->id
-                );
-
-                if ($platformFee > 0) {
-                    $this->ledger->debit(
-                        $ownerWallet,
-                        $platformFee,
-                        'campaign_funding',
-                        "Platform fee — campaign launch: {$camp->title}",
-                        Campaign::class,
-                        $camp->id,
-                        ['is_platform_fee' => true]
-                    );
-                }
-
-                // Create initial active Task pool — carries the type contract
-                // (band-validated above): proof requirements and retention.
-                Task::create([
-                    'uuid' => (string) Str::uuid(),
-                    'campaign_id' => $camp->id,
-                    'category_id' => $camp->category_id,
-                    'task_type_id' => $type->id,
-                    'platform' => $camp->platform,
-                    'title' => $camp->title,
-                    'reward_cents' => $rewardPerTask,
-                    'proof_required_json' => $type->proof_required_json,
-                    'retention_days' => $type->retention_period_days,
-                    'estimated_minutes' => 5,
-                    'difficulty' => 'easy',
-                    'status' => 'available',
-                    'slots_total' => $contributorCount,
-                    'slots_taken' => 0,
-                ]);
-
-                // Priority 4 — approval gate: funded campaigns park in
-                // pending_review until staff approves them to active.
-                $camp->update(['status' => 'pending_review']);
-
-                return $camp;
-                });
-            }
-        );
-        } catch (Exception $e) {
-            // A lost race against the funding gate surfaces here: map it to
-            // the same honest 422 as the pre-check instead of a generic 400.
-            if ($this->isInsufficientFundsError($e)) {
-                return $this->insufficientFundingResponse(
-                    (int) $ownerWallet->fresh()->available_balance_cents,
-                    $totalBudget
-                );
-            }
-
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),

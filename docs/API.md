@@ -100,6 +100,7 @@ Decisions are idempotent (repeat same decision = no-op). Reject-after-approve re
 | Method | Endpoint | Notes |
 |--------|----------|-------|
 | GET | `/staff/campaigns` | Cross-tenant campaign list (`?status=`). |
+| POST | `/staff/campaigns` | Staff posts a campaign on behalf of a business (`business_id` required). Same pipeline as the business portal: reward-band check, P0 funding gate against the business wallet, escrow hold + fee debit, task pool, parked `pending_review`. Writes `audit_logs` (`campaign.created_by_staff`). |
 | GET | `/staff/campaigns/{id}` | Campaign detail. |
 | PATCH | `/staff/campaigns/{id}/status` | `active|paused|cancelled`. Also `pending_review` → `active` (approve, publishes tasks) or `cancelled` (reject, releases escrow). Writes `audit_logs` (`campaign.status_changed`). |
 | DELETE | `/staff/campaigns/{id}` | Drafts only, never after money moved. |

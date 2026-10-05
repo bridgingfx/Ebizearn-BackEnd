@@ -344,6 +344,11 @@ Route::prefix('v1')->group(function () {
             // list/show, pause/resume/cancel with escrow release, safe
             // delete (drafts only, never once money moved).
             Route::get('/campaigns', [StaffCampaignController::class, 'index']);
+            // Staff-created campaign: admin posts a campaign on behalf of a
+            // business (business_id required). Same creation pipeline as the
+            // business portal — reward bands, P0 funding gate against the
+            // business wallet, escrow hold + task pool, parked pending_review.
+            Route::post('/campaigns', [StaffCampaignController::class, 'store']);
             Route::get('/campaigns/{id}', [StaffCampaignController::class, 'show']);
             Route::patch('/campaigns/{id}/status', [StaffCampaignController::class, 'updateStatus']);
             Route::delete('/campaigns/{id}', [StaffCampaignController::class, 'destroy']);
