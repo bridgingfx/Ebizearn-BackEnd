@@ -125,9 +125,9 @@ class DatabaseSeeder extends Seeder
             );
         }
 
-        // 5. Business User & Company: Acme Global
+        // 5. Business User & Company: eBizEarn
         $businessUser = User::updateOrCreate(
-            ['email' => 'brand@acme.com'],
+            ['email' => 'brand@ebizearn.com'],
             [
                 'name' => 'Alexandre Dubois',
                 'password' => Hash::make('password123'),
@@ -137,13 +137,13 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        $acme = Business::updateOrCreate(
+        $company = Business::updateOrCreate(
             ['owner_id' => $businessUser->id],
             [
-                'company_name' => 'Acme Growth Labs',
-                'website' => 'https://acme.example.com',
+                'company_name' => 'eBizEarn',
+                'website' => 'https://ebizearn.com',
                 'industry' => 'Consumer Tech & SaaS',
-                'billing_email' => 'billing@acme.example.com',
+                'billing_email' => 'billing@ebizearn.com',
                 'status' => 'active',
                 'verified_at' => now(),
             ]
@@ -167,7 +167,7 @@ class DatabaseSeeder extends Seeder
         // 7. Realistic Campaigns & Tasks
         $campaignData = [
             [
-                'business_id' => $acme->id,
+                'business_id' => $company->id,
                 'category_id' => $categoryModels['social']->id,
                 'title' => 'Middle East Tech Launch — Social Awareness',
                 'objective' => 'Increase reach and organic community visibility for our SaaS platform launch.',
@@ -201,7 +201,7 @@ class DatabaseSeeder extends Seeder
                 ],
             ],
             [
-                'business_id' => $acme->id,
+                'business_id' => $company->id,
                 'category_id' => $categoryModels['survey']->id,
                 'title' => 'Global Remote Work & Gig Economy Survey 2026',
                 'objective' => 'Collect quantitative consumer insights on freelance task preferences.',
@@ -227,7 +227,7 @@ class DatabaseSeeder extends Seeder
                 ],
             ],
             [
-                'business_id' => $acme->id,
+                'business_id' => $company->id,
                 'category_id' => $categoryModels['app-testing']->id,
                 'title' => 'iOS & Android Checkout Usability Evaluation',
                 'objective' => 'Identify UX friction points during new user onboarding and checkout.',
@@ -253,7 +253,7 @@ class DatabaseSeeder extends Seeder
                 ],
             ],
             [
-                'business_id' => $acme->id,
+                'business_id' => $company->id,
                 'category_id' => $categoryModels['ugc']->id,
                 'title' => 'TikTok & Reels Short UGC Creator Clips',
                 'objective' => 'Real creator testimonials showcasing the mobile dashboard experience.',
@@ -279,7 +279,7 @@ class DatabaseSeeder extends Seeder
                 ],
             ],
             [
-                'business_id' => $acme->id,
+                'business_id' => $company->id,
                 'category_id' => $categoryModels['website-testing']->id,
                 'title' => 'Website Experience Test — Navigation & Speed',
                 'objective' => 'Test mobile website loading speed across international connections.',

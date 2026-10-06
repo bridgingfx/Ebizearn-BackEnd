@@ -57,7 +57,7 @@ class IdempotencyTest extends TestCase
 
     protected function fundedBusiness(int $cents): User
     {
-        $business = User::where('email', 'brand@acme.com')->firstOrFail();
+        $business = User::where('email', 'brand@ebizearn.com')->firstOrFail();
 
         $wallet = Wallet::firstOrCreate(
             ['user_id' => $business->id],

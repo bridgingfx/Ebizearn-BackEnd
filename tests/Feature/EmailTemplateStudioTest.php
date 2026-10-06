@@ -60,13 +60,13 @@ class EmailTemplateStudioTest extends TestCase
         $user = $this->makeUser('contributor');
 
         app(\App\Services\Email\EmailService::class)->sendEvent('task_approved', $user->email, [
-            'user_name' => 'Yuva', 'task_title' => 'Follow <Acme>', 'amount' => 'USD 1.50',
+            'user_name' => 'Yuva', 'task_title' => 'Follow <eBizEarn>', 'amount' => 'USD 1.50',
         ]);
 
         Http::assertSent(function ($req) {
             $html = $req['htmlContent'];
             return str_contains($html, '/assets/email-logo.png')
-                && str_contains($html, 'Follow &lt;Acme&gt;')
+                && str_contains($html, 'Follow &lt;eBizEarn&gt;')
                 && !str_contains($html, '{{');
         });
     }

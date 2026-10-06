@@ -154,7 +154,7 @@ class EmailOtpTest extends TestCase
         $response = $this->postJson('/api/v1/auth/register', $this->registerPayload([
             'email' => 'biz@example.com',
             'role' => 'business',
-            'company_name' => 'Acme LLC',
+            'company_name' => 'eBizEarn LLC',
             'phone_country_code' => '+1',
             'phone_number' => '5551234567',
         ]));

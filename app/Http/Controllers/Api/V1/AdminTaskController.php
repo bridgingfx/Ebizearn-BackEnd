@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Campaign;
 use App\Models\Task;
 use App\Services\Tasks\TaskManagementService;
 use App\Services\TaskTypes\RewardBandViolationException;
@@ -48,6 +49,30 @@ class AdminTaskController extends Controller
             'data' => $tasks->items(),
             'meta' => ['current_page' => $tasks->currentPage(), 'last_page' => $tasks->lastPage(), 'total' => $tasks->total()],
         ]);
+    }
+
+    /**
+     * Campaigns a new task can be added to: funded and not closed. Returned
+     * slim (no wallet data) so create_tasks does not require campaign access.
+     */
+    public function campaignOptions(): JsonResponse
+    {
+        $campaigns = Campaign::with('business:id,company_name')
+            ->whereIn('status', ['active', 'paused', 'pending_review'])
+            ->latest()
+            ->limit(200)
+            ->get(['id', 'business_id', 'title', 'status', 'platform', 'instructions_markdown', 'remaining_budget_cents', 'reserved_budget_cents'])
+            ->map(fn (Campaign $c) => [
+                'id' => $c->id,
+                'title' => $c->title,
+                'status' => $c->status,
+                'platform' => $c->platform,
+                'instructions_markdown' => $c->instructions_markdown,
+                'pool_cents' => (int) $c->remaining_budget_cents + (int) $c->reserved_budget_cents,
+                'business_name' => $c->business?->company_name,
+            ]);
+
+        return response()->json(['success' => true, 'data' => $campaigns]);
     }
 
     public function store(Request $request): JsonResponse

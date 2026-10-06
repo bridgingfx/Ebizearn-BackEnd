@@ -41,7 +41,7 @@ class EscrowFundingGateTest extends TestCase
 
     public function test_campaign_creation_rejected_when_wallet_cannot_cover_budget(): void
     {
-        $business = User::where('email', 'brand@acme.com')->firstOrFail();
+        $business = User::where('email', 'brand@ebizearn.com')->firstOrFail();
 
         // Empty wallet: $0 available. Campaign needs $5.00 tasks + 15% fee.
         Wallet::firstOrCreate(
@@ -67,7 +67,7 @@ class EscrowFundingGateTest extends TestCase
 
     public function test_campaign_creation_holds_escrow_and_goes_active_when_funded(): void
     {
-        $business = User::where('email', 'brand@acme.com')->firstOrFail();
+        $business = User::where('email', 'brand@ebizearn.com')->firstOrFail();
 
         // Fund the wallet: $100.00 available.
         $wallet = Wallet::firstOrCreate(

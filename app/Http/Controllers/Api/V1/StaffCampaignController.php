@@ -58,6 +58,27 @@ class StaffCampaignController extends Controller
         ]);
     }
 
+    /**
+     * Active business accounts a campaign can be posted for, with the
+     * owner wallet's available balance (the funding gate checks it).
+     * Lets post_campaigns work without the broader manage_users permission.
+     */
+    public function businessOptions(): JsonResponse
+    {
+        $businesses = Business::with(['owner:id,name,email,status', 'owner.wallet:id,user_id,available_balance_cents'])
+            ->whereHas('owner', fn ($q) => $q->where('role', 'business')->where('status', 'active'))
+            ->orderBy('company_name')
+            ->get()
+            ->map(fn (Business $b) => [
+                'id' => $b->id,
+                'company_name' => $b->company_name,
+                'owner_name' => $b->owner?->name,
+                'available_balance_cents' => (int) ($b->owner?->wallet?->available_balance_cents ?? 0),
+            ]);
+
+        return response()->json(['success' => true, 'data' => $businesses]);
+    }
+
     public function show(string $id): JsonResponse
     {
         $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))

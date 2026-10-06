@@ -74,19 +74,19 @@ class SocialLoginTest extends TestCase
 
     public function test_google_signup_from_business_pages_creates_a_business_account(): void
     {
-        $this->fakeVerifier(['sub' => 'g-biz', 'email' => 'owner@acme.com', 'email_verified' => true, 'name' => 'Acme Owner']);
+        $this->fakeVerifier(['sub' => 'g-biz', 'email' => 'owner@ebizearn.com', 'email_verified' => true, 'name' => 'eBizEarn Owner']);
 
         $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'business', 'terms_version' => '1.0'])
             ->assertOk()
             ->assertJsonPath('data.user.role', 'business')
-            ->assertJsonPath('data.user.business.company_name', 'Acme Owner Co');
+            ->assertJsonPath('data.user.business.company_name', 'eBizEarn Owner Co');
 
         // Signing in again from the business login works; from the contributor login it is refused.
         $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'business', 'terms_version' => '1.0'])->assertOk();
         $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'contributor'])
             ->assertStatus(403)
             ->assertJsonFragment(['message' => 'This Google account is registered as a business account. Please use the business sign-in.']);
-        $this->assertSame(1, User::where('email', 'owner@acme.com')->count());
+        $this->assertSame(1, User::where('email', 'owner@ebizearn.com')->count());
     }
 
     public function test_staff_portals_never_accept_social_sign_in(): void

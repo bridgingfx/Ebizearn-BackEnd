@@ -14,11 +14,20 @@ class Permission extends Model
      * Canonical permission names assignable by Super Admin.
      */
     public const REVIEW_SUBMISSIONS = 'review_submissions';
+    /** Campaign access: list / view, pause / resume, approve. */
     public const MANAGE_CAMPAIGNS = 'manage_campaigns';
     public const MANAGE_USERS = 'manage_users';
     public const MANAGE_SETTINGS = 'manage_settings';
     public const HANDLE_DISPUTES = 'handle_disputes';
+    /** Task access: see the staff task list (create / edit / delete are separate). */
     public const MANAGE_TASK_TEMPLATES = 'manage_task_templates';
+    public const CREATE_TASKS = 'create_tasks';
+    public const EDIT_TASKS = 'edit_tasks';
+    public const DELETE_TASKS = 'delete_tasks';
+    /** Post a campaign on behalf of a business (funded from that business's wallet). */
+    public const POST_CAMPAIGNS = 'post_campaigns';
+    /** Create business user accounts from the admin panel. */
+    public const CREATE_BUSINESS_USERS = 'create_business_users';
     public const VIEW_REPORTS = 'view_reports';
     public const REVIEW_KYC = 'review_kyc';
     public const PROCESS_PAYOUTS = 'process_payouts';
@@ -65,8 +74,13 @@ class Permission extends Model
             self::REVIEW_KYC => ['Review KYC identity documents', 'staff'],
             self::HANDLE_DISPUTES => ['Handle support tickets and disputes', 'staff'],
             self::MANAGE_USERS => ['Manage users (view, suspend, reactivate)', 'staff'],
-            self::MANAGE_CAMPAIGNS => ['Manage campaigns (create / edit / status)', 'staff'],
-            self::MANAGE_TASK_TEMPLATES => ['Manage tasks and campaign oversight', 'staff'],
+            self::CREATE_BUSINESS_USERS => ['Create business user accounts', 'staff'],
+            self::MANAGE_CAMPAIGNS => ['Access campaigns (view, pause / resume, approve)', 'staff'],
+            self::POST_CAMPAIGNS => ['Create campaigns for a business', 'staff'],
+            self::MANAGE_TASK_TEMPLATES => ['Access tasks (view the task list)', 'staff'],
+            self::CREATE_TASKS => ['Create tasks', 'staff'],
+            self::EDIT_TASKS => ['Edit tasks (details, pause / resume)', 'staff'],
+            self::DELETE_TASKS => ['Delete tasks (no contributor activity only)', 'staff'],
             self::PROCESS_PAYOUTS => ['Approve / reject withdrawals', 'staff'],
             self::VIEW_REPORTS => ['View reports, audit logs and analytics', 'staff'],
             self::MANAGE_SETTINGS => ['Manage platform settings and feature flags', 'staff'],
@@ -107,13 +121,16 @@ class Permission extends Model
     {
         return [
             'moderator' => [
-                self::REVIEW_SUBMISSIONS, self::REVIEW_KYC, self::HANDLE_DISPUTES, self::MANAGE_TASK_TEMPLATES,
+                self::REVIEW_SUBMISSIONS, self::REVIEW_KYC, self::HANDLE_DISPUTES,
+                self::MANAGE_TASK_TEMPLATES, self::CREATE_TASKS, self::EDIT_TASKS, self::DELETE_TASKS,
+                self::MANAGE_CAMPAIGNS, self::POST_CAMPAIGNS,
             ],
             'admin' => [
                 self::REVIEW_SUBMISSIONS, self::REVIEW_KYC, self::HANDLE_DISPUTES, self::MANAGE_USERS,
-                self::MANAGE_CAMPAIGNS, self::MANAGE_TASK_TEMPLATES, self::PROCESS_PAYOUTS,
-                self::VIEW_REPORTS, self::MANAGE_SETTINGS,
-                self::EDIT_CAMPAIGNS, self::DELETE_CAMPAIGNS, self::VIEW_TASK_LIBRARY,
+                self::CREATE_BUSINESS_USERS,
+                self::MANAGE_CAMPAIGNS, self::POST_CAMPAIGNS, self::EDIT_CAMPAIGNS, self::DELETE_CAMPAIGNS,
+                self::MANAGE_TASK_TEMPLATES, self::CREATE_TASKS, self::EDIT_TASKS, self::DELETE_TASKS,
+                self::PROCESS_PAYOUTS, self::VIEW_REPORTS, self::MANAGE_SETTINGS, self::VIEW_TASK_LIBRARY,
             ],
             'contributor' => [
                 self::PERFORM_TASKS, self::REQUEST_WITHDRAWALS, self::USE_REFERRALS,

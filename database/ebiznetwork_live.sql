@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS `users` (
 -- Dumping data for table `users`
 INSERT INTO `users` (`id`, `uuid`, `name`, `email`, `email_verified_at`, `password`, `role`, `status`, `referral_code`, `referrer_id`, `remember_token`, `created_at`, `updated_at`, `deleted_at`) VALUES
 (1, '89fbc619-0f16-4d2f-b342-a69295fdd552', 'Sarah Jenkins', 'sarah@ebizearn.com', '2026-09-17 22:54:18', '$2y$12$1XaAo9Fija7qJ8jOoHdB7OMxXx3PJb3tpCaCvaCQDHXuI8OW/r/RK', 'contributor', 'active', 'MZEBFCAC', NULL, NULL, '2026-09-17 22:54:18', '2026-09-17 22:54:18', NULL),
-(2, '9178dab4-04d9-4c63-a625-66922db0238b', 'Alexandre Dubois', 'brand@acme.com', '2026-09-17 22:54:18', '$2y$12$FtuaXaR/yHGPKr/.O69QvO6IXsAJi8hjfm9C6EZY29nTSAzyzjRG6', 'business', 'active', 'HZMHNFUC', NULL, NULL, '2026-09-17 22:54:18', '2026-09-17 22:54:18', NULL),
+(2, '9178dab4-04d9-4c63-a625-66922db0238b', 'Alexandre Dubois', 'brand@ebizearn.com', '2026-09-17 22:54:18', '$2y$12$FtuaXaR/yHGPKr/.O69QvO6IXsAJi8hjfm9C6EZY29nTSAzyzjRG6', 'business', 'active', 'HZMHNFUC', NULL, NULL, '2026-09-17 22:54:18', '2026-09-17 22:54:18', NULL),
 (3, '60d551bc-f7a7-4604-85c5-5d778e1b41fe', 'Platform Moderator', 'admin@ebizearn.com', '2026-09-17 22:54:19', '$2y$12$00iO.vFGgWPbgz2ky6bDMOJiPfCxxqC9DCJJhRTJ.Xy9RDVakOFVa', 'admin', 'active', 'GDWHVTB0', NULL, NULL, '2026-09-17 22:54:19', '2026-09-17 22:54:19', NULL),
 (4, '4bdf0fdb-398e-4ab2-8db4-9508e4216d83', 'Chief Technology Officer', 'superadmin@ebizearn.com', '2026-09-17 22:54:19', '$2y$12$AucHRPYgrQcjgZNuSXSs0utlHtJDA/14iWyjYx0mE.Wg7RmzHaS0u', 'superadmin', 'active', 'SGNODWX5', NULL, NULL, '2026-09-17 22:54:19', '2026-09-17 22:54:19', NULL);
 
@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS `businesses` (
 
 -- Dumping data for table `businesses`
 INSERT INTO `businesses` (`id`, `uuid`, `owner_id`, `company_name`, `website`, `industry`, `billing_email`, `status`, `verified_at`, `created_at`, `updated_at`, `deleted_at`) VALUES
-(1, '19ddd538-6fd9-46ac-bb7a-3c3552c7e43b', 2, 'Acme Growth Labs', 'https://acme.example.com', 'Consumer Tech & SaaS', 'billing@acme.example.com', 'active', '2026-09-17 22:54:18', '2026-09-17 22:54:18', '2026-09-17 22:54:18', NULL);
+(1, '19ddd538-6fd9-46ac-bb7a-3c3552c7e43b', 2, 'eBizEarn', 'https://ebizearn.com', 'Consumer Tech & SaaS', 'billing@ebizearn.com', 'active', '2026-09-17 22:54:18', '2026-09-17 22:54:18', '2026-09-17 22:54:18', NULL);
 
 -- --------------------------------------------------------
 -- Table structure for table `task_categories`

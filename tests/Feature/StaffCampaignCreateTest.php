@@ -49,7 +49,7 @@ class StaffCampaignCreateTest extends TestCase
 
     private function fundedBusiness(): User
     {
-        $business = User::where('email', 'brand@acme.com')->firstOrFail();
+        $business = User::where('email', 'brand@ebizearn.com')->firstOrFail();
 
         Wallet::updateOrCreate(
             ['user_id' => $business->id],
@@ -108,7 +108,7 @@ class StaffCampaignCreateTest extends TestCase
     public function test_staff_campaign_is_rejected_when_business_wallet_is_short(): void
     {
         $staff = $this->staffUser();
-        $business = User::where('email', 'brand@acme.com')->firstOrFail();
+        $business = User::where('email', 'brand@ebizearn.com')->firstOrFail();
 
         Wallet::updateOrCreate(
             ['user_id' => $business->id],

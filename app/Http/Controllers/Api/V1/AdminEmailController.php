@@ -281,7 +281,7 @@ class AdminEmailController extends Controller
     /** Example values for previews and test sends. */
     public const SAMPLE_VALUES = [
         'amount' => 'USD 25.00',
-        'task_title' => 'Follow @acmebrand on Instagram',
+        'task_title' => 'Follow @ebizearn on Instagram',
         'reason' => 'The screenshot does not show the follow button.',
         'verification_url' => 'https://ebizearn.com/verify-email',
         'reset_url' => 'https://ebizearn.com/reset-password',

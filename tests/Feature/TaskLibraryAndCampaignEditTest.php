@@ -49,7 +49,7 @@ class TaskLibraryAndCampaignEditTest extends TestCase
 
     private function business(): User
     {
-        return User::where('email', 'brand@acme.com')->firstOrFail();
+        return User::where('email', 'brand@ebizearn.com')->firstOrFail();
     }
 
     private function fundedCampaign(): Campaign

@@ -68,7 +68,7 @@ class WalletIntegrityTest extends TestCase
         $b = $this->registerContributor('Int B', 'int-b@example.com', $a->referral_code);
 
         // 2. Funded business -------------------------------------------------
-        $business = User::where('email', 'brand@acme.com')->firstOrFail();
+        $business = User::where('email', 'brand@ebizearn.com')->firstOrFail();
         $bizWallet = Wallet::firstOrCreate(['user_id' => $business->id], ['currency' => 'USD']);
         $bizWallet->update(['available_balance_cents' => 10000, 'pending_balance_cents' => 0]);
         $this->asUser($business);

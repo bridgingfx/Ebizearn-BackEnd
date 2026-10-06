@@ -30,7 +30,7 @@ class ProofRequirementsEnforcementTest extends TestCase
     {
         $this->seed();
 
-        return User::where('email', 'brand@acme.com')->firstOrFail();
+        return User::where('email', 'brand@ebizearn.com')->firstOrFail();
     }
 
     private function makeCampaign(User $business): Campaign

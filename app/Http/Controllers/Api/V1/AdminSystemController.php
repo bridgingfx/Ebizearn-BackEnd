@@ -4,17 +4,24 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
+use App\Models\Business;
 use App\Models\Campaign;
 use App\Models\FeatureFlag;
+use App\Models\Profile;
 use App\Models\Role;
 use App\Models\SupportTicket;
 use App\Models\SystemSetting;
 use App\Models\User;
+use App\Models\Wallet;
+use App\Rules\StrongPassword;
+use App\Services\Audit\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class AdminSystemController extends Controller
 {
@@ -244,6 +251,92 @@ class AdminSystemController extends Controller
                 'total' => $users->total(),
             ],
         ]);
+    }
+
+    /**
+     * Create a business user account (create_business_users).
+     *
+     * The role is fixed to `business` server-side — this endpoint can never
+     * mint a staff account. The account is created active and verified (the
+     * admin vouches for it) with the same Profile / Wallet / Business rows as
+     * a self-signup, so the owner can sign in to the business portal at once
+     * with the password the admin set. Business permissions come from the
+     * business role grants Super Admin controls.
+     */
+    public function createBusinessUser(Request $request): JsonResponse
+    {
+        $request->merge(['email' => strtolower(trim((string) $request->input('email')))]);
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255|unique:users,email',
+            'password' => ['required', 'string', new StrongPassword()],
+            'company_name' => 'required|string|max:255',
+            'website' => 'nullable|url|max:255',
+            'industry' => 'nullable|string|max:255',
+            'country_code' => 'nullable|string|size:2',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $data = $validator->validated();
+
+        $user = DB::transaction(function () use ($data) {
+            $user = User::create([
+                'uuid' => (string) Str::uuid(),
+                'name' => $data['name'],
+                'email' => $data['email'],
+                'password' => Hash::make($data['password']),
+                'role' => 'business',
+                'status' => 'active',
+                'email_verified_at' => now(),
+            ]);
+
+            Profile::create([
+                'user_id' => $user->id,
+                'country_code' => strtoupper($data['country_code'] ?? 'GE'),
+                'language' => 'en',
+                'contributor_level' => 'starter',
+                'fraud_score' => 0,
+            ]);
+
+            Wallet::create([
+                'user_id' => $user->id,
+                'currency' => 'USD',
+                'available_balance_cents' => 0,
+                'pending_balance_cents' => 0,
+                'lifetime_earnings_cents' => 0,
+                'total_withdrawn_cents' => 0,
+            ]);
+
+            Business::create([
+                'owner_id' => $user->id,
+                'company_name' => $data['company_name'],
+                'website' => $data['website'] ?? null,
+                'industry' => $data['industry'] ?? null,
+                'billing_email' => $data['email'],
+                'status' => 'active',
+            ]);
+
+            return $user;
+        });
+
+        AuditLogger::log($request->user(), 'business_user.created', User::class, $user->id, [
+            'email' => $user->email,
+            'company_name' => $data['company_name'],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Business account created. The owner can sign in with this email and password.',
+            'data' => $user->load(['business', 'wallet', 'profile']),
+        ], 201);
     }
 
     /**

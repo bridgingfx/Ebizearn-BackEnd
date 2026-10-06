@@ -36,7 +36,7 @@ class BusinessDepositTest extends TestCase
             'email_verified_at' => now(),
         ]);
         if ($role === 'business') {
-            Business::create(['owner_id' => $user->id, 'company_name' => 'Acme', 'status' => 'active']);
+            Business::create(['owner_id' => $user->id, 'company_name' => 'eBizEarn', 'status' => 'active']);
         }
 
         return $user;
@@ -60,10 +60,10 @@ class BusinessDepositTest extends TestCase
 
         // Details are required before a method can go live.
         $this->putJson('/api/v1/admin/deposit-methods/card', [
-            'is_active' => true, 'title' => 'Card payment', 'details' => ['provider' => 'AcmePay'], 'min_amount' => 10,
+            'is_active' => true, 'title' => 'Card payment', 'details' => ['provider' => 'eBizEarnPay'], 'min_amount' => 10,
         ])->assertStatus(422)->assertJsonFragment(['message' => 'Fill in a valid payment link (https://…) before turning Card payment on.']);
 
-        $this->enable('card', ['payment_link' => 'https://pay.example.com/x', 'provider' => 'AcmePay', 'junk' => 'dropped']);
+        $this->enable('card', ['payment_link' => 'https://pay.example.com/x', 'provider' => 'eBizEarnPay', 'junk' => 'dropped']);
         $this->enable('bank', ['account_name' => 'eBiz Network FZ LLC', 'iban' => 'AE070331234567890123456', 'bank_name' => 'Emirates NBD']);
         $this->assertArrayNotHasKey('junk', DepositMethod::where('key', 'card')->first()->details);
 
@@ -112,7 +112,7 @@ class BusinessDepositTest extends TestCase
     public function test_deposit_is_credited_only_after_approval_and_only_once(): void
     {
         Storage::fake('local');
-        $this->enable('card', ['payment_link' => 'https://pay.example.com/x', 'provider' => 'AcmePay']);
+        $this->enable('card', ['payment_link' => 'https://pay.example.com/x', 'provider' => 'eBizEarnPay']);
         $business = $this->user('business');
         Sanctum::actingAs($business);
 
@@ -141,7 +141,7 @@ class BusinessDepositTest extends TestCase
 
         $admin = $this->user('admin');
         Sanctum::actingAs($admin);
-        $this->getJson('/api/v1/admin/deposits')->assertOk()->assertJsonPath('meta.pending', 1)->assertJsonPath('data.0.user.business.company_name', 'Acme');
+        $this->getJson('/api/v1/admin/deposits')->assertOk()->assertJsonPath('meta.pending', 1)->assertJsonPath('data.0.user.business.company_name', 'eBizEarn');
         $this->get("/api/v1/admin/deposits/{$id}/proof")->assertOk();
 
         // Approve the amount that actually arrived (network fee deducted).

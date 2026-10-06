@@ -39,14 +39,14 @@ class BusinessProofReviewTest extends TestCase
         Wallet::create(['user_id' => $this->contributor->id, 'currency' => 'USD']);
 
         $this->bizUser = $this->user('business', 'biz@example.com');
-        $business = Business::create(['owner_id' => $this->bizUser->id, 'company_name' => 'Acme', 'status' => 'active']);
+        $business = Business::create(['owner_id' => $this->bizUser->id, 'company_name' => 'eBizEarn', 'status' => 'active']);
         Wallet::create(['user_id' => $this->bizUser->id, 'currency' => 'USD', 'available_balance_cents' => 100000]);
 
         $campaign = Campaign::create([
             'uuid' => (string) Str::uuid(),
             'business_id' => $business->id,
             'category_id' => TaskCategory::firstOrFail()->id,
-            'title' => 'Acme Launch',
+            'title' => 'eBizEarn Launch',
             'description' => 'desc',
             'status' => 'active',
             'total_budget_cents' => 10000,
@@ -60,7 +60,7 @@ class BusinessProofReviewTest extends TestCase
             'campaign_id' => $campaign->id,
             'category_id' => $campaign->category_id,
             'task_type_id' => TaskType::where('key', 'follow')->firstOrFail()->id,
-            'title' => 'Follow Acme',
+            'title' => 'Follow eBizEarn',
             'status' => 'available',
             'reward_cents' => 150,
             'slots_total' => 10,

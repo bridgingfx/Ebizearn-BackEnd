@@ -295,6 +295,10 @@ Route::prefix('v1')->group(function () {
                 Route::patch('/system-settings', [AdminSystemController::class, 'updateSystemSetting']);
             });
 
+            // Create a business user account (ready to sign in, business role only).
+            Route::post('/businesses', [AdminSystemController::class, 'createBusinessUser'])
+                ->middleware(['permission:create_business_users', 'throttle:30,1']);
+
             Route::middleware('permission:manage_users')->group(function () {
                 Route::get('/users', [AdminSystemController::class, 'users']);
                 Route::get('/users/{id}', [AdminSystemController::class, 'showUser'])->whereNumber('id');
@@ -339,26 +343,36 @@ Route::prefix('v1')->group(function () {
             Route::post('/{id}/decision', [SocialChannelController::class, 'decision'])->whereNumber('id');
         });
 
-        Route::middleware(['role:moderator,admin,superadmin', 'permission:manage_task_templates'])->prefix('staff')->group(function () {
-            Route::get('/tasks', [AdminTaskController::class, 'index']);
-            Route::post('/tasks', [AdminTaskController::class, 'store']);
-            Route::patch('/tasks/{id}', [AdminTaskController::class, 'update']);
-            Route::delete('/tasks/{id}', [AdminTaskController::class, 'destroy']);
+        // Staff tasks: manage_task_templates opens the task list; create /
+        // edit (incl. pause/resume) / delete each need their own permission,
+        // so Super Admin can switch them per role or per user.
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:manage_task_templates'])->prefix('staff/tasks')->group(function () {
+            Route::get('/', [AdminTaskController::class, 'index']);
+            // Campaigns a new task can be added to (for the create form).
+            Route::get('/campaign-options', [AdminTaskController::class, 'campaignOptions'])->middleware('permission:create_tasks');
+            Route::post('/', [AdminTaskController::class, 'store'])->middleware('permission:create_tasks');
+            Route::patch('/{id}', [AdminTaskController::class, 'update'])->middleware('permission:edit_tasks');
+            Route::delete('/{id}', [AdminTaskController::class, 'destroy'])->middleware('permission:delete_tasks');
+        });
 
-            // Phase 9 — STAFF CAMPAIGN MANAGEMENT (Worker C): cross-tenant
-            // list/show, pause/resume/cancel with escrow release, edit
-            // (edit_campaigns), safe delete (delete_campaigns — refused once
-            // contributors worked on it; escrow released first).
-            Route::get('/campaigns', [StaffCampaignController::class, 'index']);
-            // Staff-created campaign: admin posts a campaign on behalf of a
-            // business (business_id required). Same creation pipeline as the
-            // business portal — reward bands, P0 funding gate against the
-            // business wallet, escrow hold + task pool, parked pending_review.
-            Route::post('/campaigns', [StaffCampaignController::class, 'store']);
-            Route::get('/campaigns/{id}', [StaffCampaignController::class, 'show']);
-            Route::patch('/campaigns/{id}/status', [StaffCampaignController::class, 'updateStatus']);
-            Route::patch('/campaigns/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');
-            Route::delete('/campaigns/{id}', [StaffCampaignController::class, 'destroy'])->middleware('permission:delete_campaigns');
+        // Phase 9 — STAFF CAMPAIGN MANAGEMENT: manage_campaigns opens the
+        // cross-tenant list (view, pause/resume/cancel with escrow release,
+        // approval). Create (post_campaigns), edit (edit_campaigns) and safe
+        // delete (delete_campaigns — refused once contributors worked on it;
+        // escrow released first) are gated separately.
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:manage_campaigns'])->prefix('staff/campaigns')->group(function () {
+            Route::get('/', [StaffCampaignController::class, 'index']);
+            // Businesses a campaign can be posted for (for the create form).
+            Route::get('/business-options', [StaffCampaignController::class, 'businessOptions'])->middleware('permission:post_campaigns');
+            // Staff-created campaign on behalf of a business (business_id
+            // required). Same creation pipeline as the business portal —
+            // reward bands, P0 funding gate against the business wallet,
+            // escrow hold + task pool, parked pending_review.
+            Route::post('/', [StaffCampaignController::class, 'store'])->middleware('permission:post_campaigns');
+            Route::get('/{id}', [StaffCampaignController::class, 'show']);
+            Route::patch('/{id}/status', [StaffCampaignController::class, 'updateStatus']);
+            Route::patch('/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');
+            Route::delete('/{id}', [StaffCampaignController::class, 'destroy'])->middleware('permission:delete_campaigns');
         });
 
         // Task Library: staff read (visibility per template), and template

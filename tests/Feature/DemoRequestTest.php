@@ -22,7 +22,7 @@ class DemoRequestTest extends TestCase
         return array_merge([
             'name' => 'Ayesha Khan',
             'email' => 'ayesha@example.com',
-            'company' => 'Acme Growth Labs',
+            'company' => 'eBizEarn',
             'message' => 'We would like a demo of the campaign wizard for our marketing team.',
         ], $overrides);
     }
@@ -52,7 +52,7 @@ class DemoRequestTest extends TestCase
 
         $this->assertDatabaseHas('demo_requests', [
             'email' => 'ayesha@example.com',
-            'company' => 'Acme Growth Labs',
+            'company' => 'eBizEarn',
             'status' => 'new',
         ]);
     }

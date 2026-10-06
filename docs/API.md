@@ -95,17 +95,29 @@ All responses are JSON with `success: true|false`. Error responses also carry a 
 
 Decisions are idempotent (repeat same decision = no-op). Reject-after-approve reverses the ledger credit with compensating entries — never double-credits.
 
-## Staff Campaign Management (`role:moderator,admin,superadmin` + `permission:manage_task_templates`)
+## Staff Campaign Management (`role:moderator,admin,superadmin` + `permission:manage_campaigns`)
 
-| Method | Endpoint | Notes |
-|--------|----------|-------|
-| GET | `/staff/campaigns` | Cross-tenant campaign list (`?status=`). |
-| POST | `/staff/campaigns` | Staff posts a campaign on behalf of a business (`business_id` required). Same pipeline as the business portal: reward-band check, P0 funding gate against the business wallet, escrow hold + fee debit, task pool, parked `pending_review`. Writes `audit_logs` (`campaign.created_by_staff`). |
-| GET | `/staff/campaigns/{id}` | Campaign detail. |
-| PATCH | `/staff/campaigns/{id}/status` | `active|paused|cancelled`. Also `pending_review` → `active` (approve, publishes tasks) or `cancelled` (reject, releases escrow). Writes `audit_logs` (`campaign.status_changed`). |
-| DELETE | `/staff/campaigns/{id}` | Drafts only, never after money moved. |
-| GET/POST | `/staff/tasks` | Cross-tenant task list / create. |
-| PATCH/DELETE | `/staff/tasks/{id}` | Manage any task. |
+Each action has its own permission (column "Perm"); Super Admin switches them per role or per user. Super Admin always passes.
+
+| Method | Endpoint | Perm | Notes |
+|--------|----------|------|-------|
+| GET | `/staff/campaigns` | — | Cross-tenant campaign list (`?status=`). |
+| GET | `/staff/campaigns/business-options` | `post_campaigns` | Active businesses + wallet balance, for the post form. |
+| POST | `/staff/campaigns` | `post_campaigns` | Staff posts a campaign on behalf of a business (`business_id` required). Same pipeline as the business portal: reward-band check, P0 funding gate against the business wallet, escrow hold + fee debit, task pool, parked `pending_review`. Writes `audit_logs` (`campaign.created_by_staff`). |
+| GET | `/staff/campaigns/{id}` | — | Campaign detail. |
+| PATCH | `/staff/campaigns/{id}/status` | — | `active|paused|cancelled`. Also `pending_review` → `active` (approve, publishes tasks) or `cancelled` (reject, releases escrow). Writes `audit_logs` (`campaign.status_changed`). |
+| PATCH | `/staff/campaigns/{id}` | `edit_campaigns` | Copy / targeting only; money fields are not editable. |
+| DELETE | `/staff/campaigns/{id}` | `delete_campaigns` | Refused once contributors worked on it; outstanding escrow is released first. |
+
+## Staff Tasks (`role:moderator,admin,superadmin` + `permission:manage_task_templates`)
+
+| Method | Endpoint | Perm | Notes |
+|--------|----------|------|-------|
+| GET | `/staff/tasks` | — | Cross-tenant task list. |
+| GET | `/staff/tasks/campaign-options` | `create_tasks` | Funded campaigns a task can be added to. |
+| POST | `/staff/tasks` | `create_tasks` | Reward band + campaign pool checked. |
+| PATCH | `/staff/tasks/{id}` | `edit_tasks` | Details and pause / resume (`status`). |
+| DELETE | `/staff/tasks/{id}` | `delete_tasks` | Refused once contributors have taken the task. |
 
 ## Admin (`role:admin,superadmin`)
 
@@ -115,6 +127,7 @@ Verification queue, submission decisions, fraud alerts, payouts, referral overvi
 |--------|----------|-------|
 | GET | `/admin/dashboard` | Platform overview. |
 | GET | `/admin/users` | User list. |
+| POST | `/admin/businesses` | `create_business_users`: create a business owner account (role fixed to `business`, active + verified, profile / wallet / business rows). Writes `audit_logs` (`business_user.created`). |
 | PATCH | `/admin/users/{id}/status` | Activate/suspend. |
 | GET | `/admin/audit-logs` | Audit trail. |
 | GET | `/admin/feature-flags` / PATCH | Feature flags. |
