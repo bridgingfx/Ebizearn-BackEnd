@@ -24,6 +24,12 @@ class Permission extends Model
     public const PROCESS_PAYOUTS = 'process_payouts';
     /** Edit referral commissions (L1/L2/L3). Super Admin only by default. */
     public const MANAGE_REFERRAL_RULES = 'manage_referral_rules';
+    /** Edit campaign details (title, copy, instructions, targeting) platform-wide. */
+    public const EDIT_CAMPAIGNS = 'edit_campaigns';
+    /** Delete campaigns with no contributor activity (escrow is released first). */
+    public const DELETE_CAMPAIGNS = 'delete_campaigns';
+    /** Create / edit / delete Task Library templates. Super Admin only by default. */
+    public const MANAGE_TASK_LIBRARY = 'manage_task_library';
 
     // Contributor capabilities
     public const PERFORM_TASKS = 'perform_tasks';
@@ -36,10 +42,14 @@ class Permission extends Model
     public const MANAGE_BUSINESS_TASKS = 'manage_business_tasks';
     /** First-step approve / reject of proofs on the business's own campaigns. */
     public const REVIEW_CAMPAIGN_PROOFS = 'review_campaign_proofs';
+    public const EDIT_OWN_CAMPAIGNS = 'edit_own_campaigns';
+    public const DELETE_OWN_CAMPAIGNS = 'delete_own_campaigns';
 
     // Shared (contributor + business)
     public const SUBMIT_KYC = 'submit_kyc';
     public const OPEN_SUPPORT_TICKETS = 'open_support_tickets';
+    /** See the Task Library templates (staff and business). */
+    public const VIEW_TASK_LIBRARY = 'view_task_library';
 
     /** Roles whose grants Super Admin can edit (superadmin holds everything). */
     public const EDITABLE_ROLES = ['admin', 'moderator', 'contributor', 'business'];
@@ -61,6 +71,9 @@ class Permission extends Model
             self::VIEW_REPORTS => ['View reports, audit logs and analytics', 'staff'],
             self::MANAGE_SETTINGS => ['Manage platform settings and feature flags', 'staff'],
             self::MANAGE_REFERRAL_RULES => ['Change referral commissions (L1 / L2 / L3)', 'staff'],
+            self::EDIT_CAMPAIGNS => ['Edit any campaign\'s details', 'staff'],
+            self::DELETE_CAMPAIGNS => ['Delete campaigns (no contributor activity only)', 'staff'],
+            self::MANAGE_TASK_LIBRARY => ['Create / edit / delete Task Library templates', 'staff'],
 
             self::PERFORM_TASKS => ['Start and submit tasks', 'contributor'],
             self::REQUEST_WITHDRAWALS => ['Request wallet withdrawals', 'contributor'],
@@ -70,9 +83,12 @@ class Permission extends Model
             self::FUND_CAMPAIGNS => ['Fund campaigns (escrow deposits)', 'business'],
             self::MANAGE_BUSINESS_TASKS => ['Create / edit / delete own tasks', 'business'],
             self::REVIEW_CAMPAIGN_PROOFS => ['Approve / reject proofs on own campaigns', 'business'],
+            self::EDIT_OWN_CAMPAIGNS => ['Edit own campaign details', 'business'],
+            self::DELETE_OWN_CAMPAIGNS => ['Delete own campaigns (no contributor activity only)', 'business'],
 
             self::SUBMIT_KYC => ['Submit KYC identity documents', 'account'],
             self::OPEN_SUPPORT_TICKETS => ['Open and reply to support tickets', 'account'],
+            self::VIEW_TASK_LIBRARY => ['See the Task Library templates', 'account'],
         ];
     }
 
@@ -97,6 +113,7 @@ class Permission extends Model
                 self::REVIEW_SUBMISSIONS, self::REVIEW_KYC, self::HANDLE_DISPUTES, self::MANAGE_USERS,
                 self::MANAGE_CAMPAIGNS, self::MANAGE_TASK_TEMPLATES, self::PROCESS_PAYOUTS,
                 self::VIEW_REPORTS, self::MANAGE_SETTINGS,
+                self::EDIT_CAMPAIGNS, self::DELETE_CAMPAIGNS, self::VIEW_TASK_LIBRARY,
             ],
             'contributor' => [
                 self::PERFORM_TASKS, self::REQUEST_WITHDRAWALS, self::USE_REFERRALS,
@@ -104,7 +121,8 @@ class Permission extends Model
             ],
             'business' => [
                 self::CREATE_CAMPAIGNS, self::FUND_CAMPAIGNS, self::MANAGE_BUSINESS_TASKS, self::REVIEW_CAMPAIGN_PROOFS,
-                self::SUBMIT_KYC, self::OPEN_SUPPORT_TICKETS,
+                self::EDIT_OWN_CAMPAIGNS, self::DELETE_OWN_CAMPAIGNS,
+                self::SUBMIT_KYC, self::OPEN_SUPPORT_TICKETS, self::VIEW_TASK_LIBRARY,
             ],
         ];
     }

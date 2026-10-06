@@ -8,7 +8,9 @@ use App\Models\Campaign;
 use App\Models\Task;
 use App\Models\TaskSubmission;
 use App\Models\Wallet;
+use App\Services\Audit\AuditLogger;
 use App\Services\Campaigns\CampaignCreationService;
+use App\Services\Campaigns\CampaignManagementService;
 use App\Services\Campaigns\InsufficientCampaignFundsException;
 use App\Services\Idempotency\IdempotencyService;
 use App\Services\TaskTypes\RewardBandService;
@@ -491,6 +493,70 @@ class BusinessCampaignController extends Controller
                 ? 'Proof approved. Our review team will confirm it and release the payment to the contributor.'
                 : 'Proof rejected. Our review team will confirm the rejection.',
             'data' => $submission->fresh()->load(['task.category', 'user.profile', 'files', 'businessReviewer:id,name', 'reviewer:id,name']),
+        ]);
+    }
+
+    /**
+     * Edit own campaign copy / targeting (edit_own_campaigns). Reward,
+     * budget and contributor count are escrow-backed and not editable.
+     */
+    public function update(Request $request, string $id): JsonResponse
+    {
+        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        Gate::authorize('update', $campaign);
+
+        $validator = Validator::make($request->all(), CampaignManagementService::editRules());
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $before = $campaign->only(array_keys($validator->validated()));
+
+        try {
+            $campaign = app(CampaignManagementService::class)->updateDetails($campaign, $validator->validated());
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        AuditLogger::log($request->user(), 'campaign.updated', Campaign::class, $campaign->id, [], $before, $validator->validated());
+
+        return response()->json(['success' => true, 'message' => 'Campaign updated.', 'data' => $campaign]);
+    }
+
+    /**
+     * Delete own campaign (delete_own_campaigns). Refused once contributors
+     * have worked on it; otherwise outstanding escrow returns to the wallet.
+     */
+    public function destroy(Request $request, string $id): JsonResponse
+    {
+        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        Gate::authorize('delete', $campaign);
+
+        try {
+            $released = app(CampaignManagementService::class)->deleteSafely($campaign);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        AuditLogger::log(
+            $request->user(),
+            'campaign.deleted',
+            Campaign::class,
+            $campaign->id,
+            ['title' => $campaign->title, 'status' => $campaign->status, 'escrow_released_cents' => $released]
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => $released > 0
+                ? 'Campaign deleted. $' . number_format($released / 100, 2) . ' escrow returned to your wallet.'
+                : 'Campaign deleted.',
+            'data' => ['escrow_released_cents' => $released],
         ]);
     }
 

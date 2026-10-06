@@ -27,6 +27,7 @@ use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
 use App\Http\Controllers\Api\V1\SupportTicketController;
 use App\Http\Controllers\Api\V1\TaskController;
+use App\Http\Controllers\Api\V1\TaskTemplateController;
 use App\Http\Controllers\Api\V1\TaskTypeController;
 use App\Http\Controllers\Api\V1\WalletController;
 use Illuminate\Support\Facades\Route;
@@ -159,6 +160,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/campaigns', [BusinessCampaignController::class, 'store'])->middleware(['email.verified', 'permission:create_campaigns']);
             Route::get('/campaigns/{id}', [BusinessCampaignController::class, 'show']);
             Route::patch('/campaigns/{id}/status', [BusinessCampaignController::class, 'updateStatus']);
+            Route::patch('/campaigns/{id}', [BusinessCampaignController::class, 'update'])->middleware('permission:edit_own_campaigns');
+            Route::delete('/campaigns/{id}', [BusinessCampaignController::class, 'destroy'])->middleware('permission:delete_own_campaigns');
+            // Task Library templates Super Admin made visible to businesses.
+            Route::get('/task-templates', [TaskTemplateController::class, 'index'])->middleware('permission:view_task_library');
             Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund'])->middleware(['email.verified', 'permission:fund_campaigns']);
             Route::post('/campaigns/{id}/logo', [BusinessCampaignController::class, 'uploadLogo']);
             Route::get('/submissions', [BusinessCampaignController::class, 'submissions']);
@@ -341,8 +346,9 @@ Route::prefix('v1')->group(function () {
             Route::delete('/tasks/{id}', [AdminTaskController::class, 'destroy']);
 
             // Phase 9 — STAFF CAMPAIGN MANAGEMENT (Worker C): cross-tenant
-            // list/show, pause/resume/cancel with escrow release, safe
-            // delete (drafts only, never once money moved).
+            // list/show, pause/resume/cancel with escrow release, edit
+            // (edit_campaigns), safe delete (delete_campaigns — refused once
+            // contributors worked on it; escrow released first).
             Route::get('/campaigns', [StaffCampaignController::class, 'index']);
             // Staff-created campaign: admin posts a campaign on behalf of a
             // business (business_id required). Same creation pipeline as the
@@ -351,7 +357,19 @@ Route::prefix('v1')->group(function () {
             Route::post('/campaigns', [StaffCampaignController::class, 'store']);
             Route::get('/campaigns/{id}', [StaffCampaignController::class, 'show']);
             Route::patch('/campaigns/{id}/status', [StaffCampaignController::class, 'updateStatus']);
-            Route::delete('/campaigns/{id}', [StaffCampaignController::class, 'destroy']);
+            Route::patch('/campaigns/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');
+            Route::delete('/campaigns/{id}', [StaffCampaignController::class, 'destroy'])->middleware('permission:delete_campaigns');
+        });
+
+        // Task Library: staff read (visibility per template), and template
+        // CRUD for manage_task_library (Super Admin, or an admin granted it).
+        Route::middleware(['role:moderator,admin,superadmin'])->prefix('staff/task-templates')->group(function () {
+            Route::get('/', [TaskTemplateController::class, 'index'])->middleware('permission:view_task_library');
+            Route::middleware('permission:manage_task_library')->group(function () {
+                Route::post('/', [TaskTemplateController::class, 'store']);
+                Route::patch('/{id}', [TaskTemplateController::class, 'update'])->whereNumber('id');
+                Route::delete('/{id}', [TaskTemplateController::class, 'destroy'])->whereNumber('id');
+            });
         });
 
         // ==================================================================

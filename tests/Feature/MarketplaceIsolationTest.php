@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Business;
 use App\Models\Campaign;
 use App\Models\Task;
+use App\Models\TaskAssignment;
 use App\Models\TaskCategory;
 use App\Models\TaskSubmission;
 use App\Models\TaskType;
@@ -285,15 +286,23 @@ class MarketplaceIsolationTest extends TestCase
         $this->assertEquals('pending_review', Campaign::findOrFail($campaignB)->status);
     }
 
-    public function test_staff_cannot_delete_campaign_once_money_moved(): void
+    public function test_staff_cannot_delete_campaign_once_contributors_worked_on_it(): void
     {
         $admin = User::where('email', 'admin@ebizearn.com')->firstOrFail();
         $biz = $this->makeBusiness('iso-b5@example.com');
         $campaign = $this->makeCampaign($biz->business);
+        $task = $this->makeTask($campaign);
+        $contributor = $this->makeContributor('iso-c5@example.com');
+        TaskAssignment::create([
+            'uuid' => (string) Str::uuid(),
+            'task_id' => $task->id,
+            'user_id' => $contributor->id,
+            'status' => 'in_progress',
+        ]);
 
         Sanctum::actingAs($admin);
 
-        // Active campaigns cannot be deleted — only cancelled.
+        // A campaign a contributor has worked on cannot be deleted — only cancelled.
         $this->deleteJson("/api/v1/staff/campaigns/{$campaign->id}")->assertStatus(422);
         $this->assertNotNull(Campaign::find($campaign->id));
 

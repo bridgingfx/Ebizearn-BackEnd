@@ -6,14 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\Campaign;
 use App\Models\TaskSubmission;
-use App\Models\Wallet;
-use App\Models\WalletTransaction;
 use App\Services\Audit\AuditLogger;
 use App\Services\Campaigns\CampaignCreationService;
+use App\Services\Campaigns\CampaignManagementService;
 use App\Services\Campaigns\InsufficientCampaignFundsException;
 use App\Services\Idempotency\IdempotencyService;
 use App\Services\TaskTypes\RewardBandViolationException;
-use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,12 +24,14 @@ use Illuminate\Support\Facades\Validator;
  * campaign, but status changes and deletes follow strict safety rules:
  * - pause/resume any active/paused campaign
  * - cancel releases unspent escrow back to the business wallet
- * - delete is refused once money has moved or submissions exist
+ * - edit (edit_campaigns) changes copy / targeting only, never money
+ * - delete (delete_campaigns) is refused once contributors have worked on
+ *   the campaign; otherwise its escrow is released before deletion
  */
 class StaffCampaignController extends Controller
 {
     public function __construct(
-        protected WalletLedgerService $ledger = new WalletLedgerService()
+        protected CampaignManagementService $campaigns = new CampaignManagementService()
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -201,7 +201,7 @@ class StaffCampaignController extends Controller
                 $locked = Campaign::where('id', $campaign->id)->lockForUpdate()->firstOrFail();
 
                 if ($target === 'cancelled') {
-                    $this->releaseUnspentEscrow($locked);
+                    $this->campaigns->releaseUnspentEscrow($locked);
                     // No 'cancelled' state on tasks — pausing the pool stops
                     // new assignments; the cancelled campaign is the truth.
                     $locked->tasks()->where('status', 'available')->update(['status' => 'paused']);
@@ -227,104 +227,69 @@ class StaffCampaignController extends Controller
     }
 
     /**
-     * Safe delete: only drafts with no spend and no submissions can be
-     * removed. Anything that touched money or contributors is cancelled
-     * instead of deleted (use updateStatus).
+     * Edit a campaign's copy and targeting (edit_campaigns). Reward, budget
+     * and contributor count are escrow-backed and never editable here.
+     */
+    public function update(Request $request, string $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), CampaignManagementService::editRules());
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $before = $campaign->only(array_keys($validator->validated()));
+
+        try {
+            $campaign = $this->campaigns->updateDetails($campaign, $validator->validated());
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        AuditLogger::log($request->user(), 'campaign.updated_by_staff', Campaign::class, $campaign->id, [], $before, $validator->validated());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Campaign updated.',
+            'data' => $campaign->load(['business.owner', 'category'])->loadCount('tasks'),
+        ]);
+    }
+
+    /**
+     * Safe delete (delete_campaigns): refused once any contributor has
+     * worked on the campaign — cancel it instead, history is preserved.
+     * Otherwise the campaign's outstanding escrow returns to the business
+     * wallet, then the campaign and its tasks are soft-deleted.
      */
     public function destroy(Request $request, string $id): JsonResponse
     {
         $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
 
-        if ($campaign->status !== 'draft') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Only draft campaigns can be deleted. Cancel a live campaign instead — its history is preserved.',
-            ], 422);
+        try {
+            $released = $this->campaigns->deleteSafely($campaign);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         }
-
-        $taskIds = $campaign->tasks()->pluck('id');
-        $hasSubmissions = $taskIds->isNotEmpty()
-            && TaskSubmission::whereIn('task_id', $taskIds)->exists();
-
-        if ($hasSubmissions || (int) $campaign->completed_contributors_count > 0) {
-            return response()->json([
-                'success' => false,
-                'message' => 'This campaign has contributor activity and cannot be deleted.',
-            ], 422);
-        }
-
-        $campaign->tasks()->delete();
-        $campaign->delete();
 
         AuditLogger::log(
             $request->user(),
             'campaign.deleted',
             Campaign::class,
             $campaign->id,
-            ['title' => $campaign->title]
+            ['title' => $campaign->title, 'status' => $campaign->status, 'escrow_released_cents' => $released]
         );
 
-        return response()->json(['success' => true, 'message' => 'Draft campaign deleted.']);
-    }
-
-    /**
-     * Return the unspent rewards budget to the business wallet's available
-     * balance. The releasable amount is derived from THIS campaign's own
-     * escrow ledger rows (launch + top-up holds, minus settlements,
-     * restores and prior releases) — never from the wallet's aggregate
-     * pending balance, which may hold other campaigns' escrow, retention
-     * holds and in-flight withdrawals.
-     */
-    protected function releaseUnspentEscrow(Campaign $campaign): void
-    {
-        $business = $campaign->business()->first();
-
-        if (!$business) {
-            return;
-        }
-
-        $wallet = Wallet::where('user_id', $business->owner_id)->lockForUpdate()->first();
-
-        if (!$wallet) {
-            return;
-        }
-
-        $releasable = min((int) $wallet->pending_balance_cents, $this->campaignOutstandingEscrow($wallet, $campaign));
-
-        if ($releasable > 0) {
-            $this->ledger->releaseHold(
-                $wallet,
-                $releasable,
-                'campaign_funding',
-                "Escrow released — campaign cancelled: {$campaign->title}",
-                Campaign::class,
-                $campaign->id
-            );
-        }
-    }
-
-    /**
-     * This campaign's outstanding escrow in cents: launch/top-up holds,
-     * minus reward settlements, plus reversal restores, minus prior
-     * releases. All derived from the campaign's own ledger rows.
-     */
-    protected function campaignOutstandingEscrow(Wallet $wallet, Campaign $campaign): int
-    {
-        $base = WalletTransaction::where('wallet_id', $wallet->id)
-            ->where('type', 'campaign_funding')
-            ->where('reference_type', Campaign::class)
-            ->where('reference_id', $campaign->id);
-
-        $held = (int) (clone $base)->where('metadata_json', 'like', '%escrow_hold%')->sum('amount_cents'); // negative
-        $released = (int) (clone $base)->where('metadata_json', 'like', '%escrow_release%')->sum('amount_cents'); // positive
-
-        $movement = WalletTransaction::where('wallet_id', $wallet->id)
-            ->where('type', 'campaign_funding')
-            ->where('metadata_json->campaign_id', $campaign->id);
-
-        $settled = (int) (clone $movement)->where('metadata_json', 'like', '%escrow_settlement%')->sum('amount_cents'); // negative
-        $restored = (int) (clone $movement)->where('metadata_json', 'like', '%escrow_restore%')->sum('amount_cents'); // positive
-
-        return max(0, -$held + $settled - $restored - $released);
+        return response()->json([
+            'success' => true,
+            'message' => $released > 0
+                ? 'Campaign deleted. $' . number_format($released / 100, 2) . ' escrow returned to the business wallet.'
+                : 'Campaign deleted.',
+            'data' => ['escrow_released_cents' => $released],
+        ]);
     }
 }
