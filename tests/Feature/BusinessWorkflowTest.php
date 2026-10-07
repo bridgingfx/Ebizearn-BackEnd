@@ -158,6 +158,7 @@ class BusinessWorkflowTest extends TestCase
             'password' => 'V3r1fy!Strong',
             'password_confirmation' => 'V3r1fy!Strong',
             'role' => 'contributor',
+            "country_code" => "AE", // the campaign targets AE only
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
             "terms_version" => "1.1",
@@ -168,6 +169,10 @@ class BusinessWorkflowTest extends TestCase
             ->forceFill(['status' => 'active', 'email_verified_at' => now()])->save();
         $contribToken = $this->loginAndGetToken($contribEmail, 'contributor');
 
+        // /tasks is a public route that reads the optional Sanctum user; the
+        // test app caches the last resolved user across requests (a real
+        // server starts fresh), so drop it before each contributor call.
+        $this->app['auth']->forgetGuards();
         $feedBefore = $this->withHeaders(['Authorization' => 'Bearer ' . $contribToken])
             ->getJson('/api/v1/tasks');
         $feedBefore->assertStatus(200);
@@ -201,6 +206,7 @@ class BusinessWorkflowTest extends TestCase
         ]);
 
         // 8. Task VISIBLE in contributor feed after approval
+        $this->app['auth']->forgetGuards();
         $feedAfter = $this->withHeaders(['Authorization' => 'Bearer ' . $contribToken])
             ->getJson('/api/v1/tasks');
         $feedAfter->assertStatus(200);

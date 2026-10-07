@@ -90,8 +90,13 @@ class StaffCampaignCreateTest extends TestCase
         $campaign = Campaign::findOrFail($campaignId);
 
         $this->assertSame($business->business->id, $campaign->business_id);
-        $this->assertSame('pending_review', $campaign->status);
+        // Staff-posted campaigns are pre-approved: live at once, and the
+        // task is in the public contributor feed.
+        $this->assertSame('active', $campaign->status);
         $this->assertSame(1, $campaign->tasks()->count());
+        $this->app['auth']->forgetGuards();
+        $feedIds = collect($this->getJson('/api/v1/tasks')->assertOk()->json('data'))->pluck('id')->all();
+        $this->assertContains($campaign->tasks()->first()->id, $feedIds);
 
         // P0 funding gate: rewards escrowed (200 cents) + 15% platform fee
         // debited from the BUSINESS wallet, not the staff member's.

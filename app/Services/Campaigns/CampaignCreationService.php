@@ -86,8 +86,8 @@ class CampaignCreationService
                 'campaign.create',
                 $actorUserId,
                 ['business_id' => $business->id, 'payload_hash' => hash('sha256', json_encode($validated))],
-                function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $type) {
-                    return DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $type) {
+                function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $type, $actorUserId) {
+                    return DB::transaction(function () use ($business, $validated, $rewardPerTask, $contributorCount, $tasksBudget, $totalBudget, $platformFee, $type, $actorUserId) {
                         // Re-lock the wallet inside the transaction: the
                         // pre-check above is advisory; this is authoritative.
                         $lockedWallet = Wallet::where('user_id', $business->owner_id)->lockForUpdate()->firstOrFail();

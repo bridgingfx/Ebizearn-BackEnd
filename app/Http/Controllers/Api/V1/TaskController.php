@@ -33,7 +33,10 @@ class TaskController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $userCountry = strtoupper($request->user()->profile?->country_code ?? '');
+        // Public route (no auth middleware): $request->user() is always null
+        // here, so read the optional Sanctum user — guests get global
+        // campaigns instead of a 500.
+        $userCountry = strtoupper($request->user('sanctum')?->profile?->country_code ?? '');
 
         $query = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
@@ -44,7 +47,9 @@ class TaskController extends Controller
             ->whereHas('campaign', function ($q) use ($userCountry) {
                 $q->where('status', 'active');
                 $q->where(function ($w) use ($userCountry) {
-                    $w->whereJsonContains('target_countries_json', 'ALL');
+                    // No targeting saved (older campaigns) = global.
+                    $w->whereNull('target_countries_json')
+                      ->orWhereJsonContains('target_countries_json', 'ALL');
                     if ($userCountry !== '') {
                         $w->orWhereJsonContains('target_countries_json', $userCountry);
                     }
@@ -419,7 +424,8 @@ class TaskController extends Controller
             ->whereHas('campaign', function ($q) use ($userCountry) {
                 $q->where('status', 'active');
                 $q->where(function ($w) use ($userCountry) {
-                    $w->whereJsonContains('target_countries_json', 'ALL');
+                    $w->whereNull('target_countries_json')
+                      ->orWhereJsonContains('target_countries_json', 'ALL');
                     if ($userCountry !== '') {
                         $w->orWhereJsonContains('target_countries_json', $userCountry);
                     }
