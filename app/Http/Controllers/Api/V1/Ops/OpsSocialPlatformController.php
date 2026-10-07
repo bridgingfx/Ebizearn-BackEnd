@@ -153,7 +153,14 @@ class OpsSocialPlatformController extends Controller
         }
 
         $file = $request->file('logo');
-        $ext = strtolower($file->getClientOriginalExtension());
+        // SECURITY: derive the extension from the VALIDATED mime type, never
+        // from the client-supplied filename (defense in depth — a crafted
+        // filename like "logo.php" must not influence the stored file).
+        $mime = $file->getMimeType();
+        $ext = $mime === 'image/svg+xml' ? 'svg' : ($mime === 'image/png' ? 'png' : null);
+        if ($ext === null) {
+            abort(422, 'Logo must be an SVG or PNG image.');
+        }
         $filename = 'platform-' . $key . '-' . time() . '.' . $ext;
         $path = 'platform-logos/' . $filename;
 
