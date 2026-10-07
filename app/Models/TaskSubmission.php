@@ -28,6 +28,8 @@ class TaskSubmission extends Model
         'proof_hash',
         'device_fingerprint',
         'review_reason_code',
+        // Rank bonus paid on top of the task reward.
+        'bonus_cents',
         'triggered_referral_reward_ids_json',
         'verification_stage',
         // Two-step review: the campaign business's recommendation.

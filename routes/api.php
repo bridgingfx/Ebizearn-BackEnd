@@ -240,6 +240,12 @@ Route::prefix('v1')->group(function () {
             Route::put('/', [AuthProviderSettingsController::class, 'update']);
         });
 
+        // Super Admin only: contributor rank tiers (promotion thresholds + bonus %)
+        Route::middleware('role:superadmin')->prefix('admin/rank-tiers')->group(function () {
+            Route::get('/', [RankTierController::class, 'index']);
+            Route::patch('/{id}', [RankTierController::class, 'update']);
+        });
+
         // Super Admin only: email providers, templates, logs
         Route::middleware('role:superadmin')->prefix('admin/email')->group(function () {
             Route::get('/providers', [AdminEmailController::class, 'providers']);

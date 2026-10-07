@@ -301,6 +301,30 @@ class VerificationService
             ['task_id' => $task->id, 'campaign_id' => $task->campaign_id]
         );
 
+        // 1a. Rank bonus: contributors earn extra % on top of every reward
+        // based on their current rank (Super Admin configurable, default +5%/rank).
+        $rankService = app(\App\Services\ContributorRankService::class);
+        $bonusCents = $rankService->bonusFor($submission->user, $rewardCents);
+        if ($bonusCents > 0) {
+            $submission->update(['bonus_cents' => $bonusCents]);
+            $this->walletService->credit(
+                $wallet,
+                $bonusCents,
+                'rank_bonus',
+                "Rank bonus ({$submission->user->profile?->contributor_level}) for: {$task->title}",
+                TaskSubmission::class,
+                $submission->id,
+                ['task_id' => $task->id, 'campaign_id' => $task->campaign_id, 'is_bonus' => true]
+            );
+        }
+
+        // 1b. Auto-promotion check after every approval.
+        $newRank = $rankService->maybePromote($submission->user);
+        if ($newRank) {
+            // Log the promotion for audit.
+            \Illuminate\Support\Facades\Log::info("Contributor {$submission->user_id} promoted to {$newRank}");
+        }
+
         // 1b. Retention: approved rewards enter PENDING, not available, when
         // the task carries a retention period (task-level override, else the
         // task type's retention_period_days). The retention:release command
