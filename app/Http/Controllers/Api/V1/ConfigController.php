@@ -39,6 +39,8 @@ class ConfigController extends Controller
                 // backend can never disagree. Config is only the fallback.
                 'minWithdrawalCents' => WithdrawalRule::currentMinCents(),
                 'platformFeePercent' => (int) SystemSetting::get('platform_fee_percent', $platform['platformFeePercent']),
+                // Inactivity auto-logout, configured by Super Admin (minutes). 0 = disabled.
+                'sessionTimeoutMinutes' => (int) SystemSetting::get('session_timeout_minutes', 30),
                 'socials' => $platform['socials'],
                 'supportedCountries' => $platform['supportedCountries'],
                 'featureFlags' => $mergedFlags,
