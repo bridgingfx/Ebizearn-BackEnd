@@ -10,7 +10,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('task_submissions', function (Blueprint $table) {
-            $table->unsignedInteger('bonus_cents')->default(0)->after('reward_cents');
+            $table->unsignedInteger('bonus_cents')->default(0);
         });
     }
 
