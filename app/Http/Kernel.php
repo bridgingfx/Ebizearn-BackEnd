@@ -44,6 +44,8 @@ class Kernel extends HttpKernel
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
             // Round 2: security headers on every API response.
             \App\Http\Middleware\SecurityHeaders::class,
+            // Reject expired Sanctum tokens (e.g. 30-min impersonation tokens).
+            \App\Http\Middleware\RejectExpiredTokens::class,
         ],
     ];
 

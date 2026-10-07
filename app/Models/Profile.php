@@ -20,20 +20,18 @@ class Profile extends Model
         'city',
         'language',
         'bio',
-        'contributor_level',
-        'fraud_score',
-        'completed_tasks_count',
-        'approval_rate',
+        // SECURITY: system fields are intentionally NOT fillable —
+        // 'kyc_status', 'kyc_verified_at', 'kyc_reviewed_by',
+        // 'fraud_score', 'contributor_level', 'completed_tasks_count',
+        // 'approval_rate' must be set explicitly in code, never via
+        // mass assignment (prevents self-verification / rank boosting).
         'interests_json',
         'preferences_json',
-        'kyc_status',
         'kyc_document_type',
         'kyc_front_path',
         'kyc_back_path',
         'kyc_selfie_path',
         'kyc_submitted_at',
-        'kyc_verified_at',
-        'kyc_reviewed_by',
         'kyc_rejection_reason',
         'preferred_payout_method',
     ];

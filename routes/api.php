@@ -343,6 +343,7 @@ Route::prefix('v1')->group(function () {
                 Route::get('/users/{id}', [AdminSystemController::class, 'showUser'])->whereNumber('id');
                 Route::patch('/users/{id}', [AdminSystemController::class, 'updateUser'])->whereNumber('id');
                 Route::post('/users/{id}/impersonate', [AdminSystemController::class, 'impersonate'])->whereNumber('id');
+                Route::post('/impersonation/stop', [AdminSystemController::class, 'stopImpersonation']);
                 Route::patch('/users/{id}/status', [AdminSystemController::class, 'updateUserStatus']);
             });
         });

@@ -87,10 +87,13 @@ class CreateSuperAdmin extends Command
             'name' => 'Super Admin',
             'email' => $email,
             'password' => Hash::make($password),
+        ]);
+        // System fields: set explicitly (not fillable).
+        $user->forceFill([
             'role' => 'superadmin',
             'status' => 'active',
             'email_verified_at' => now(),
-        ]);
+        ])->save();
 
         AuditLogger::log(null, 'superadmin.created', User::class, $user->id, ['email' => $email]);
 

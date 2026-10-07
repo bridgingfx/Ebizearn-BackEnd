@@ -126,8 +126,40 @@ class TrafficAnalyticsController extends Controller
 
     private function resolveCountry(?string $ip): ?string
     {
-        // Hook for a GeoIP lookup (MaxMind / ip-api). Returns ISO code or null.
-        // Keeping it null-safe: traffic still records without a country.
+        if (!$ip || $ip === '127.0.0.1' || $ip === '::1') {
+            return null;
+        }
+
+        // 1. Cloudflare header (free, no rate limit) — set when behind Cloudflare.
+        $cfCountry = request()->header('CF-IPCountry');
+        if ($cfCountry && strlen($cfCountry) === 2 && strtoupper($cfCountry) !== 'XX') {
+            return strtoupper($cfCountry);
+        }
+
+        // 2. Cached lookup — avoid hammering the free GeoIP API.
+        $cacheKey = 'geoip:' . $ip;
+        $cached = \Illuminate\Support\Facades\Cache::get($cacheKey);
+        if ($cached !== null) {
+            return $cached ?: null;
+        }
+
+        // 3. Free ip-api.com lookup (45 req/min — cache keeps us under it).
+        try {
+            $ctx = stream_context_create(['http' => ['timeout' => 2]]);
+            $json = @file_get_contents("http://ip-api.com/json/{$ip}?fields=countryCode,status", false, $ctx);
+            if ($json) {
+                $data = json_decode($json, true);
+                if (($data['status'] ?? '') === 'success' && !empty($data['countryCode'])) {
+                    $cc = strtoupper($data['countryCode']);
+                    \Illuminate\Support\Facades\Cache::put($cacheKey, $cc, now()->addDays(30));
+                    return $cc;
+                }
+            }
+        } catch (\Throwable $e) {
+            // GeoIP is best-effort — traffic still records without a country.
+        }
+
+        \Illuminate\Support\Facades\Cache::put($cacheKey, '', now()->addHours(6));
         return null;
     }
 }

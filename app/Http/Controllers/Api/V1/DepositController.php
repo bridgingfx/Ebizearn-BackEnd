@@ -220,6 +220,11 @@ class DepositController extends Controller
      * POST /admin/deposits/{id}/decision { decision: approve|reject, note?, amount? }
      * Approve credits the business wallet (the confirmed amount, which may
      * differ from the requested one, e.g. after fees).
+     *
+     * SECURITY: the override amount is capped at ±20% of the requested
+     * amount (min $1). Larger corrections require a superadmin — a single
+     * compromised admin account must not be able to mint arbitrary funds.
+     * Every override is audit-logged and flagged for review.
      */
     public function decision(Request $request, int $id, WalletLedgerService $ledger): JsonResponse
     {
@@ -234,6 +239,28 @@ class DepositController extends Controller
         $deposit = DB::transaction(function () use ($data, $id, $request, $ledger) {
             $deposit = DepositRequest::where('id', $id)->lockForUpdate()->firstOrFail();
             abort_unless($deposit->status === 'pending', 422, 'This deposit has already been ' . $deposit->status . '.');
+
+            // Cap the override: at most ±20% of what was requested (min $1 swing).
+            if ($data['decision'] === 'approve' && isset($data['amount'])) {
+                $requested = (float) $deposit->requested_cents / 100;
+                $override = (float) $data['amount'];
+                $maxDelta = max(1.0, $requested * 0.20);
+                if (abs($override - $requested) > $maxDelta) {
+                    // Only a superadmin may approve larger corrections.
+                    if ($request->user()->role !== 'superadmin') {
+                        abort(422, 'Amount differs too much from the requested deposit. A Super Admin must approve this correction.');
+                    }
+                    \App\Models\AuditLog::create([
+                        'actor_id' => $request->user()->id,
+                        'actor_role' => $request->user()->role,
+                        'action' => 'deposit.large_override',
+                        'target_type' => 'deposit',
+                        'target_id' => $deposit->id,
+                        'description' => "Superadmin approved large deposit override: requested \${$requested}, crediting \${$override}",
+                        'ip_address' => $request->ip(),
+                    ]);
+                }
+            }
 
             if ($data['decision'] === 'reject') {
                 $deposit->update([

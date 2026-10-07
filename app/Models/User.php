@@ -24,12 +24,11 @@ class User extends Authenticatable
         // Signup hardening: E.164 phone ("+995555123456"), nullable.
         'phone',
         'password',
-        'role',
-        'status',
-        'department_id',
+        // SECURITY: 'role', 'status', 'department_id', 'email_verified_at'
+        // are intentionally NOT fillable — set them explicitly in code
+        // to prevent privilege escalation via mass assignment.
         'referral_code',
         'referrer_id',
-        'email_verified_at',
         // Round 2: SHA-256 digest of the pending verification token + issue
         // timestamp. The raw token is never persisted.
         'email_verification_token',

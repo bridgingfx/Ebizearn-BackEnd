@@ -66,11 +66,14 @@ class OpsAdminController extends Controller
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
+        ]);
+        // System fields: set explicitly (not fillable).
+        $user->forceFill([
             'role' => $validated['role'],
             'status' => 'active',
             'email_verified_at' => now(),
             'department_id' => $validated['department_id'] ?? null,
-        ]);
+        ])->save();
 
         if (!empty($validated['permissions'])) {
             $user->syncPermissions($validated['permissions']);

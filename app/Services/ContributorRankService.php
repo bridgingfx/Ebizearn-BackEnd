@@ -91,7 +91,9 @@ class ContributorRankService
         }
 
         if ($newLevel && $newLevel !== $currentLevel) {
-            $profile->update(['contributor_level' => $newLevel]);
+            // Direct assignment: 'contributor_level' is not fillable.
+            $profile->contributor_level = $newLevel;
+            $profile->save();
             return $newLevel;
         }
         return null;

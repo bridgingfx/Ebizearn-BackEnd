@@ -126,15 +126,18 @@ class AuthController extends Controller
                     'email' => $validated['email'],
                     'phone' => $phone,
                     'password' => Hash::make($validated['password']),
-                    'role' => $validated['role'],
-                    'status' => 'pending_verification',
                     'referrer_id' => $referrer?->id,
-                    'email_verified_at' => null,
                     // Consent proof: which terms version the user accepted.
                     // terms_accepted_at/_ip are stamped at OTP activation
                     // (EmailOtpService@verify) — the account is pending here.
                     'terms_version' => $validated['terms_version'],
                 ]);
+                // System fields: set explicitly (not fillable).
+                $user->forceFill([
+                    'role' => $validated['role'],
+                    'status' => 'pending_verification',
+                    'email_verified_at' => null,
+                ])->save();
 
                 // Create Profile
                 Profile::create([
@@ -425,17 +428,20 @@ class AuthController extends Controller
                     // No usable password: social-only account. A random
                     // 40-char secret means password login is impossible.
                     'password' => Hash::make(Str::random(40)),
-                    // Signing up from the business pages creates a business account.
-                    'role' => $portal === 'business' ? 'business' : 'contributor',
-                    'status' => 'active',
-                    // The provider already verified this address out-of-band.
-                    'email_verified_at' => $claims['email_verified'] === true ? now() : null,
                     // Consent proof, stamped at creation — the account is
                     // active the moment it is created here.
                     'terms_version' => $expectedTerms,
                     'terms_accepted_at' => now(),
                     'terms_accepted_ip' => $request->ip(),
                 ]);
+                // System fields: set explicitly (not fillable).
+                $user->forceFill([
+                    // Signing up from the business pages creates a business account.
+                    'role' => $portal === 'business' ? 'business' : 'contributor',
+                    'status' => 'active',
+                    // The provider already verified this address out-of-band.
+                    'email_verified_at' => $claims['email_verified'] === true ? now() : null,
+                ])->save();
 
                 Profile::create([
                     'user_id' => $user->id,

@@ -293,10 +293,13 @@ class AdminSystemController extends Controller
                 'name' => $data['name'],
                 'email' => $data['email'],
                 'password' => Hash::make($data['password']),
+            ]);
+            // System fields: set explicitly (not fillable).
+            $user->forceFill([
                 'role' => 'business',
                 'status' => 'active',
                 'email_verified_at' => now(),
-            ]);
+            ])->save();
 
             Profile::create([
                 'user_id' => $user->id,
@@ -379,7 +382,10 @@ class AdminSystemController extends Controller
         }
 
         $before = $user->status;
-        $user->update(['status' => $status]);
+        // Direct assignment: 'status' is intentionally NOT in $fillable
+        // (prevents privilege escalation via mass assignment).
+        $user->status = $status;
+        $user->save();
 
         $tokensRevoked = 0;
         if ($status === 'suspended') {
@@ -517,9 +523,12 @@ class AdminSystemController extends Controller
     }
 
     /**
-     * Impersonate a user (superadmin only). Returns a token for the target
-     * user so staff can "login as" a business to see their portal.
-     * Audit-logged. The staff member must re-login to return.
+     * Impersonate a user (superadmin only). Returns a SHORT-LIVED, flagged
+     * token for the target user so staff can "login as" a business.
+     * - Expires after 30 minutes.
+     * - Cannot target staff (admin/superadmin) — business/contributor only.
+     * - Flagged as impersonation; audit-logged with the staff actor.
+     * - Use stopImpersonation to revoke early.
      */
     public function impersonate(Request $request, string $id): JsonResponse
     {
@@ -535,8 +544,17 @@ class AdminSystemController extends Controller
         if ($target->status === 'suspended') {
             return response()->json(['success' => false, 'message' => 'Cannot impersonate a suspended account.'], 422);
         }
+        if (in_array($target->role, ['admin', 'superadmin'], true)) {
+            return response()->json(['success' => false, 'message' => 'Cannot impersonate staff accounts.'], 422);
+        }
+        if ($target->id === $staff->id) {
+            return response()->json(['success' => false, 'message' => 'Cannot impersonate yourself.'], 422);
+        }
 
-        $token = $target->createToken('impersonation')->plainTextToken;
+        $tokenResult = $target->createToken('impersonation', ['impersonate']);
+        $token = $tokenResult->plainTextToken;
+        // 30-minute expiry — Sanctum stores created_at; enforce via expires_at.
+        $tokenResult->accessToken->forceFill(['expires_at' => now()->addMinutes(30)])->save();
 
         \App\Models\AuditLog::create([
             'actor_id' => $staff->id,
@@ -544,13 +562,45 @@ class AdminSystemController extends Controller
             'action' => 'user.impersonate',
             'target_type' => 'user',
             'target_id' => $target->id,
-            'description' => "Superadmin {$staff->email} started impersonating {$target->email}",
+            'description' => "Superadmin {$staff->email} started impersonating {$target->email} (30-min token)",
             'ip_address' => $request->ip(),
         ]);
 
         return response()->json([
             'success' => true,
-            'data' => ['token' => $token],
+            'data' => [
+                'token' => $token,
+                'expires_in_minutes' => 30,
+                'impersonated_user_id' => $target->id,
+            ],
         ]);
+    }
+
+    /**
+     * Stop an impersonation session: revoke the impersonation token.
+     * The staff member's own session is untouched.
+     */
+    public function stopImpersonation(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $token = $user->currentAccessToken();
+
+        if (!$token || !in_array('impersonate', $token->abilities ?? [])) {
+            return response()->json(['success' => false, 'message' => 'No active impersonation session.'], 422);
+        }
+
+        \App\Models\AuditLog::create([
+            'actor_id' => $user->id,
+            'actor_role' => $user->role,
+            'action' => 'user.impersonate.stop',
+            'target_type' => 'user',
+            'target_id' => $user->id,
+            'description' => "Impersonation session ended for {$user->email}",
+            'ip_address' => $request->ip(),
+        ]);
+
+        $token->delete();
+
+        return response()->json(['success' => true, 'message' => 'Impersonation ended.']);
     }
 }

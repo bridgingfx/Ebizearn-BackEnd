@@ -110,12 +110,13 @@ class StaffKycController extends Controller
         $approve = $request->input('decision') === 'approve';
         $before = ['kyc_status' => $profile->kyc_status];
 
-        $profile->update([
-            'kyc_status' => $approve ? 'verified' : 'rejected',
-            'kyc_verified_at' => $approve ? now() : null,
-            'kyc_reviewed_by' => $request->user()->id,
-            'kyc_rejection_reason' => $approve ? null : $request->input('reason'),
-        ]);
+        // Direct assignment: KYC fields are intentionally NOT in $fillable
+        // (prevents users self-verifying via mass assignment).
+        $profile->kyc_status = $approve ? 'verified' : 'rejected';
+        $profile->kyc_verified_at = $approve ? now() : null;
+        $profile->kyc_reviewed_by = $request->user()->id;
+        $profile->kyc_rejection_reason = $approve ? null : $request->input('reason');
+        $profile->save();
 
         AuditLogger::log(
             $request->user(),
