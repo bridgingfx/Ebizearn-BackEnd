@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\AdminReferralController;
 use App\Http\Controllers\Api\V1\AdminSystemController;
 use App\Http\Controllers\Api\V1\AdminTaskController;
 use App\Http\Controllers\Api\V1\AdminVerificationController;
+use App\Http\Controllers\Api\V1\TrafficAnalyticsController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AuthProviderSettingsController;
 use App\Http\Controllers\Api\V1\BusinessCampaignController;
@@ -42,6 +43,8 @@ Route::prefix('v1')->group(function () {
 
     // 1. Public Configuration & Metadata
     Route::get('/config/brand', [ConfigController::class, 'brandConfig']);
+    // Anonymous page-view tracking for the traffic analytics dashboard.
+    Route::post('/track/page-view', [TrafficAnalyticsController::class, 'track'])->middleware('throttle:120,1');
     // Which social sign-in buttons the login / register pages show.
     Route::get('/config/auth-providers', [AuthProviderSettingsController::class, 'publicConfig']);
     Route::get('/task-categories', [ConfigController::class, 'categories']);
@@ -284,6 +287,7 @@ Route::prefix('v1')->group(function () {
         Route::middleware('role:admin,superadmin')->prefix('admin')->group(function () {
             Route::get('/dashboard', [AdminVerificationController::class, 'dashboard']);
             Route::get('/health', [AdminSystemController::class, 'health']);
+            Route::get('/traffic', [TrafficAnalyticsController::class, 'overview']);
 
             Route::middleware('permission:review_submissions')->group(function () {
                 Route::get('/verification-queue', [AdminVerificationController::class, 'verificationQueue']);
