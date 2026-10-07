@@ -54,7 +54,7 @@ class SecurityHardeningTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('password');
@@ -82,7 +82,7 @@ class SecurityHardeningTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
         ])->assertStatus(201);
     }
 
@@ -96,7 +96,7 @@ class SecurityHardeningTest extends TestCase
                 'role' => 'contributor',
                 "phone_country_code" => "+971",
                 "phone_number" => "501234567",
-                "terms_version" => "1.0",
+                "terms_version" => "1.1",
             ])->assertStatus(201);
         }
 
@@ -108,7 +108,7 @@ class SecurityHardeningTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
         ])->assertStatus(429)->assertJson(['code' => 'rate_limited']);
     }
 

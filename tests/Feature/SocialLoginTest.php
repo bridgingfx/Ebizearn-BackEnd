@@ -47,7 +47,7 @@ class SocialLoginTest extends TestCase
             'name' => 'Social User',
         ]);
 
-        $response = $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.0']);
+        $response = $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.1']);
 
         $response->assertStatus(200)
             ->assertJsonPath('success', true)
@@ -76,13 +76,13 @@ class SocialLoginTest extends TestCase
     {
         $this->fakeVerifier(['sub' => 'g-biz', 'email' => 'owner@ebizearn.com', 'email_verified' => true, 'name' => 'eBizEarn Owner']);
 
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'business', 'terms_version' => '1.0'])
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'business', 'terms_version' => '1.1'])
             ->assertOk()
             ->assertJsonPath('data.user.role', 'business')
             ->assertJsonPath('data.user.business.company_name', 'eBizEarn Owner Co');
 
         // Signing in again from the business login works; from the contributor login it is refused.
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'business', 'terms_version' => '1.0'])->assertOk();
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'business', 'terms_version' => '1.1'])->assertOk();
         $this->postJson('/api/v1/auth/social/google', ['id_token' => 't', 'portal' => 'contributor'])
             ->assertStatus(403)
             ->assertJsonFragment(['message' => 'This Google account is registered as a business account. Please use the business sign-in.']);
@@ -159,7 +159,7 @@ class SocialLoginTest extends TestCase
             'name' => 'Existing',
         ]);
 
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.0'])
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.1'])
             ->assertStatus(200)
             ->assertJsonPath('data.user.id', $existing->id);
 
@@ -190,7 +190,7 @@ class SocialLoginTest extends TestCase
         ]);
 
         $before = User::count();
-        $response = $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.0']);
+        $response = $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.1']);
         $response->assertStatus(200);
 
         $this->assertSame($before + 1, User::count());
@@ -212,7 +212,7 @@ class SocialLoginTest extends TestCase
         $response = $this->postJson('/api/v1/auth/social/apple', [
             'id_token' => 'fake-token',
             'email' => 'appleuser@example.com',
-            'terms_version' => '1.0',
+            'terms_version' => '1.1',
             'name' => 'Apple User',
         ]);
 
@@ -234,7 +234,7 @@ class SocialLoginTest extends TestCase
             'name' => null,
         ]);
 
-        $response = $this->postJson('/api/v1/auth/social/apple', ['id_token' => 'fake-token', 'terms_version' => '1.0']);
+        $response = $this->postJson('/api/v1/auth/social/apple', ['id_token' => 'fake-token', 'terms_version' => '1.1']);
 
         $response->assertStatus(200);
         $email = $response->json('data.user.email');
@@ -250,8 +250,8 @@ class SocialLoginTest extends TestCase
             'name' => 'Repeat',
         ]);
 
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.0'])->assertStatus(200);
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.0'])->assertStatus(200);
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.1'])->assertStatus(200);
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.1'])->assertStatus(200);
 
         $this->assertSame(1, User::where('email', 'repeat@example.com')->count());
         $this->assertSame(1, SocialAccount::where('provider_sub', 'google-sub-repeat')->count());
@@ -266,11 +266,11 @@ class SocialLoginTest extends TestCase
             'name' => 'Suspended',
         ]);
 
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.0'])->assertStatus(200);
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.1'])->assertStatus(200);
         User::where('email', 'suspended@example.com')->firstOrFail()
             ->forceFill(['status' => 'suspended'])->save();
 
-        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.0'])
+        $this->postJson('/api/v1/auth/social/google', ['id_token' => 'fake-token', 'terms_version' => '1.1'])
             ->assertStatus(403);
     }
 }

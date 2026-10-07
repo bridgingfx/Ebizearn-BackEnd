@@ -57,7 +57,7 @@ class RoleRegistrationTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
         ]);
         $contributor->assertStatus(201)->assertJsonPath('data.user.role', 'contributor');
 
@@ -68,7 +68,7 @@ class RoleRegistrationTest extends TestCase
             'role' => 'business',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
             'company_name' => 'eBizEarn LLC',
         ]);
         $business->assertStatus(201)->assertJsonPath('data.user.role', 'business');

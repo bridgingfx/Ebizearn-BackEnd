@@ -43,7 +43,7 @@ class ProfilePhoneTest extends TestCase
         $res = $this->putJson('/api/v1/profile', [
             'phone_country_code' => '+971',
             'phone_number' => '501234567',
-            'terms_version' => '1.0',
+            'terms_version' => '1.1',
         ]);
 
         $res->assertStatus(200)
@@ -63,7 +63,7 @@ class ProfilePhoneTest extends TestCase
         $res = $this->putJson('/api/v1/profile', [
             'phone_country_code' => '+999',
             'phone_number' => '501234567',
-            'terms_version' => '1.0',
+            'terms_version' => '1.1',
         ]);
 
         $res->assertStatus(422)
@@ -91,7 +91,7 @@ class ProfilePhoneTest extends TestCase
         $res = $this->putJson('/api/v1/profile', [
             'phone_country_code' => '+971',
             'phone_number' => '501234567',
-            'terms_version' => '1.0',
+            'terms_version' => '1.1',
         ]);
 
         $res->assertStatus(401);

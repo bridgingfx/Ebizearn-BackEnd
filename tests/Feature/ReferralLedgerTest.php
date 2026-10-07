@@ -42,7 +42,7 @@ class ReferralLedgerTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
         ];
 
         if ($refCode) {

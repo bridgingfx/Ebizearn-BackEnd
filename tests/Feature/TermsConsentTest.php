@@ -71,11 +71,11 @@ class TermsConsentTest extends TestCase
         $response = $this->postJson('/api/v1/auth/register', $this->registerPayload());
 
         $response->assertStatus(201)
-            ->assertJsonPath('data.user.terms_version', '1.0')
+            ->assertJsonPath('data.user.terms_version', '1.1')
             ->assertJsonPath('data.user.terms_accepted_at', null);
 
         $user = User::where('email', 'consent@example.com')->firstOrFail();
-        $this->assertSame('1.0', $user->terms_version);
+        $this->assertSame('1.1', $user->terms_version);
         // Not yet accepted: acceptance is stamped at OTP activation.
         $this->assertNull($user->terms_accepted_at);
         $this->assertNull($user->terms_accepted_ip);
@@ -94,12 +94,12 @@ class TermsConsentTest extends TestCase
         ]);
 
         $response->assertStatus(200)
-            ->assertJsonPath('data.user.terms_version', '1.0')
+            ->assertJsonPath('data.user.terms_version', '1.1')
             ->assertJsonPath('data.user.status', 'active');
         $this->assertNotNull($response->json('data.user.terms_accepted_at'));
 
         $user = User::where('email', 'consent@example.com')->firstOrFail();
-        $this->assertSame('1.0', $user->terms_version);
+        $this->assertSame('1.1', $user->terms_version);
         $this->assertNotNull($user->terms_accepted_at);
         $this->assertNotNull($user->terms_accepted_ip);
     }
@@ -184,11 +184,11 @@ class TermsConsentTest extends TestCase
         ]);
 
         $response->assertStatus(200)
-            ->assertJsonPath('data.user.terms_version', '1.0');
+            ->assertJsonPath('data.user.terms_version', '1.1');
         $this->assertNotNull($response->json('data.user.terms_accepted_at'));
 
         $user = User::where('email', 'gsocial@example.com')->firstOrFail();
-        $this->assertSame('1.0', $user->terms_version);
+        $this->assertSame('1.1', $user->terms_version);
         $this->assertNotNull($user->terms_accepted_at);
         $this->assertNotNull($user->terms_accepted_ip);
     }
@@ -252,7 +252,7 @@ class TermsConsentTest extends TestCase
             'password' => 'V3r1fy!Strong',
         ]);
         $login->assertStatus(200)
-            ->assertJsonPath('data.user.terms_version', '1.0');
+            ->assertJsonPath('data.user.terms_version', '1.1');
         $this->assertNotNull($login->json('data.user.terms_accepted_at'));
         // The IP is internal and never serialized.
         $this->assertArrayNotHasKey('terms_accepted_ip', $login->json('data.user'));
@@ -260,7 +260,7 @@ class TermsConsentTest extends TestCase
         Sanctum::actingAs(User::where('email', 'consent@example.com')->firstOrFail());
         $me = $this->getJson('/api/v1/auth/me');
         $me->assertStatus(200)
-            ->assertJsonPath('data.user.terms_version', '1.0');
+            ->assertJsonPath('data.user.terms_version', '1.1');
         $this->assertNotNull($me->json('data.user.terms_accepted_at'));
     }
 

@@ -15,6 +15,6 @@
  */
 return [
 
-    'terms_version' => '1.0',
+    'terms_version' => '1.1',
 
 ];

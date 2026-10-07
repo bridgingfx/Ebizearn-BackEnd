@@ -67,7 +67,7 @@ class BusinessWorkflowTest extends TestCase
             'role' => 'business',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
             'company_name' => 'Test Co LLC',
         ]);
         $reg->assertStatus(201);
@@ -160,7 +160,7 @@ class BusinessWorkflowTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
         ])->assertStatus(201);
         // The feed check needs an authenticated contributor — activate in
         // setup (mirrors a verified user).

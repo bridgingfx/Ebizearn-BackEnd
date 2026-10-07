@@ -112,7 +112,7 @@ class ContributorWorkflowTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
         ]);
         $reg->assertStatus(201);
         $this->assertTrue($reg->json('data.requires_otp'));
@@ -270,7 +270,7 @@ class ContributorWorkflowTest extends TestCase
             'role' => 'contributor',
             "phone_country_code" => "+971",
             "phone_number" => "501234567",
-            "terms_version" => "1.0",
+            "terms_version" => "1.1",
         ])->assertStatus(201);
         $contributor = User::where('email', $email)->firstOrFail();
         // Round 2: task start/submit are email-gated — verify in setup.
