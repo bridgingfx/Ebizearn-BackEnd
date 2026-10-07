@@ -416,4 +416,42 @@ class AdminVerificationController extends Controller
             'data' => $withdrawal->fresh(),
         ]);
     }
+
+    /**
+     * Human-readable title for a fraud event type (dashboard display).
+     */
+    private function fraudTitle(?string $eventType): string
+    {
+        return match ($eventType) {
+            'duplicate_ip' => 'Multiple accounts from same IP',
+            'fake_screenshot' => 'Suspicious screenshot detected',
+            'deleted_post' => 'Promoted post deleted',
+            'modified_post' => 'Promoted post modified after approval',
+            'rapid_submissions' => 'Unusually fast submissions',
+            'vpn_detected' => 'VPN or proxy detected',
+            'account_takeover' => 'Possible account takeover',
+            default => $eventType ? ucwords(str_replace('_', ' ', $eventType)) : 'Fraud alert',
+        };
+    }
+
+    /**
+     * Human-readable explanation of why a fraud event was flagged.
+     */
+    private function fraudDescription(?string $eventType, array $details): string
+    {
+        $base = match ($eventType) {
+            'duplicate_ip' => 'Two or more accounts submitted from the same IP address.',
+            'fake_screenshot' => 'The submitted screenshot failed authenticity checks.',
+            'deleted_post' => 'The contributor deleted the promoted post during the retention period.',
+            'modified_post' => 'The promoted post was edited after the submission was approved.',
+            'rapid_submissions' => 'Submissions were made far faster than a human could complete them.',
+            'vpn_detected' => 'The contributor appears to be hiding their real location.',
+            'account_takeover' => 'Login behavior suggests someone else may be using this account.',
+            default => 'This activity was flagged by the automated fraud checks.',
+        };
+        if (!empty($details['ip_address'])) {
+            $base .= ' IP: ' . $details['ip_address'] . '.';
+        }
+        return $base;
+    }
 }
