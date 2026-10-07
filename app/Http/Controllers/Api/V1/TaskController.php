@@ -33,12 +33,22 @@ class TaskController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $userCountry = strtoupper($request->user()->profile?->country_code ?? '');
+
         $query = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
             // Priority 4 — approval gate: tasks are invisible until their
             // campaign is approved to `active` by staff.
-            ->whereHas('campaign', function ($q) {
+            // Geographic targeting: global campaigns (ALL) plus campaigns
+            // targeting the contributor's own country.
+            ->whereHas('campaign', function ($q) use ($userCountry) {
                 $q->where('status', 'active');
+                $q->where(function ($w) use ($userCountry) {
+                    $w->whereJsonContains('target_countries_json', 'ALL');
+                    if ($userCountry !== '') {
+                        $w->orWhereJsonContains('target_countries_json', $userCountry);
+                    }
+                });
             });
 
         // Filter by category slug
@@ -401,10 +411,20 @@ class TaskController extends Controller
 
         // Recommended tasks — only from ACTIVE campaigns (must match the
         // approval gate in index()/show(), otherwise contributors see tasks
-        // they can't open → "Task unavailable").
+        // they can't open → "Task unavailable"). Also respects geographic
+        // targeting (global + contributor's own country only).
+        $userCountry = strtoupper($request->user()->profile?->country_code ?? '');
         $recommendedTasks = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
-            ->whereHas('campaign', fn ($q) => $q->where('status', 'active'))
+            ->whereHas('campaign', function ($q) use ($userCountry) {
+                $q->where('status', 'active');
+                $q->where(function ($w) use ($userCountry) {
+                    $w->whereJsonContains('target_countries_json', 'ALL');
+                    if ($userCountry !== '') {
+                        $w->orWhereJsonContains('target_countries_json', $userCountry);
+                    }
+                });
+            })
             ->latest()
             ->take(5)
             ->get();
