@@ -787,6 +787,8 @@ class AuthController extends Controller
                 'fingerprint' => $fingerprint,
                 'ip' => $ip,
                 'first_seen_for_user' => $isNewDevice,
+                // Login country for the traffic dashboard (real GeoIP).
+                'country_code' => $this->resolveLoginCountry($request, $ip),
             ],
             'ip_address' => $ip,
             'user_agent' => $userAgent,
@@ -820,6 +822,42 @@ class AuthController extends Controller
                 'status' => 'flagged',
             ]);
         }
+    }
+
+    /**
+     * Resolve the login country: Cloudflare header first (free, no rate
+     * limit), then cached ip-api.com lookup. Best-effort — null if unknown.
+     */
+    protected function resolveLoginCountry(Request $request, ?string $ip): ?string
+    {
+        $cf = strtoupper((string) $request->header('CF-IPCountry'));
+        if ($cf !== '' && $cf !== 'XX' && strlen($cf) === 2) {
+            return $cf;
+        }
+        if (!$ip || $ip === '127.0.0.1' || $ip === '::1') {
+            return null;
+        }
+        $cacheKey = 'geoip:' . $ip;
+        $cached = \Illuminate\Support\Facades\Cache::get($cacheKey);
+        if ($cached !== null) {
+            return $cached ?: null;
+        }
+        try {
+            $ctx = stream_context_create(['http' => ['timeout' => 2]]);
+            $json = @file_get_contents("http://ip-api.com/json/{$ip}?fields=countryCode,status", false, $ctx);
+            if ($json) {
+                $data = json_decode($json, true);
+                if (($data['status'] ?? '') === 'success' && !empty($data['countryCode'])) {
+                    $cc = strtoupper($data['countryCode']);
+                    \Illuminate\Support\Facades\Cache::put($cacheKey, $cc, now()->addDays(30));
+                    return $cc;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Best-effort.
+        }
+        \Illuminate\Support\Facades\Cache::put($cacheKey, '', now()->addHours(6));
+        return null;
     }
 
     /**

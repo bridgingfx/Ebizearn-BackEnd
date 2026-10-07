@@ -65,6 +65,30 @@ class TrafficAnalyticsController extends Controller
         $liveNow = PageView::where('created_at', '>=', now()->subMinutes(5))
             ->distinct('session_id')->count('session_id');
 
+        // Live visitor details: latest page per active session, with country + user
+        $liveVisitors = PageView::where('created_at', '>=', now()->subMinutes(5))
+            ->selectRaw('session_id, MAX(id) as latest_id')
+            ->groupBy('session_id')
+            ->get()
+            ->map(function ($row) {
+                $pv = PageView::with('user:id,name,email,role')->find($row->latest_id);
+                if (!$pv) return null;
+                return [
+                    'session_id' => $pv->session_id,
+                    'country_code' => $pv->country_code,
+                    'current_page' => $pv->path,
+                    'user' => $pv->user ? [
+                        'id' => $pv->user->id,
+                        'name' => $pv->user->name,
+                        'email' => $pv->user->email,
+                        'role' => $pv->user->role,
+                    ] : null,
+                    'last_seen' => $pv->created_at,
+                ];
+            })
+            ->filter()
+            ->values();
+
         // Views per day
         $perDay = PageView::whereBetween('created_at', [$from, $to])
             ->selectRaw('DATE(created_at) as day, COUNT(*) as views, COUNT(DISTINCT session_id) as visitors')
@@ -103,6 +127,25 @@ class TrafficAnalyticsController extends Controller
                 'created_at' => $u->created_at,
             ]);
 
+        // Recent logins with country (from fraud events — real GeoIP).
+        $recentLogins = \App\Models\FraudEvent::with('user:id,name,email,role')
+            ->whereIn('event_type', ['login', 'new_device_login'])
+            ->latest()
+            ->take(15)
+            ->get()
+            ->map(fn ($e) => [
+                'user' => $e->user ? [
+                    'id' => $e->user->id,
+                    'name' => $e->user->name,
+                    'email' => $e->user->email,
+                    'role' => $e->user->role,
+                ] : null,
+                'country_code' => $e->details_json['country_code'] ?? null,
+                'ip_address' => $e->ip_address,
+                'is_new_device' => $e->event_type === 'new_device_login',
+                'logged_in_at' => $e->created_at,
+            ]);
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -120,6 +163,49 @@ class TrafficAnalyticsController extends Controller
                 'top_pages' => $topPages,
                 'top_countries' => $topCountries,
                 'recent_signups' => $recentSignups,
+                'recent_logins' => $recentLogins,
+                'live_visitors' => $liveVisitors,
+            ],
+        ]);
+    }
+
+    /**
+     * Session drilldown: full page journey for one visitor session.
+     * GET /admin/traffic/sessions/{sessionId}
+     */
+    public function sessionDetail(string $sessionId): JsonResponse
+    {
+        $views = PageView::with('user:id,name,email,role')
+            ->where('session_id', $sessionId)
+            ->orderBy('created_at')
+            ->get()
+            ->map(fn ($pv) => [
+                'path' => $pv->path,
+                'referrer' => $pv->referrer,
+                'country_code' => $pv->country_code,
+                'user_agent' => $pv->user_agent,
+                'viewed_at' => $pv->created_at,
+                'user' => $pv->user ? [
+                    'id' => $pv->user->id,
+                    'name' => $pv->user->name,
+                    'email' => $pv->user->email,
+                    'role' => $pv->user->role,
+                ] : null,
+            ]);
+
+        if ($views->isEmpty()) {
+            return response()->json(['success' => false, 'message' => 'Session not found.'], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'session_id' => $sessionId,
+                'country_code' => $views->first()['country_code'],
+                'total_pages' => $views->count(),
+                'started_at' => $views->first()['viewed_at'],
+                'last_seen' => $views->last()['viewed_at'],
+                'journey' => $views,
             ],
         ]);
     }

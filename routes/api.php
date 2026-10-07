@@ -294,6 +294,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/dashboard', [AdminVerificationController::class, 'dashboard']);
             Route::get('/health', [AdminSystemController::class, 'health']);
             Route::get('/traffic', [TrafficAnalyticsController::class, 'overview']);
+            Route::get('/traffic/sessions/{sessionId}', [TrafficAnalyticsController::class, 'sessionDetail']);
 
             Route::middleware('permission:review_submissions')->group(function () {
                 Route::get('/verification-queue', [AdminVerificationController::class, 'verificationQueue']);
