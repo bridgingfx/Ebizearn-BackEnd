@@ -19,6 +19,8 @@ use App\Http\Controllers\Api\V1\Ops\OpsAdminController;
 use App\Http\Controllers\Api\V1\Ops\OpsPermissionController;
 use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
 use App\Http\Controllers\Api\V1\Ops\OpsTaskTypeController;
+use App\Http\Controllers\Api\V1\Ops\OpsSocialPlatformController;
+use App\Http\Controllers\Api\V1\Ops\OpsWalletController;
 use App\Http\Controllers\Api\V1\OtpController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\ReferralController;
@@ -26,6 +28,7 @@ use App\Http\Controllers\Api\V1\SocialChannelController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
 use App\Http\Controllers\Api\V1\KycProviderController;
+use App\Http\Controllers\Api\V1\SocialPlatformController;
 use App\Http\Controllers\Api\V1\SupportTicketController;
 use App\Http\Controllers\Api\V1\TaskController;
 use App\Http\Controllers\Api\V1\TaskTemplateController;
@@ -44,6 +47,9 @@ Route::prefix('v1')->group(function () {
     // Phase 4 (public): task-type catalog with proof contracts and
     // enforceable reward bands.
     Route::get('/task-types', [TaskTypeController::class, 'index']);
+
+    // Public: social platforms Super Admin configured (additive 2026-10-07).
+    Route::get('/platforms', [SocialPlatformController::class, 'index']);
 
     // Public: one-click unsubscribe link inside marketing campaign emails (signed URL).
     Route::get('/email/unsubscribe/{user}', [AdminEmailCampaignController::class, 'unsubscribe'])
@@ -450,6 +456,18 @@ Route::prefix('v1')->group(function () {
             Route::post('/task-types/seed', [OpsTaskTypeController::class, 'seed']);
             // Sumsub KYC credentials (DB-backed, never env). Superadmin only.
             Route::post('/kyc/sumsub/credentials', [KycProviderController::class, 'saveCredentials']);
+            // Social platforms: Super Admin adds a network (name + SVG/PNG
+            // logo) and it appears in every picker (additive 2026-10-07).
+            Route::get('/platforms', [OpsSocialPlatformController::class, 'index']);
+            Route::post('/platforms', [OpsSocialPlatformController::class, 'store']);
+            Route::patch('/platforms/{id}', [OpsSocialPlatformController::class, 'update'])->whereNumber('id');
+            Route::delete('/platforms/{id}', [OpsSocialPlatformController::class, 'destroy'])->whereNumber('id');
+            // Wallets: dedicated RESTful APIs — directory, ledger inspection,
+            // manual credits ("virtual tokens") and corrective debits.
+            Route::get('/wallets', [OpsWalletController::class, 'index']);
+            Route::get('/wallets/{id}', [OpsWalletController::class, 'show'])->whereNumber('id');
+            Route::post('/wallets/{id}/credit', [OpsWalletController::class, 'credit'])->whereNumber('id');
+            Route::post('/wallets/{id}/debit', [OpsWalletController::class, 'debit'])->whereNumber('id');
 
             // Audit log (append-only; read only)
             Route::get('/audit-logs', [OpsSettingsController::class, 'auditLogs']);
