@@ -51,8 +51,14 @@ class BusinessCampaignController extends Controller
         $activeCount = $campaigns->where('status', 'active')->count();
         $totalBudget = $campaigns->sum('total_budget_cents');
         $remainingBudget = $campaigns->sum('remaining_budget_cents');
-        $spentBudget = $totalBudget - $remainingBudget;
-        $verifiedTasks = $campaigns->sum('completed_contributors_count');
+        // Spent = actual payouts to contributors (approved submissions × reward),
+        // not just budget moved to escrow. This is what the business really paid.
+        $campaignIds = $campaigns->pluck('id');
+        $approvedSubmissions = TaskSubmission::whereHas('task', function ($q) use ($campaignIds) {
+            $q->whereIn('campaign_id', $campaignIds);
+        })->where('status', 'approved')->with('task')->get();
+        $spentBudget = $approvedSubmissions->sum(fn ($s) => $s->task->reward_cents ?? 0);
+        $verifiedTasks = $approvedSubmissions->count();
         $avgCostCents = $verifiedTasks > 0 ? (int) round($spentBudget / $verifiedTasks) : 0;
 
         // Recent submissions for this business

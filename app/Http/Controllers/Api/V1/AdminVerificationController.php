@@ -61,11 +61,27 @@ class AdminVerificationController extends Controller
             ->take(8)
             ->get();
 
-        // Recent fraud events
+        // Recent fraud events — with human-readable descriptions for the dashboard.
         $recentFraud = FraudEvent::with(['user.profile', 'submission.task'])
             ->latest()
             ->take(5)
-            ->get();
+            ->get()
+            ->map(function ($e) {
+                $details = $e->details_json ?? [];
+                return [
+                    'id' => $e->id,
+                    'event_type' => $e->event_type,
+                    'severity' => $e->severity,
+                    'status' => $e->status,
+                    // Human-readable: what happened and why it was flagged.
+                    'title' => $this->fraudTitle($e->event_type),
+                    'description' => $details['message'] ?? $details['reason'] ?? $this->fraudDescription($e->event_type, $details),
+                    'user_name' => $e->user?->name,
+                    'user_id' => $e->user_id,
+                    'ip_address' => $e->ip_address,
+                    'created_at' => $e->created_at,
+                ];
+            });
 
         // 7-day revenue chart (platform fees per day)
         $revenueByDay = Campaign::whereIn('status', ['active', 'paused', 'completed'])
@@ -399,5 +415,43 @@ class AdminVerificationController extends Controller
             'message' => 'Tx hash recorded.',
             'data' => $withdrawal->fresh(),
         ]);
+    }
+
+    /**
+     * Human-readable title for a fraud event type (dashboard display).
+     */
+    private function fraudTitle(?string $eventType): string
+    {
+        return match ($eventType) {
+            'duplicate_ip' => 'Multiple accounts from same IP',
+            'fake_screenshot' => 'Suspicious screenshot detected',
+            'deleted_post' => 'Promoted post deleted',
+            'modified_post' => 'Promoted post modified after approval',
+            'rapid_submissions' => 'Unusually fast submissions',
+            'vpn_detected' => 'VPN or proxy detected',
+            'account_takeover' => 'Possible account takeover',
+            default => $eventType ? ucwords(str_replace('_', ' ', $eventType)) : 'Fraud alert',
+        };
+    }
+
+    /**
+     * Human-readable explanation of why a fraud event was flagged.
+     */
+    private function fraudDescription(?string $eventType, array $details): string
+    {
+        $base = match ($eventType) {
+            'duplicate_ip' => 'Two or more accounts submitted from the same IP address.',
+            'fake_screenshot' => 'The submitted screenshot failed authenticity checks.',
+            'deleted_post' => 'The contributor deleted the promoted post during the retention period.',
+            'modified_post' => 'The promoted post was edited after the submission was approved.',
+            'rapid_submissions' => 'Submissions were made far faster than a human could complete them.',
+            'vpn_detected' => 'The contributor appears to be hiding their real location.',
+            'account_takeover' => 'Login behavior suggests someone else may be using this account.',
+            default => 'This activity was flagged by the automated fraud checks.',
+        };
+        if (!empty($details['ip_address'])) {
+            $base .= ' IP: ' . $details['ip_address'] . '.';
+        }
+        return $base;
     }
 }

@@ -33,13 +33,18 @@ class TaskController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        // Public route (no auth middleware): $request->user() is always null
-        // here, so read the optional Sanctum user — guests get global
-        // campaigns instead of a 500.
-        $userCountry = strtoupper($request->user('sanctum')?->profile?->country_code ?? '');
+        $userCountry = strtoupper($request->user()->profile?->country_code ?? '');
+        $userId = $request->user()->id;
 
         $query = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
+            // Hide tasks the user already submitted — done tasks live in
+            // My Tasks, not the browse feed.
+            ->whereNotExists(function ($q) use ($userId) {
+                $q->selectRaw('1')->from('task_submissions')
+                    ->whereColumn('task_submissions.task_id', 'tasks.id')
+                    ->where('task_submissions.user_id', $userId);
+            })
             // Priority 4 — approval gate: tasks are invisible until their
             // campaign is approved to `active` by staff.
             // Geographic targeting: global campaigns (ALL) plus campaigns
@@ -47,9 +52,7 @@ class TaskController extends Controller
             ->whereHas('campaign', function ($q) use ($userCountry) {
                 $q->where('status', 'active');
                 $q->where(function ($w) use ($userCountry) {
-                    // No targeting saved (older campaigns) = global.
-                    $w->whereNull('target_countries_json')
-                      ->orWhereJsonContains('target_countries_json', 'ALL');
+                    $w->whereJsonContains('target_countries_json', 'ALL');
                     if ($userCountry !== '') {
                         $w->orWhereJsonContains('target_countries_json', $userCountry);
                     }
@@ -417,15 +420,22 @@ class TaskController extends Controller
         // Recommended tasks — only from ACTIVE campaigns (must match the
         // approval gate in index()/show(), otherwise contributors see tasks
         // they can't open → "Task unavailable"). Also respects geographic
-        // targeting (global + contributor's own country only).
+        // targeting (global + contributor's own country only). Excludes
+        // tasks the user already submitted/completed — done tasks belong
+        // in My Tasks, never back in recommendations.
         $userCountry = strtoupper($request->user()->profile?->country_code ?? '');
+        $userId = $request->user()->id;
         $recommendedTasks = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
+            ->whereNotExists(function ($q) use ($userId) {
+                $q->selectRaw('1')->from('task_submissions')
+                    ->whereColumn('task_submissions.task_id', 'tasks.id')
+                    ->where('task_submissions.user_id', $userId);
+            })
             ->whereHas('campaign', function ($q) use ($userCountry) {
                 $q->where('status', 'active');
                 $q->where(function ($w) use ($userCountry) {
-                    $w->whereNull('target_countries_json')
-                      ->orWhereJsonContains('target_countries_json', 'ALL');
+                    $w->whereJsonContains('target_countries_json', 'ALL');
                     if ($userCountry !== '') {
                         $w->orWhereJsonContains('target_countries_json', $userCountry);
                     }

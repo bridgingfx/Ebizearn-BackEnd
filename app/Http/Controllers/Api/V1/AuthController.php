@@ -526,6 +526,9 @@ class AuthController extends Controller
             'data' => [
                 'user' => $user->load(['profile', 'wallet', 'business'])->withClientPermissions(),
                 'token' => $token,
+                // Social signup doesn't collect a phone — force it before the
+                // account can be used (Dawood: phone is mandatory).
+                'phone_required' => empty($user->phone),
             ],
         ]);
     }
