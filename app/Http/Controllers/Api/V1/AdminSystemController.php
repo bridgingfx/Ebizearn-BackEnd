@@ -406,6 +406,89 @@ class AdminSystemController extends Controller
     }
 
     /**
+     * Update a user's editable profile fields (2026-10-07).
+     * PATCH /admin/users/{id} — permission: manage_users.
+     *
+     * Allows staff to correct a business account: name, email, phone and the
+     * linked business row (company name, industry, website). Role, status and
+     * credentials are NOT editable here. Every change is audit-logged.
+     */
+    public function updateUser(Request $request, string $id): JsonResponse
+    {
+        $user = User::with(['profile', 'business'])->findOrFail($id);
+        $actor = $request->user();
+
+        if ((int) $user->id === (int) $actor->id) {
+            return response()->json(['success' => false, 'message' => 'You cannot edit your own account here.'], 422);
+        }
+
+        if (!$actor->isSuperAdmin() && in_array($user->role, ['admin', 'moderator', 'superadmin'], true)) {
+            return response()->json(['success' => false, 'message' => 'Only a Super Admin can edit staff accounts.'], 403);
+        }
+
+        $validated = $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'email' => 'sometimes|email|max:255|unique:users,email,' . $user->id,
+            'company_name' => 'sometimes|nullable|string|max:255',
+            'industry' => 'sometimes|nullable|string|max:120',
+            'website' => 'sometimes|nullable|url|max:255',
+            'phone' => 'sometimes|nullable|string|max:32',
+        ]);
+
+        $before = [
+            'name' => $user->name,
+            'email' => $user->email,
+            'company_name' => $user->business?->company_name,
+            'industry' => $user->business?->industry,
+            'website' => $user->business?->website,
+            'phone' => $user->profile?->phone,
+        ];
+
+        if (array_key_exists('name', $validated)) $user->name = $validated['name'];
+        if (array_key_exists('email', $validated)) $user->email = $validated['email'];
+        $user->save();
+
+        if ($user->business) {
+            if (array_key_exists('company_name', $validated)) $user->business->company_name = $validated['company_name'];
+            if (array_key_exists('industry', $validated)) $user->business->industry = $validated['industry'];
+            if (array_key_exists('website', $validated)) $user->business->website = $validated['website'];
+            $user->business->save();
+        }
+
+        if ($user->profile && array_key_exists('phone', $validated)) {
+            $user->profile->phone = $validated['phone'];
+            $user->profile->save();
+        }
+
+        $after = [
+            'name' => $user->name,
+            'email' => $user->email,
+            'company_name' => $user->business?->company_name,
+            'industry' => $user->business?->industry,
+            'website' => $user->business?->website,
+            'phone' => $user->profile?->phone,
+        ];
+
+        AuditLog::create([
+            'actor_id' => $actor->id,
+            'action' => 'user.profile_updated',
+            'entity_type' => User::class,
+            'entity_id' => $user->id,
+            'before_state_json' => $before,
+            'after_state_json' => $after,
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'created_at' => now(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Account updated.',
+            'data' => $user->fresh(['profile', 'business']),
+        ]);
+    }
+
+    /**
      * System Health Check.
      */
     public function health(): JsonResponse

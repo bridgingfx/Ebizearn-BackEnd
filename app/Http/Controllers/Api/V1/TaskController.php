@@ -399,9 +399,12 @@ class TaskController extends Controller
             ->whereDate('created_at', now()->toDateString())
             ->sum('amount_cents');
 
-        // Recommended tasks
+        // Recommended tasks — only from ACTIVE campaigns (must match the
+        // approval gate in index()/show(), otherwise contributors see tasks
+        // they can't open → "Task unavailable").
         $recommendedTasks = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
+            ->whereHas('campaign', fn ($q) => $q->where('status', 'active'))
             ->latest()
             ->take(5)
             ->get();
