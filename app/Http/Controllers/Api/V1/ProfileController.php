@@ -156,6 +156,7 @@ class ProfileController extends Controller
             'country_code' => ['sometimes', 'required', 'string', 'size:2', 'alpha'],
             'city' => ['sometimes', 'nullable', 'string', 'max:120'],
             'bio' => ['sometimes', 'nullable', 'string', 'max:1000'],
+            'preferred_payout_method' => ['sometimes', 'nullable', 'string', 'in:paypal,wise,bank,usdt'],
         ], [
             'phone_number.regex' => 'The phone number must contain 4-15 digits only.',
             'country_code.size' => 'Select a valid country.',
@@ -205,7 +206,7 @@ class ProfileController extends Controller
             $user->update($userData);
         }
 
-        $profileData = array_intersect_key($validated, array_flip(['country_code', 'city', 'bio']));
+        $profileData = array_intersect_key($validated, array_flip(['country_code', 'city', 'bio', 'preferred_payout_method']));
         if (isset($profileData['country_code'])) {
             $profileData['country_code'] = strtoupper($profileData['country_code']);
         }

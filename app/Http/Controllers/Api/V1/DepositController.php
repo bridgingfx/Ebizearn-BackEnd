@@ -32,8 +32,6 @@ class DepositController extends Controller
     public function methods(): JsonResponse
     {
         return $this->ok(
-            // No crypto in MVP: only the whitelisted fiat keys are ever
-            // shown, even if a legacy crypto row is still active in the DB.
             DepositMethod::where('is_active', true)->whereIn('key', DepositMethod::KEYS)->orderBy('sort_order')
                 ->get(['key', 'title', 'instructions', 'details', 'min_amount_cents', 'max_amount_cents'])
         );
@@ -79,6 +77,9 @@ class DepositController extends Controller
         }
         if ($method->key === 'card' && empty($data['reference'])) {
             return $this->fail('reference', 'Enter the payment reference from your card payment receipt.');
+        }
+        if ($method->key === 'crypto' && empty($data['reference'])) {
+            return $this->fail('reference', 'Paste the transaction hash of your USDT transfer.');
         }
 
         $user = $request->user();
@@ -241,10 +242,6 @@ class DepositController extends Controller
     /** PUT /admin/deposit-methods/{key} { is_active, title, instructions, details, min_amount, max_amount } */
     public function updateMethod(Request $request, string $key): JsonResponse
     {
-        // No crypto in MVP (owner-adjudicated rule): the route's whereIn
-        // still names 'crypto', so refuse it here explicitly.
-        abort_if($key === 'crypto', 422, 'Crypto deposits are disabled in the MVP.');
-
         $method = DepositMethod::where('key', $key)->firstOrFail();
 
         $data = $request->validate([

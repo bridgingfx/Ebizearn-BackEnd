@@ -35,6 +35,7 @@ class Profile extends Model
         'kyc_verified_at',
         'kyc_reviewed_by',
         'kyc_rejection_reason',
+        'preferred_payout_method',
     ];
 
     /**

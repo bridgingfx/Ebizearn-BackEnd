@@ -105,4 +105,34 @@ class OpsTaskTypeController extends Controller
 
         return response()->json(['success' => true, 'data' => $type->fresh()]);
     }
+
+    /**
+     * Seed the canonical task-type catalog (2026-10-07, additive).
+     *
+     * Production's task_types table was found empty, leaving the admin
+     * "Post a campaign" Task Type dropdown blank. This idempotent endpoint
+     * lets Super Admin restore the catalog without server access.
+     */
+    public function seed(Request $request): JsonResponse
+    {
+        $result = (new \Database\Seeders\TaskTypeSeeder())->run();
+
+        AuditLog::create([
+            'actor_id' => $request->user()->id,
+            'action' => 'task_type.seeded',
+            'entity_type' => TaskType::class,
+            'entity_id' => 0,
+            'before_state_json' => [],
+            'after_state_json' => $result,
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'created_at' => now(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Task-type catalog seeded: {$result['created']} created, {$result['updated']} updated.",
+            'data' => $result,
+        ]);
+    }
 }

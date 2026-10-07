@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\SocialChannelController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
+use App\Http\Controllers\Api\V1\KycProviderController;
 use App\Http\Controllers\Api\V1\SupportTicketController;
 use App\Http\Controllers\Api\V1\TaskController;
 use App\Http\Controllers\Api\V1\TaskTemplateController;
@@ -49,6 +50,12 @@ Route::prefix('v1')->group(function () {
         ->whereNumber('user')
         ->middleware(['signed:relative', 'throttle:30,1'])
         ->name('email.unsubscribe');
+
+    // Public: Sumsub verification webhook. Authenticity comes from the
+    // HMAC signature, never from obscurity (additive 2026-10-07).
+    Route::post('/webhooks/sumsub', [KycProviderController::class, 'webhook'])
+        ->middleware('throttle:60,1')
+        ->name('webhooks.sumsub');
 
     // 2. Public Authentication
     Route::prefix('auth')->group(function () {
@@ -95,6 +102,10 @@ Route::prefix('v1')->group(function () {
         Route::delete('/profile/avatar', [ProfileController::class, 'removeAvatar']);
         // KYC: submit identity documents (private disk, reviewed via /staff/kyc).
         Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
+            ->middleware(['role:contributor,business', 'permission:submit_kyc', 'throttle:10,1']);
+        // KYC via Sumsub: the user mints their own WebSDK token when staff
+        // set their kyc_method to 'sumsub' (additive 2026-10-07).
+        Route::get('/kyc/sumsub/token', [KycProviderController::class, 'userToken'])
             ->middleware(['role:contributor,business', 'permission:submit_kyc', 'throttle:10,1']);
         // Saved USDT payout details (address + network) for manual payouts.
         Route::get('/profile/usdt-payout', [ProfileController::class, 'getUsdtPayout']);
@@ -335,6 +346,13 @@ Route::prefix('v1')->group(function () {
             Route::get('/{userId}/documents/{side}', [StaffKycController::class, 'document'])
                 ->whereIn('side', ['front', 'back', 'selfie']);
             Route::post('/{userId}/decision', [StaffKycController::class, 'decision']);
+
+            // KYC provider selection: manual vs Sumsub (additive 2026-10-07).
+            // Admin and superadmin choose per user; Sumsub failure falls back
+            // to manual. Existing manual flow above is untouched.
+            Route::get('/provider-status', [KycProviderController::class, 'providerStatus']);
+            Route::post('/{userId}/method', [KycProviderController::class, 'setMethod'])->whereNumber('userId');
+            Route::post('/{userId}/sumsub/token', [KycProviderController::class, 'staffToken'])->whereNumber('userId');
         });
 
         // Social channel review queue (same reviewers as KYC).
@@ -429,6 +447,9 @@ Route::prefix('v1')->group(function () {
             // proof contracts, retention, fraud rules. Every change audited.
             Route::get('/task-types', [OpsTaskTypeController::class, 'index']);
             Route::patch('/task-types/{key}', [OpsTaskTypeController::class, 'update']);
+            Route::post('/task-types/seed', [OpsTaskTypeController::class, 'seed']);
+            // Sumsub KYC credentials (DB-backed, never env). Superadmin only.
+            Route::post('/kyc/sumsub/credentials', [KycProviderController::class, 'saveCredentials']);
 
             // Audit log (append-only; read only)
             Route::get('/audit-logs', [OpsSettingsController::class, 'auditLogs']);
