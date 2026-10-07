@@ -33,6 +33,8 @@ class Permission extends Model
     public const PROCESS_PAYOUTS = 'process_payouts';
     /** Edit referral commissions (L1/L2/L3). Super Admin only by default. */
     public const MANAGE_REFERRAL_RULES = 'manage_referral_rules';
+    /** Access the Roles & Permissions page. Admin gets it with guards; superadmin is unrestricted. */
+    public const MANAGE_ROLES = 'manage_roles';
     /** Edit campaign details (title, copy, instructions, targeting) platform-wide. */
     public const EDIT_CAMPAIGNS = 'edit_campaigns';
     /** Delete campaigns with no contributor activity (escrow is released first). */
@@ -88,6 +90,7 @@ class Permission extends Model
             self::EDIT_CAMPAIGNS => ['Edit any campaign\'s details', 'staff'],
             self::DELETE_CAMPAIGNS => ['Delete campaigns (no contributor activity only)', 'staff'],
             self::MANAGE_TASK_LIBRARY => ['Create / edit / delete Task Library templates', 'staff'],
+            self::MANAGE_ROLES => ['Manage roles, departments & permissions', 'staff'],
 
             self::PERFORM_TASKS => ['Start and submit tasks', 'contributor'],
             self::REQUEST_WITHDRAWALS => ['Request wallet withdrawals', 'contributor'],
@@ -131,6 +134,7 @@ class Permission extends Model
                 self::MANAGE_CAMPAIGNS, self::POST_CAMPAIGNS, self::EDIT_CAMPAIGNS, self::DELETE_CAMPAIGNS,
                 self::MANAGE_TASK_TEMPLATES, self::CREATE_TASKS, self::EDIT_TASKS, self::DELETE_TASKS,
                 self::PROCESS_PAYOUTS, self::VIEW_REPORTS, self::MANAGE_SETTINGS, self::VIEW_TASK_LIBRARY,
+                self::MANAGE_ROLES,
             ],
             'contributor' => [
                 self::PERFORM_TASKS, self::REQUEST_WITHDRAWALS, self::USE_REFERRALS,

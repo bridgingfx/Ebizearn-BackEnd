@@ -52,6 +52,14 @@ class OpsPermissionController extends Controller
             return response()->json(['success' => false, 'message' => 'This role cannot be edited.'], 422);
         }
 
+        $actor = $request->user();
+
+        // Guard: an admin may manage roles, but only superadmin may change
+        // what the admin role itself can do (prevents privilege escalation).
+        if (!$actor->isSuperAdmin() && in_array($name, ['admin', 'superadmin'], true)) {
+            return response()->json(['success' => false, 'message' => 'Only Super Admin can change the admin role.'], 403);
+        }
+
         $validator = Validator::make($request->all(), [
             'permissions' => 'present|array',
             'permissions.*' => 'string|exists:permissions,name',
@@ -60,8 +68,21 @@ class OpsPermissionController extends Controller
             return response()->json(['success' => false, 'message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
         }
 
-        $role = Role::where('name', $name)->firstOrFail();
         $names = array_values(array_unique($validator->validated()['permissions']));
+
+        // Guard: an admin cannot grant a permission they do not have themselves.
+        if (!$actor->isSuperAdmin()) {
+            $actorPermissions = $actor->effectivePermissions();
+            $excess = array_diff($names, $actorPermissions);
+            if ($excess !== []) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You cannot grant permissions you do not have: ' . implode(', ', $excess),
+                ], 403);
+            }
+        }
+
+        $role = Role::where('name', $name)->firstOrFail();
         $before = $role->permissions()->pluck('permissions.name')->sort()->values()->all();
 
         DB::transaction(function () use ($role, $names) {
@@ -106,6 +127,14 @@ class OpsPermissionController extends Controller
         }
         if ((int) $user->id === (int) $request->user()->id) {
             return response()->json(['success' => false, 'message' => 'You cannot change your own permissions.'], 422);
+        }
+
+        $actor = $request->user();
+
+        // Guard: an admin manages moderators and below — never other admins.
+        // Only superadmin touches admin accounts.
+        if (!$actor->isSuperAdmin() && in_array($user->role, ['admin', 'superadmin'], true)) {
+            return response()->json(['success' => false, 'message' => 'Only Super Admin can change permissions of admin accounts.'], 403);
         }
 
         $data = $validator->validated();

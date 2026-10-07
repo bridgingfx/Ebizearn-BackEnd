@@ -26,6 +26,7 @@ class User extends Authenticatable
         'password',
         'role',
         'status',
+        'department_id',
         'referral_code',
         'referrer_id',
         'email_verified_at',

@@ -13,6 +13,36 @@ class PaymentService
 {
     public function testGateway(PaymentGateway $gateway): array
     {
+        // Stripe: actually hit the API with the saved secret key.
+        if ($gateway->driver === 'stripe' && $gateway->has_credentials) {
+            $secretKey = $gateway->credentials['secret_key'] ?? null;
+            if ($secretKey) {
+                try {
+                    $stripe = new \Stripe\StripeClient($secretKey);
+                    $balance = $stripe->balance->retrieve();
+                    $message = 'Stripe connected. Account balance: ' .
+                        strtoupper($balance->available[0]->currency ?? 'USD') . ' ' .
+                        number_format(($balance->available[0]->amount ?? 0) / 100, 2);
+                    $gateway->update([
+                        'status' => 'ok',
+                        'last_tested_at' => now(),
+                        'last_test_message' => $message,
+                    ]);
+
+                    return ['ok' => true, 'message' => $message];
+                } catch (\Throwable $e) {
+                    $message = 'Stripe rejected the keys: ' . mb_substr($e->getMessage(), 0, 200);
+                    $gateway->update([
+                        'status' => 'failed',
+                        'last_tested_at' => now(),
+                        'last_test_message' => $message,
+                    ]);
+
+                    return ['ok' => false, 'message' => $message];
+                }
+            }
+        }
+
         $message = $this->isLogOnly($gateway)
             ? 'Gateway is configured for log mode. Attempts will be recorded without moving money.'
             : 'Credentials are stored. Real provider API wiring is pending launch-provider selection.';

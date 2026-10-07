@@ -77,36 +77,30 @@ class BusinessDepositTest extends TestCase
         $this->putJson('/api/v1/admin/deposit-methods/card', ['is_active' => false, 'title' => 'x', 'min_amount' => 1])->assertForbidden();
     }
 
-    public function test_crypto_deposit_method_is_disabled_in_mvp(): void
+    public function test_crypto_deposit_method_can_be_enabled(): void
     {
         Sanctum::actingAs($this->user('superadmin'));
 
-        // Super Admin cannot turn crypto on — even through the route's key list.
+        // Owner decision 2026-10-07: crypto (USDT) deposits are supported and
+        // toggled like any other method.
         $this->putJson('/api/v1/admin/deposit-methods/crypto', [
             'is_active' => true,
             'title' => 'Crypto (USDT)',
-            'instructions' => 'Pay here.',
-            'details' => ['currency' => 'USDT', 'network' => 'TRC20', 'wallet_address' => 'TXabc123'],
+            'instructions' => 'Send USDT, then paste the tx hash.',
+            'details' => ['network' => 'TRC20', 'wallet_address' => 'TXabc123'],
             'min_amount' => 10,
-        ])->assertStatus(422)->assertJsonFragment(['message' => 'Crypto deposits are disabled in the MVP.']);
-
-        // A crypto gateway cannot be registered either.
-        $this->postJson('/api/v1/admin/payments/gateways', [
-            'name' => 'CryptoX',
-            'driver' => 'crypto',
-            'credentials' => ['api_key' => 'x'],
-        ])->assertStatus(422);
-
-        // A legacy crypto row forced active in the DB is still hidden from
-        // businesses and rejected on submit.
-        DepositMethod::where('key', 'crypto')->update(['is_active' => true]);
+        ])->assertOk();
 
         Sanctum::actingAs($this->user('business'));
         $methods = $this->getJson('/api/v1/business/deposit-methods')->assertOk()->json('data');
-        $this->assertNotContains('crypto', collect($methods)->pluck('key')->all());
+        $this->assertContains('crypto', collect($methods)->pluck('key')->all());
+
+        // A tx hash is required for crypto deposits.
+        $this->post('/api/v1/business/deposits', ['method' => 'crypto', 'amount' => 100], ['Accept' => 'application/json'])
+            ->assertStatus(422);
 
         $this->post('/api/v1/business/deposits', ['method' => 'crypto', 'amount' => 100, 'reference' => '0xhash1'], ['Accept' => 'application/json'])
-            ->assertStatus(422)->assertJsonValidationErrors('method');
+            ->assertCreated();
     }
 
     public function test_deposit_is_credited_only_after_approval_and_only_once(): void

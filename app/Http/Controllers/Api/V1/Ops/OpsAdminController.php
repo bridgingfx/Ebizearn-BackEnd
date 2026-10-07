@@ -49,6 +49,7 @@ class OpsAdminController extends Controller
             'role' => 'required|in:admin,moderator',
             'permissions' => 'nullable|array',
             'permissions.*' => 'string|exists:permissions,name',
+            'department_id' => 'nullable|integer|exists:departments,id',
         ]);
 
         if ($validator->fails()) {
@@ -68,6 +69,7 @@ class OpsAdminController extends Controller
             'role' => $validated['role'],
             'status' => 'active',
             'email_verified_at' => now(),
+            'department_id' => $validated['department_id'] ?? null,
         ]);
 
         if (!empty($validated['permissions'])) {

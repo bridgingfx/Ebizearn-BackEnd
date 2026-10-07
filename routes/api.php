@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\V1\DemoRequestController;
 use App\Http\Controllers\Api\V1\DepositController;
 use App\Http\Controllers\Api\V1\Ops\OpsAdminController;
 use App\Http\Controllers\Api\V1\Ops\OpsPermissionController;
+use App\Http\Controllers\Api\V1\Ops\OpsDepartmentController;
 use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
 use App\Http\Controllers\Api\V1\Ops\OpsTaskTypeController;
 use App\Http\Controllers\Api\V1\Ops\OpsSocialPlatformController;
@@ -28,6 +29,7 @@ use App\Http\Controllers\Api\V1\SocialChannelController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
 use App\Http\Controllers\Api\V1\KycProviderController;
+use App\Http\Controllers\Api\V1\StripeWebhookController;
 use App\Http\Controllers\Api\V1\SocialPlatformController;
 use App\Http\Controllers\Api\V1\SupportTicketController;
 use App\Http\Controllers\Api\V1\TaskController;
@@ -62,6 +64,12 @@ Route::prefix('v1')->group(function () {
     Route::post('/webhooks/sumsub', [KycProviderController::class, 'webhook'])
         ->middleware('throttle:60,1')
         ->name('webhooks.sumsub');
+
+    // Public: Stripe payment webhook. Authenticity comes from the Stripe
+    // signature, never from obscurity (additive 2026-10-07).
+    Route::post('/webhooks/stripe', [StripeWebhookController::class, 'handle'])
+        ->middleware('throttle:120,1')
+        ->name('webhooks.stripe');
 
     // 2. Public Authentication
     Route::prefix('auth')->group(function () {
@@ -168,10 +176,14 @@ Route::prefix('v1')->group(function () {
         // Business Endpoints
         Route::middleware('role:business')->prefix('business')->group(function () {
             Route::get('/dashboard', [BusinessCampaignController::class, 'dashboard']);
-            // Wallet deposits: card link / bank / email request (credited after staff approval). Crypto is excluded from the MVP.
+            // Wallet deposits: automatic (Stripe) or manual methods configured by
+            // Super Admin; manual ones are credited after staff approval.
             Route::get('/deposit-methods', [DepositController::class, 'methods']);
             Route::get('/deposits', [DepositController::class, 'index']);
             Route::post('/deposits', [DepositController::class, 'store'])->middleware('throttle:10,1');
+            // Automatic card payment via Stripe Checkout — the wallet is
+            // credited by the webhook, no staff approval needed.
+            Route::post('/deposits/stripe-session', [DepositController::class, 'stripeSession'])->middleware('throttle:10,1');
             Route::get('/campaigns', [BusinessCampaignController::class, 'index']);
             // Round 2: campaign creation + funding gated on verification.
             Route::post('/campaigns', [BusinessCampaignController::class, 'store'])->middleware(['email.verified', 'permission:create_campaigns']);
@@ -425,10 +437,23 @@ Route::prefix('v1')->group(function () {
             Route::get('/permissions', [OpsAdminController::class, 'permissions']);
 
             // Permission management for every role + per-user overrides.
-            Route::get('/roles', [OpsPermissionController::class, 'roles']);
-            Route::put('/roles/{name}/permissions', [OpsPermissionController::class, 'updateRole']);
-            Route::get('/users/{id}/permissions', [OpsPermissionController::class, 'user'])->whereNumber('id');
-            Route::put('/users/{id}/permissions', [OpsPermissionController::class, 'updateUser'])->whereNumber('id');
+            // Shared: superadmin (full) and admin with the manage_roles
+            // permission (guarded — cannot touch the admin role or admins).
+            Route::middleware(['role:admin,superadmin', 'permission:manage_roles'])->group(function () {
+                Route::get('/roles', [OpsPermissionController::class, 'roles']);
+                Route::put('/roles/{name}/permissions', [OpsPermissionController::class, 'updateRole']);
+                Route::get('/users/{id}/permissions', [OpsPermissionController::class, 'user'])->whereNumber('id');
+                Route::put('/users/{id}/permissions', [OpsPermissionController::class, 'updateUser'])->whereNumber('id');
+                // Departments: everyone with manage_roles can list; only
+                // superadmin creates/updates/deletes.
+                Route::get('/departments', [OpsDepartmentController::class, 'index']);
+                Route::get('/departments/manage', [OpsDepartmentController::class, 'manage']);
+            });
+            Route::middleware('role:superadmin')->group(function () {
+                Route::post('/departments', [OpsDepartmentController::class, 'store']);
+                Route::patch('/departments/{id}', [OpsDepartmentController::class, 'update'])->whereNumber('id');
+                Route::delete('/departments/{id}', [OpsDepartmentController::class, 'destroy'])->whereNumber('id');
+            });
 
             // Countries
             Route::get('/countries', [OpsSettingsController::class, 'countries']);

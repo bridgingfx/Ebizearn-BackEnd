@@ -31,10 +31,18 @@ class DepositController extends Controller
     /** GET /business/deposit-methods — active methods with their payment details. */
     public function methods(): JsonResponse
     {
-        return $this->ok(
-            DepositMethod::where('is_active', true)->whereIn('key', DepositMethod::KEYS)->orderBy('sort_order')
-                ->get(['key', 'title', 'instructions', 'details', 'min_amount_cents', 'max_amount_cents'])
-        );
+        $methods = DepositMethod::with('gateway:id,name,driver,display_name,is_active')
+            ->where('is_active', true)->whereIn('key', DepositMethod::KEYS)->orderBy('sort_order')
+            ->get(['id', 'key', 'title', 'instructions', 'details', 'min_amount_cents', 'max_amount_cents', 'payment_gateway_id']);
+
+        // Tell the business app which methods pay automatically (Stripe) and
+        // which need manual review — driven by the gateway Super Admin set.
+        $methods->each(function (DepositMethod $m) {
+            $m->setAttribute('is_automatic', $m->isAutomatic());
+            $m->setAttribute('gateway_driver', $m->gateway?->driver);
+        });
+
+        return $this->ok($methods);
     }
 
     /** GET /business/deposits — own deposit requests + recent wallet transactions. */
@@ -116,6 +124,53 @@ class DepositController extends Controller
         return $this->ok($deposit, $method->key === 'email'
             ? 'Request sent. Our finance team will email you the payment details.'
             : 'Deposit submitted. Your wallet is credited as soon as we confirm the payment.', 201);
+    }
+
+    // ------------------------------------------------------------------
+    // Automatic payments (Stripe Checkout)
+    // ------------------------------------------------------------------
+
+    /**
+     * POST /business/deposits/stripe-session { method, amount }
+     * Creates a Stripe Checkout session. The customer pays on Stripe; the
+     * webhook credits the wallet automatically — no admin approval needed.
+     */
+    public function stripeSession(Request $request, StripeDepositService $stripe): JsonResponse
+    {
+        $data = $request->validate([
+            'method' => 'required|string|in:' . implode(',', DepositMethod::KEYS),
+            'amount' => 'required|numeric|min:1|max:1000000',
+        ]);
+
+        $method = DepositMethod::with('gateway')
+            ->where('key', $data['method'])
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        if (!$method->isAutomatic()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This payment method is not set up for automatic payments. Submit a manual deposit instead.',
+            ], 422);
+        }
+
+        $cents = (int) round(((float) $data['amount']) * 100);
+        if ($method->min_amount_cents && $cents < $method->min_amount_cents) {
+            return response()->json(['success' => false, 'message' => 'Amount is below the minimum.'], 422);
+        }
+        if ($method->max_amount_cents && $cents > $method->max_amount_cents) {
+            return response()->json(['success' => false, 'message' => 'Amount is above the maximum.'], 422);
+        }
+
+        $wallet = $this->walletFor($request->user()->id);
+
+        try {
+            $session = $stripe->createSession($wallet, $method, $cents);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        return $this->ok($session);
     }
 
     // ------------------------------------------------------------------
@@ -252,6 +307,7 @@ class DepositController extends Controller
             'details.*' => 'nullable|string|max:500',
             'min_amount' => 'required|numeric|min:1|max:1000000',
             'max_amount' => 'nullable|numeric|min:1|max:10000000|gte:min_amount',
+            'payment_gateway_id' => 'nullable|integer|exists:payment_gateways,id',
         ], [
             'max_amount.gte' => 'The maximum must be at least the minimum amount.',
         ]);
@@ -281,6 +337,7 @@ class DepositController extends Controller
             'details' => $details,
             'min_amount_cents' => (int) round(((float) $data['min_amount']) * 100),
             'max_amount_cents' => isset($data['max_amount']) ? (int) round(((float) $data['max_amount']) * 100) : null,
+            'payment_gateway_id' => $data['payment_gateway_id'] ?? null,
         ]);
 
         AuditLogger::log($request->user(), 'deposit_method.updated', DepositMethod::class, $method->id, ['key' => $method->key], $before,

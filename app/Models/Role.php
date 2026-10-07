@@ -14,6 +14,7 @@ class Role extends Model
         'name',
         'label',
         'is_system',
+        'department_id',
     ];
 
     protected $casts = [

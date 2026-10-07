@@ -24,7 +24,7 @@ class DepositMethod extends Model
         'email' => ['contact_email'],
     ];
 
-    protected $fillable = ['key', 'title', 'is_active', 'instructions', 'details', 'min_amount_cents', 'max_amount_cents', 'sort_order'];
+    protected $fillable = ['key', 'title', 'is_active', 'instructions', 'details', 'min_amount_cents', 'max_amount_cents', 'sort_order', 'payment_gateway_id'];
 
     protected $casts = [
         'is_active' => 'boolean',
@@ -33,4 +33,23 @@ class DepositMethod extends Model
         'max_amount_cents' => 'integer',
         'sort_order' => 'integer',
     ];
+
+    public function gateway()
+    {
+        return $this->belongsTo(PaymentGateway::class, 'payment_gateway_id');
+    }
+
+    /**
+     * True when this method can take payment automatically (active gateway
+     * with credentials and an automatic driver).
+     */
+    public function isAutomatic(): bool
+    {
+        $gateway = $this->gateway;
+
+        return $gateway !== null
+            && $gateway->is_active
+            && $gateway->has_credentials
+            && in_array($gateway->driver, ['stripe'], true);
+    }
 }
