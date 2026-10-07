@@ -21,7 +21,8 @@ class SessionPolicyTest extends TestCase
 
     protected function makeUser(string $role, string $email): User
     {
-        return User::create([
+        // forceCreate: role / status / email_verified_at are not fillable.
+        return User::forceCreate([
             'uuid' => (string) Str::uuid(),
             'name' => ucfirst($role) . ' User',
             'email' => $email,

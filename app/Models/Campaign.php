@@ -65,6 +65,35 @@ class Campaign extends Model
                 $c->uuid = (string) Str::uuid();
             }
         });
+
+        // The task feed matches targeting on exact codes ('ALL' or the
+        // contributor's ISO country). Clients have sent 'GLOBAL' or an empty
+        // list for "worldwide", which matched nobody and hid the campaign's
+        // tasks from every contributor — normalise on every save.
+        static::saving(function (Campaign $c) {
+            if ($c->isDirty('target_countries_json')) {
+                $c->target_countries_json = self::normalizeTargetCountries($c->target_countries_json);
+            }
+        });
+    }
+
+    /**
+     * Canonical targeting list: uppercase ISO codes, or ['ALL'] for
+     * worldwide (also when the list is empty or names GLOBAL / WORLDWIDE).
+     */
+    public static function normalizeTargetCountries(mixed $countries): array
+    {
+        $codes = collect(is_array($countries) ? $countries : [$countries])
+            ->filter(fn ($c) => is_string($c) && trim($c) !== '')
+            ->map(fn (string $c) => strtoupper(trim($c)))
+            ->unique()
+            ->values();
+
+        if ($codes->isEmpty() || $codes->intersect(['ALL', 'GLOBAL', 'WORLDWIDE'])->isNotEmpty()) {
+            return ['ALL'];
+        }
+
+        return $codes->all();
     }
 
     public function business(): BelongsTo
