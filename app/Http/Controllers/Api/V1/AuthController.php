@@ -274,13 +274,7 @@ class AuthController extends Controller
             ], 403);
         }
 
-        // Single-active-session: revoke all prior tokens before minting the new
-        // one. This kills leaked/stale tokens the moment the legitimate user
-        // logs in and prevents indefinite session sprawl (the SPA stores a
-        // single token in localStorage, so multi-device concurrency is not a
-        // designed feature). Chosen over "prune expired only" because expiry
-        // alone leaves live-but-abandoned tokens valid for up to 7 days.
-        $user->tokens()->delete();
+        $this->revokeTokensOnLogin($user);
         $token = $user->createToken('auth_token')->plainTextToken;
 
         // Phase 2 / Priority 7 — device/IP risk logging on every login.
@@ -515,7 +509,7 @@ class AuthController extends Controller
             ], 403);
         }
 
-        $user->tokens()->delete();
+        $this->revokeTokensOnLogin($user);
         $token = $user->createToken('auth_token')->plainTextToken;
 
         $this->logLoginRisk($request, $user);
@@ -709,6 +703,31 @@ class AuthController extends Controller
     /**
      * Log out and revoke current token.
      */
+    /**
+     * Session policy on login.
+     *
+     * Contributors / businesses: single active session — revoke every prior
+     * token so a leaked or stale one dies the moment the owner logs in.
+     *
+     * Staff (moderator / admin / superadmin): they work from several
+     * machines at once, and a login on one must not sign the others out.
+     * Only expired tokens are pruned; a session ends on logout, token
+     * expiry, or the inactivity timeout.
+     */
+    private function revokeTokensOnLogin(User $user): void
+    {
+        if (in_array($user->role, ['moderator', 'admin', 'superadmin'], true)) {
+            $minutes = (int) config('sanctum.expiration');
+            if ($minutes > 0) {
+                $user->tokens()->where('created_at', '<', now()->subMinutes($minutes))->delete();
+            }
+
+            return;
+        }
+
+        $user->tokens()->delete();
+    }
+
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()->delete();

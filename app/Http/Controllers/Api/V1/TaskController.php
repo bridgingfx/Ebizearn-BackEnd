@@ -33,18 +33,23 @@ class TaskController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $userCountry = strtoupper($request->user()->profile?->country_code ?? '');
-        $userId = $request->user()->id;
+        // Public route (no auth middleware): $request->user() is always null
+        // here. Read the optional Sanctum user instead — a signed-in
+        // contributor gets their country + "already submitted" filtering,
+        // a guest gets the global feed, and neither hits a 500.
+        $viewer = $request->user('sanctum');
+        $userCountry = strtoupper($viewer?->profile?->country_code ?? '');
+        $userId = $viewer?->id;
 
         $query = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
             // Hide tasks the user already submitted — done tasks live in
             // My Tasks, not the browse feed.
-            ->whereNotExists(function ($q) use ($userId) {
+            ->when($userId, fn ($query) => $query->whereNotExists(function ($q) use ($userId) {
                 $q->selectRaw('1')->from('task_submissions')
                     ->whereColumn('task_submissions.task_id', 'tasks.id')
                     ->where('task_submissions.user_id', $userId);
-            })
+            }))
             // Priority 4 — approval gate: tasks are invisible until their
             // campaign is approved to `active` by staff.
             // Geographic targeting: global campaigns (ALL) plus campaigns
@@ -52,7 +57,9 @@ class TaskController extends Controller
             ->whereHas('campaign', function ($q) use ($userCountry) {
                 $q->where('status', 'active');
                 $q->where(function ($w) use ($userCountry) {
-                    $w->whereJsonContains('target_countries_json', 'ALL');
+                    // No targeting saved (older campaigns) = global.
+                    $w->whereNull('target_countries_json')
+                      ->orWhereJsonContains('target_countries_json', 'ALL');
                     if ($userCountry !== '') {
                         $w->orWhereJsonContains('target_countries_json', $userCountry);
                     }
@@ -435,7 +442,9 @@ class TaskController extends Controller
             ->whereHas('campaign', function ($q) use ($userCountry) {
                 $q->where('status', 'active');
                 $q->where(function ($w) use ($userCountry) {
-                    $w->whereJsonContains('target_countries_json', 'ALL');
+                    // No targeting saved (older campaigns) = global.
+                    $w->whereNull('target_countries_json')
+                      ->orWhereJsonContains('target_countries_json', 'ALL');
                     if ($userCountry !== '') {
                         $w->orWhereJsonContains('target_countries_json', $userCountry);
                     }
