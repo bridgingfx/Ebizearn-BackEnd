@@ -114,7 +114,8 @@ class StaffCampaignController extends Controller
             'description' => 'required|string',
             'category_id' => 'required|exists:task_categories,id',
             'platform' => 'nullable|string|max:64',
-            'reward_per_task_cents' => 'required|integer|min:20', // Min $0.20
+            'target_url' => 'nullable|url|max:2000',
+            'reward_per_task_cents' => 'required|integer|min:1', // Min 1 cent; real minimum enforced by task-type reward band
             'task_type_key' => 'required|string|exists:task_types,key',
             'target_contributors_count' => 'required|integer|min:5',
             'instructions_markdown' => 'required|string',

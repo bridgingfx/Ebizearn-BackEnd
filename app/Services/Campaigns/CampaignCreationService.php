@@ -97,6 +97,7 @@ class CampaignCreationService
                             'business_id' => $business->id,
                             'category_id' => $validated['category_id'],
                             'platform' => $validated['platform'] ?? null,
+                            'target_url' => $validated['target_url'] ?? null,
                             'title' => $validated['title'],
                             'objective' => $validated['objective'] ?? null,
                             'description' => $validated['description'],

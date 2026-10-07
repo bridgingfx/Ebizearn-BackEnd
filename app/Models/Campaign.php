@@ -39,6 +39,7 @@ class Campaign extends Model
         'ends_at',
         'company_name',
         'logo_path',
+        'target_url',
     ];
 
     protected $casts = [
