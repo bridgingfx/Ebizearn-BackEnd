@@ -37,6 +37,23 @@ class AdminVerificationController extends Controller
         $pendingPayouts = WithdrawalRequest::whereIn('status', ['requested', 'compliance_check', 'processing'])->count();
         $fraudAlertsCount = FraudEvent::where('status', 'flagged')->count();
 
+        // Revenue: platform fees collected (non-refundable, taken at launch)
+        $totalRevenueCents = Campaign::whereIn('status', ['active', 'paused', 'completed'])
+            ->sum('platform_fee_cents');
+        $todayRevenueCents = Campaign::whereIn('status', ['active', 'paused', 'completed'])
+            ->whereDate('created_at', today())
+            ->sum('platform_fee_cents');
+
+        // Pending deposits / withdrawals
+        $pendingDeposits = \App\Models\DepositRequest::where('status', 'pending')->count() ?? 0;
+        $pendingDepositsCents = \App\Models\DepositRequest::where('status', 'pending')->sum('amount_cents') ?? 0;
+
+        // Recent signups (last 8 users)
+        $recentUsers = User::with('profile')
+            ->latest()
+            ->take(8)
+            ->get(['id', 'name', 'email', 'role', 'created_at']);
+
         // Recent verification submissions
         $queue = TaskSubmission::where('status', 'under_review')
             ->with(['task.category', 'task.campaign.business', 'user.profile', 'aiResult', 'files'])
@@ -50,6 +67,25 @@ class AdminVerificationController extends Controller
             ->take(5)
             ->get();
 
+        // 7-day revenue chart (platform fees per day)
+        $revenueByDay = Campaign::whereIn('status', ['active', 'paused', 'completed'])
+            ->where('created_at', '>=', now()->subDays(6)->startOfDay())
+            ->selectRaw('DATE(created_at) as day, SUM(platform_fee_cents) as total')
+            ->groupBy('day')
+            ->orderBy('day')
+            ->get()
+            ->keyBy('day');
+
+        $chart = [];
+        for ($i = 6; $i >= 0; $i--) {
+            $day = now()->subDays($i)->toDateString();
+            $chart[] = [
+                'day' => $day,
+                'label' => now()->subDays($i)->format('D'),
+                'revenue_cents' => (int) ($revenueByDay[$day]->total ?? 0),
+            ];
+        }
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -60,9 +96,15 @@ class AdminVerificationController extends Controller
                     'pending_verification' => $pendingVerification,
                     'pending_payouts' => $pendingPayouts,
                     'fraud_alerts_count' => $fraudAlertsCount,
+                    'total_revenue_cents' => (int) $totalRevenueCents,
+                    'today_revenue_cents' => (int) $todayRevenueCents,
+                    'pending_deposits' => $pendingDeposits,
+                    'pending_deposits_cents' => (int) $pendingDepositsCents,
                 ],
                 'verification_queue' => $queue,
                 'recent_fraud' => $recentFraud,
+                'recent_users' => $recentUsers,
+                'revenue_chart' => $chart,
             ],
         ]);
     }
