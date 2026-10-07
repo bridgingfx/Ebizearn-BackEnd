@@ -507,4 +507,42 @@ class AdminSystemController extends Controller
             ],
         ]);
     }
+
+    /**
+     * Impersonate a user (superadmin only). Returns a token for the target
+     * user so staff can "login as" a business to see their portal.
+     * Audit-logged. The staff member must re-login to return.
+     */
+    public function impersonate(Request $request, string $id): JsonResponse
+    {
+        $staff = $request->user();
+        if ($staff->role !== 'superadmin') {
+            return response()->json(['success' => false, 'message' => 'Only Super Admin can impersonate.'], 403);
+        }
+
+        $target = User::find($id);
+        if (!$target) {
+            return response()->json(['success' => false, 'message' => 'User not found.'], 404);
+        }
+        if ($target->status === 'suspended') {
+            return response()->json(['success' => false, 'message' => 'Cannot impersonate a suspended account.'], 422);
+        }
+
+        $token = $target->createToken('impersonation')->plainTextToken;
+
+        \App\Models\AuditLog::create([
+            'actor_id' => $staff->id,
+            'actor_role' => $staff->role,
+            'action' => 'user.impersonate',
+            'target_type' => 'user',
+            'target_id' => $target->id,
+            'description' => "Superadmin {$staff->email} started impersonating {$target->email}",
+            'ip_address' => $request->ip(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => ['token' => $token],
+        ]);
+    }
 }

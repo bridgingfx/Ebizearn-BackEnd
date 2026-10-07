@@ -81,20 +81,27 @@ class StaffCampaignController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))
-            ->with(['business.owner', 'category', 'tasks.taskType'])
-            ->withCount('tasks')
-            ->firstOrFail();
+        try {
+            $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))
+                ->with(['business.owner', 'category', 'tasks.taskType'])
+                ->withCount('tasks')
+                ->firstOrFail();
 
-        $spent = (int) TaskSubmission::whereIn('task_id', $campaign->tasks()->pluck('id'))
-            ->where('status', 'approved')
-            ->join('tasks', 'tasks.id', '=', 'task_submissions.task_id')
-            ->sum('tasks.reward_cents');
+            $spent = (int) TaskSubmission::whereIn('task_id', $campaign->tasks()->pluck('id'))
+                ->where('status', 'approved')
+                ->join('tasks', 'tasks.id', '=', 'task_submissions.task_id')
+                ->sum('tasks.reward_cents');
 
-        return response()->json([
-            'success' => true,
-            'data' => array_merge($campaign->toArray(), ['spent_cents' => $spent]),
-        ]);
+            return response()->json([
+                'success' => true,
+                'data' => array_merge($campaign->toArray(), ['spent_cents' => $spent]),
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['success' => false, 'message' => 'Campaign not found.'], 404);
+        } catch (\Throwable $e) {
+            \Log::error('StaffCampaign show failed', ['id' => $id, 'error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Could not load campaign details.'], 500);
+        }
     }
 
     /**

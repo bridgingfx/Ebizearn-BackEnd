@@ -168,7 +168,11 @@ class CampaignCreationService
 
                         // Priority 4 — approval gate: funded campaigns park in
                         // pending_review until staff approves them to active.
-                        $camp->update(['status' => 'pending_review']);
+                        // Staff-created campaigns (admin/superadmin) skip the
+                        // queue — they are trusted and go live immediately.
+                        $actor = \App\Models\User::find($actorUserId);
+                        $isStaff = $actor && in_array($actor->role, ['admin', 'superadmin', 'moderator'], true);
+                        $camp->update(['status' => $isStaff ? 'active' : 'pending_review']);
 
                         return $camp;
                     });
