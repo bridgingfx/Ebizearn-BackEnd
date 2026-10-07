@@ -43,6 +43,76 @@ class PaymentService
             }
         }
 
+        // PayPal: get an OAuth token with client_id + secret.
+        if ($gateway->driver === 'paypal' && $gateway->has_credentials) {
+            $clientId = $gateway->credentials['client_id'] ?? null;
+            $secret = $gateway->credentials['client_secret'] ?? null;
+            if ($clientId && $secret) {
+                try {
+                    $ch = curl_init('https://api-m.paypal.com/v1/oauth2/token');
+                    curl_setopt_array($ch, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_POST => true,
+                        CURLOPT_USERPWD => $clientId . ':' . $secret,
+                        CURLOPT_POSTFIELDS => 'grant_type=client_credentials',
+                        CURLOPT_HTTPHEADER => ['Accept: application/json'],
+                        CURLOPT_TIMEOUT => 15,
+                    ]);
+                    $body = curl_exec($ch);
+                    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    curl_close($ch);
+                    $json = json_decode((string) $body, true);
+                    if ($code === 200 && isset($json['access_token'])) {
+                        $message = 'PayPal connected. Credentials are valid (live environment).';
+                        $gateway->update(['status' => 'ok', 'last_tested_at' => now(), 'last_test_message' => $message]);
+                        return ['ok' => true, 'message' => $message];
+                    }
+                    $err = $json['error_description'] ?? $json['error'] ?? ('HTTP ' . $code);
+                    $message = 'PayPal rejected the credentials: ' . mb_substr((string) $err, 0, 200);
+                    $gateway->update(['status' => 'failed', 'last_tested_at' => now(), 'last_test_message' => $message]);
+                    return ['ok' => false, 'message' => $message];
+                } catch (\Throwable $e) {
+                    $message = 'PayPal test failed: ' . mb_substr($e->getMessage(), 0, 200);
+                    $gateway->update(['status' => 'failed', 'last_tested_at' => now(), 'last_test_message' => $message]);
+                    return ['ok' => false, 'message' => $message];
+                }
+            }
+        }
+
+        // Wise: hit the profiles endpoint with the API token.
+        if ($gateway->driver === 'wise' && $gateway->has_credentials) {
+            $token = $gateway->credentials['api_token'] ?? null;
+            if ($token) {
+                try {
+                    $ch = curl_init('https://api.wise.com/v1/profiles');
+                    curl_setopt_array($ch, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $token, 'Accept: application/json'],
+                        CURLOPT_TIMEOUT => 15,
+                    ]);
+                    $body = curl_exec($ch);
+                    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    curl_close($ch);
+                    if ($code === 200) {
+                        $profiles = json_decode((string) $body, true);
+                        $count = is_array($profiles) ? count($profiles) : 0;
+                        $message = "Wise connected. Found {$count} profile(s) on this token.";
+                        $gateway->update(['status' => 'ok', 'last_tested_at' => now(), 'last_test_message' => $message]);
+                        return ['ok' => true, 'message' => $message];
+                    }
+                    $message = ($code === 401 || $code === 403)
+                        ? 'Wise rejected the API token: invalid or expired token.'
+                        : 'Wise test failed: HTTP ' . $code;
+                    $gateway->update(['status' => 'failed', 'last_tested_at' => now(), 'last_test_message' => $message]);
+                    return ['ok' => false, 'message' => $message];
+                } catch (\Throwable $e) {
+                    $message = 'Wise test failed: ' . mb_substr($e->getMessage(), 0, 200);
+                    $gateway->update(['status' => 'failed', 'last_tested_at' => now(), 'last_test_message' => $message]);
+                    return ['ok' => false, 'message' => $message];
+                }
+            }
+        }
+
         $message = $this->isLogOnly($gateway)
             ? 'Gateway is configured for log mode. Attempts will be recorded without moving money.'
             : 'Credentials are stored. Real provider API wiring is pending launch-provider selection.';

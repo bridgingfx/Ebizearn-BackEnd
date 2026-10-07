@@ -61,11 +61,27 @@ class AdminVerificationController extends Controller
             ->take(8)
             ->get();
 
-        // Recent fraud events
+        // Recent fraud events — with human-readable descriptions for the dashboard.
         $recentFraud = FraudEvent::with(['user.profile', 'submission.task'])
             ->latest()
             ->take(5)
-            ->get();
+            ->get()
+            ->map(function ($e) {
+                $details = $e->details_json ?? [];
+                return [
+                    'id' => $e->id,
+                    'event_type' => $e->event_type,
+                    'severity' => $e->severity,
+                    'status' => $e->status,
+                    // Human-readable: what happened and why it was flagged.
+                    'title' => $this->fraudTitle($e->event_type),
+                    'description' => $details['message'] ?? $details['reason'] ?? $this->fraudDescription($e->event_type, $details),
+                    'user_name' => $e->user?->name,
+                    'user_id' => $e->user_id,
+                    'ip_address' => $e->ip_address,
+                    'created_at' => $e->created_at,
+                ];
+            });
 
         // 7-day revenue chart (platform fees per day)
         $revenueByDay = Campaign::whereIn('status', ['active', 'paused', 'completed'])
