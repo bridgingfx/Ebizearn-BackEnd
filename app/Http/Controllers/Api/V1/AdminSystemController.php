@@ -433,6 +433,7 @@ class AdminSystemController extends Controller
             'industry' => 'sometimes|nullable|string|max:120',
             'website' => 'sometimes|nullable|url|max:255',
             'phone' => 'sometimes|nullable|string|max:32',
+            'country_code' => 'sometimes|nullable|string|size:2|alpha',
         ]);
 
         $before = [
@@ -442,6 +443,7 @@ class AdminSystemController extends Controller
             'industry' => $user->business?->industry,
             'website' => $user->business?->website,
             'phone' => $user->profile?->phone,
+            'country_code' => $user->profile?->country_code,
         ];
 
         if (array_key_exists('name', $validated)) $user->name = $validated['name'];
@@ -455,8 +457,13 @@ class AdminSystemController extends Controller
             $user->business->save();
         }
 
-        if ($user->profile && array_key_exists('phone', $validated)) {
-            $user->profile->phone = $validated['phone'];
+        if ($user->profile) {
+            if (array_key_exists('phone', $validated)) {
+                $user->profile->phone = $validated['phone'];
+            }
+            if (array_key_exists('country_code', $validated)) {
+                $user->profile->country_code = $validated['country_code'] ? strtoupper($validated['country_code']) : null;
+            }
             $user->profile->save();
         }
 
@@ -467,6 +474,7 @@ class AdminSystemController extends Controller
             'industry' => $user->business?->industry,
             'website' => $user->business?->website,
             'phone' => $user->profile?->phone,
+            'country_code' => $user->profile?->country_code,
         ];
 
         AuditLog::create([
