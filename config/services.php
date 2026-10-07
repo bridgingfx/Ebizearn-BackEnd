@@ -67,4 +67,9 @@ return [
         ],
     ],
 
+    'openai' => [
+        // AI content generation for campaigns (post captions, review text).
+        'key' => env('OPENAI_API_KEY'),
+    ],
+
 ];

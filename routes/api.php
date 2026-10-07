@@ -190,6 +190,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/campaigns', [BusinessCampaignController::class, 'index']);
             // Round 2: campaign creation + funding gated on verification.
             Route::post('/campaigns', [BusinessCampaignController::class, 'store'])->middleware(['email.verified', 'permission:create_campaigns']);
+            Route::post('/campaigns/generate-content', [BusinessCampaignController::class, 'generateContent'])->middleware('throttle:20,1');
             Route::get('/campaigns/{id}', [BusinessCampaignController::class, 'show']);
             Route::patch('/campaigns/{id}/status', [BusinessCampaignController::class, 'updateStatus']);
             Route::patch('/campaigns/{id}', [BusinessCampaignController::class, 'update'])->middleware('permission:edit_own_campaigns');

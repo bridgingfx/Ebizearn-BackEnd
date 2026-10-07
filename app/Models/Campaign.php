@@ -40,6 +40,8 @@ class Campaign extends Model
         'company_name',
         'logo_path',
         'target_url',
+        'generated_content',
+        'content_brief',
     ];
 
     protected $casts = [

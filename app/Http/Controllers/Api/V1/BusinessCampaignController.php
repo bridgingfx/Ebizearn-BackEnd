@@ -32,6 +32,30 @@ class BusinessCampaignController extends Controller
     ) {}
 
     /**
+     * POST /business/campaigns/generate-content
+     * Generate AI post content for a campaign. The business describes what
+     * the post is for; AI returns creative, platform-appropriate text with
+     * proper hashtags/keywords. Contributors copy-paste it.
+     */
+    public function generateContent(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'platform' => 'required|string|max:64',
+            'brief' => 'required|string|min:10|max:500',
+        ]);
+
+        $business = $request->user()->business;
+        $generator = new \App\Services\AI\ContentGeneratorService();
+        $result = $generator->generate(
+            $data['platform'],
+            $data['brief'],
+            $business?->company_name
+        );
+
+        return response()->json($result, $result['success'] ? 200 : 422);
+    }
+
+    /**
      * Get Business Dashboard Overview.
      */
     public function dashboard(Request $request): JsonResponse
@@ -137,6 +161,8 @@ class BusinessCampaignController extends Controller
             'min_contributor_level' => 'nullable|in:starter,explorer,trusted,pro,elite',
             'retention_hours' => 'nullable|integer|min:0',
             'idempotency_key' => 'nullable|string|max:128',
+            'generated_content' => 'nullable|string|max:2000',
+            'content_brief' => 'nullable|string|max:500',
         ]);
 
         if ($validator->fails()) {
