@@ -47,19 +47,22 @@ class TrafficAnalyticsController extends Controller
      */
     public function overview(Request $request): JsonResponse
     {
-        $to = $request->input('to') ? \Carbon\Carbon::parse($request->input('to'))->endOfDay() : now()->endOfDay();
-        $from = $request->input('from') ? \Carbon\Carbon::parse($request->input('from'))->startOfDay() : now()->subDays(6)->startOfDay();
+        // Dawood operates in Dubai — traffic days must match his calendar,
+        // not the server's UTC day (4-hour difference shifts "today").
+        $tz = 'Asia/Dubai';
+        $to = $request->input('to') ? \Carbon\Carbon::parse($request->input('to'), $tz)->endOfDay() : now($tz)->endOfDay();
+        $from = $request->input('from') ? \Carbon\Carbon::parse($request->input('from'), $tz)->startOfDay() : now($tz)->subDays(6)->startOfDay();
 
         $base = PageView::whereBetween('created_at', [$from, $to]);
 
         $totalViews = (clone $base)->count();
         $uniqueVisitors = (clone $base)->distinct('session_id')->count('session_id');
 
-        // Today / yesterday quick stats
-        $todayViews = PageView::whereDate('created_at', today())->count();
-        $todayVisitors = PageView::whereDate('created_at', today())->distinct('session_id')->count('session_id');
-        $yesterdayViews = PageView::whereDate('created_at', today()->subDay())->count();
-        $yesterdayVisitors = PageView::whereDate('created_at', today()->subDay())->distinct('session_id')->count('session_id');
+        // Today / yesterday quick stats (Dubai time)
+        $todayViews = PageView::whereDate('created_at', now($tz)->toDateString())->count();
+        $todayVisitors = PageView::whereDate('created_at', now($tz)->toDateString())->distinct('session_id')->count('session_id');
+        $yesterdayViews = PageView::whereDate('created_at', now($tz)->subDay()->toDateString())->count();
+        $yesterdayVisitors = PageView::whereDate('created_at', now($tz)->subDay()->toDateString())->distinct('session_id')->count('session_id');
 
         // Live now: distinct sessions active in the last 5 minutes
         $liveNow = PageView::where('created_at', '>=', now()->subMinutes(5))
@@ -90,8 +93,9 @@ class TrafficAnalyticsController extends Controller
             ->values();
 
         // Views per day
+        // Per-day breakdown in Dubai time (CONVERT_TZ shifts UTC to +04:00).
         $perDay = PageView::whereBetween('created_at', [$from, $to])
-            ->selectRaw('DATE(created_at) as day, COUNT(*) as views, COUNT(DISTINCT session_id) as visitors')
+            ->selectRaw("DATE(CONVERT_TZ(created_at, '+00:00', '+04:00')) as day, COUNT(*) as views, COUNT(DISTINCT session_id) as visitors")
             ->groupBy('day')
             ->orderBy('day')
             ->get();
