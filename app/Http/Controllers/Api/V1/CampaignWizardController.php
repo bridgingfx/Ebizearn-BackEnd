@@ -144,6 +144,7 @@ class CampaignWizardController extends Controller
             'category_id' => 'required|exists:task_categories,id',
             'task_type_key' => 'required|string|exists:task_types,key',
             'platform' => 'nullable|string|max:64',
+            'target_url' => 'nullable|url|max:2000',
             'country_code' => 'nullable|string|max:8',
             'instructions' => 'nullable|string',
             'proof_requirements' => 'nullable|array',
