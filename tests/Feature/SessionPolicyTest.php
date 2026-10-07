@@ -77,4 +77,30 @@ class SessionPolicyTest extends TestCase
     {
         $this->getJson('/api/v1/tasks')->assertOk()->assertJsonPath('success', true);
     }
+
+    protected function contributorWithProfile(string $email, array $kyc): string
+    {
+        $user = $this->makeUser('contributor', $email);
+        \App\Models\Profile::forceCreate(array_merge(['user_id' => $user->id, 'country_code' => 'AE'], $kyc));
+
+        return $user->createToken('auth_token')->plainTextToken;
+    }
+
+    public function test_contributor_without_kyc_still_sees_the_feed(): void
+    {
+        // Never did KYC, never changed country: KYC is not a task precondition.
+        $token = $this->contributorWithProfile('no-kyc@example.com', ['kyc_status' => 'unverified']);
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $token])
+            ->getJson('/api/v1/tasks')->assertOk();
+    }
+
+    public function test_country_change_locks_feed_until_new_kyc(): void
+    {
+        // ProfileController stamps the new country + resets KYC on a change.
+        $token = $this->contributorWithProfile('moved@example.com', ['kyc_status' => 'unverified', 'kyc_country_code' => 'AE']);
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $token])
+            ->getJson('/api/v1/tasks')->assertStatus(403)->assertJsonPath('code', 'kyc_required');
+    }
 }

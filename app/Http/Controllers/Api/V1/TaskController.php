@@ -43,8 +43,18 @@ class TaskController extends Controller
         $kycCountry = strtoupper($profile->kyc_country_code ?? '');
         $kycStatus = $profile->kyc_status ?? 'unverified';
 
-        // Locked when: KYC not verified, or verified for a different country.
-        if ($kycStatus !== 'verified' || ($kycCountry !== '' && $kycCountry !== $country)) {
+        // Only accounts tied to a KYC country are gated: kyc_country_code is
+        // stamped on a residence-country change (new country, KYC reset) and
+        // on KYC approval. Contributors who never changed country and never
+        // did KYC have none — KYC is not a precondition for tasks, so they
+        // must not be locked out of the feed.
+        if ($kycCountry === '') {
+            return null;
+        }
+
+        // Locked when: new-country KYC not approved yet, or the approved KYC
+        // is for a different country than the current residence.
+        if ($kycStatus !== 'verified' || $kycCountry !== $country) {
             return [
                 'success' => false,
                 'code' => 'kyc_required',
