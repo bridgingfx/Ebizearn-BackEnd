@@ -29,6 +29,37 @@ class TaskController extends Controller
     ) {}
 
     /**
+     * KYC gate: tasks are locked when the user's KYC is not verified for
+     * their CURRENT residence country (e.g. after a country change).
+     * Returns an error response array, or null when tasks are unlocked.
+     */
+    protected function kycLockResponse($user): ?array
+    {
+        if (!$user || !$user->profile) {
+            return null;
+        }
+        $profile = $user->profile;
+        $country = strtoupper($profile->country_code ?? '');
+        $kycCountry = strtoupper($profile->kyc_country_code ?? '');
+        $kycStatus = $profile->kyc_status ?? 'unverified';
+
+        // Locked when: KYC not verified, or verified for a different country.
+        if ($kycStatus !== 'verified' || ($kycCountry !== '' && $kycCountry !== $country)) {
+            return [
+                'success' => false,
+                'code' => 'kyc_required',
+                'message' => 'Your country of residence changed. Complete KYC with documents from your current country to unlock tasks.',
+                'data' => [
+                    'kyc_status' => $kycStatus,
+                    'country_code' => $country,
+                    'kyc_country_code' => $kycCountry ?: null,
+                ],
+            ];
+        }
+        return null;
+    }
+
+    /**
      * Browse available tasks with filtering, search, and pagination.
      */
     public function index(Request $request): JsonResponse
@@ -38,6 +69,12 @@ class TaskController extends Controller
         // contributor gets their country + "already submitted" filtering,
         // a guest gets the global feed, and neither hits a 500.
         $viewer = $request->user('sanctum');
+
+        // KYC lock: signed-in users with invalid/outdated KYC see no tasks.
+        if ($viewer && ($lock = $this->kycLockResponse($viewer))) {
+            return response()->json($lock, 403);
+        }
+
         $userCountry = strtoupper($viewer?->profile?->country_code ?? '');
         $userId = $viewer?->id;
 
@@ -121,6 +158,10 @@ class TaskController extends Controller
      */
     public function show(string $id): JsonResponse
     {
+        // KYC lock for signed-in viewers.
+        if (($viewer = request()->user('sanctum')) && ($lock = $this->kycLockResponse($viewer))) {
+            return response()->json($lock, 403);
+        }
         $task = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
             ->whereHas('campaign', fn ($q) => $q->where('status', 'active'))
@@ -141,6 +182,12 @@ class TaskController extends Controller
     public function start(Request $request, string $id): JsonResponse
     {
         $user = $request->user();
+
+        // KYC lock: cannot start tasks without valid new-country KYC.
+        if ($lock = $this->kycLockResponse($user)) {
+            return response()->json($lock, 403);
+        }
+
         $task = Task::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
 
         if ($task->status !== 'available' || $task->slots_taken >= $task->slots_total) {
@@ -238,6 +285,12 @@ class TaskController extends Controller
     public function submit(Request $request, string $id): JsonResponse
     {
         $user = $request->user();
+
+        // KYC lock: cannot submit without valid new-country KYC.
+        if ($lock = $this->kycLockResponse($user)) {
+            return response()->json($lock, 403);
+        }
+
         $task = Task::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
 
         if ($task->status !== 'available') {

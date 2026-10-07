@@ -215,6 +215,45 @@ class ProfileController extends Controller
         }
         if ($profileData !== []) {
             $profile = Profile::firstOrCreate(['user_id' => $user->id], ['country_code' => 'GE', 'language' => 'en']);
+
+            // COUNTRY CHANGE → KYC RESET: if the residence country actually
+            // changed, the old KYC is no longer valid. Reset to unverified,
+            // stamp the KYC country, and lock tasks until new-country KYC
+            // is approved. Old documents are kept for audit.
+            $countryChanged = isset($profileData['country_code'])
+                && strtoupper($profileData['country_code']) !== strtoupper($profile->country_code ?? '');
+            if ($countryChanged) {
+                $oldCountry = $profile->country_code;
+                $newCountry = strtoupper($profileData['country_code']);
+                $profile->kyc_status = 'unverified';
+                $profile->kyc_verified_at = null;
+                $profile->kyc_reviewed_by = null;
+                $profile->kyc_country_code = $newCountry;
+                $profile->save();
+
+                \App\Models\AuditLog::create([
+                    'actor_id' => $user->id,
+                    'actor_role' => $user->role,
+                    'action' => 'profile.country_changed',
+                    'target_type' => 'user',
+                    'target_id' => $user->id,
+                    'description' => "User changed residence country from {$oldCountry} to {$newCountry}. KYC reset — tasks locked until new-country KYC approved.",
+                    'ip_address' => $request->ip(),
+                ]);
+
+                $profile->update($profileData);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Profile updated.',
+                    'data' => [
+                        'user' => $user->fresh()->load(['profile', 'wallet', 'business']),
+                        'kyc_reset' => true,
+                        'kyc_message' => 'Your country changed. You must complete KYC again with documents from your new country before you can do tasks.',
+                    ],
+                ]);
+            }
+
             $profile->update($profileData);
         }
 

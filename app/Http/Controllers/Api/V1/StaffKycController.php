@@ -116,6 +116,11 @@ class StaffKycController extends Controller
         $profile->kyc_verified_at = $approve ? now() : null;
         $profile->kyc_reviewed_by = $request->user()->id;
         $profile->kyc_rejection_reason = $approve ? null : $request->input('reason');
+        // Stamp the country this KYC was verified for — tasks unlock only
+        // when this matches the current residence country.
+        if ($approve) {
+            $profile->kyc_country_code = strtoupper($profile->country_code ?? '');
+        }
         $profile->save();
 
         AuditLogger::log(
