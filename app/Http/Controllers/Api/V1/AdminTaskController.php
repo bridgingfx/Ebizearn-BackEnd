@@ -29,7 +29,7 @@ class AdminTaskController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = Task::with(['category', 'taskType', 'campaign.business']);
+        $query = Task::with(['category', 'taskType', 'campaign.business', 'creator:id,name,role,business_owner_id']);
         StaffScope::applyToTasks($query, $request->user());
 
         if ($request->filled('campaign_id')) {

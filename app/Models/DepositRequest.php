@@ -11,6 +11,8 @@ use Illuminate\Support\Str;
  */
 class DepositRequest extends Model
 {
+    use Concerns\RecordsCreator;
+
     protected $fillable = [
         'uuid', 'user_id', 'wallet_id', 'method', 'amount_cents', 'currency', 'reference', 'note', 'proof_path',
         'status', 'reviewed_by', 'reviewed_at', 'review_note', 'wallet_transaction_id',

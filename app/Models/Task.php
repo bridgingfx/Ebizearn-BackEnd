@@ -11,7 +11,7 @@ use Illuminate\Support\Str;
 
 class Task extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, Concerns\RecordsCreator, SoftDeletes;
 
     /**
      * Never serialize internal anti-fraud configuration to API consumers.

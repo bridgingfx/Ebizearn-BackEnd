@@ -192,6 +192,42 @@ class BusinessTeamAccessTest extends TestCase
         $this->getJson('/api/v1/ops/roles')->assertForbidden();
     }
 
+    public function test_team_member_work_shows_on_owner_account_with_their_name(): void
+    {
+        $owner = $this->makeOwner();
+        $this->actAs($owner);
+        $this->postJson('/api/v1/business/team', [
+            'name' => 'Ravi Member', 'email' => 'ravi.member@example.com', 'password' => 'Str0ngPass!', 'permissions' => ['view_billing'],
+        ])->assertCreated();
+        $member = User::where('email', 'ravi.member@example.com')->firstOrFail();
+
+        // Something the member creates is stamped with their account…
+        $this->actAs($member);
+        $deposit = \App\Models\DepositRequest::create([
+            'user_id' => $member->business_account_id,
+            'wallet_id' => Wallet::where('user_id', $owner->id)->value('id'),
+            'method' => 'bank',
+            'amount_cents' => 5000,
+            'currency' => 'USD',
+            'status' => 'pending',
+        ]);
+        $this->assertSame($member->id, (int) $deposit->created_by);
+
+        // …belongs to the owner's account, and the owner sees who did it.
+        $this->actAs($owner);
+        $this->getJson('/api/v1/business/deposits')->assertOk()
+            ->assertJsonPath('data.deposits.0.creator.name', 'Ravi Member')
+            ->assertJsonPath('data.deposits.0.creator.business_owner_id', $owner->id);
+
+        // The member's email cannot be used to sign up a new account.
+        $this->app['auth']->forgetGuards();
+        $this->postJson('/api/v1/auth/register', [
+            'name' => 'Ravi Again', 'email' => 'ravi.member@example.com', 'password' => 'Str0ngPass!1',
+            'password_confirmation' => 'Str0ngPass!1', 'role' => 'business', 'company_name' => 'Other',
+            'terms_version' => config('legal.terms_version'),
+        ])->assertStatus(422)->assertJsonValidationErrors('email');
+    }
+
     public function test_moderator_reaches_staff_sections_only_when_granted(): void
     {
         $moderator = $this->makeUser('moderator');

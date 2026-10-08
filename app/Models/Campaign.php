@@ -11,7 +11,7 @@ use Illuminate\Support\Str;
 
 class Campaign extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, Concerns\RecordsCreator, SoftDeletes;
 
     protected $fillable = [
         'uuid',

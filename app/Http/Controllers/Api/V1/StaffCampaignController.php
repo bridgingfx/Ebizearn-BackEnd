@@ -37,7 +37,7 @@ class StaffCampaignController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = Campaign::with(['business.owner', 'category'])
+        $query = Campaign::with(['business.owner', 'category', 'creator:id,name,role,business_owner_id'])
             ->withCount('tasks')
             ->latest();
         StaffScope::applyToCampaigns($query, $request->user());
@@ -86,7 +86,7 @@ class StaffCampaignController extends Controller
     {
         try {
             $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))
-                ->with(['business.owner', 'category', 'tasks.taskType'])
+                ->with(['business.owner', 'category', 'tasks.taskType', 'creator:id,name,role,business_owner_id'])
                 ->withCount('tasks')
                 ->firstOrFail();
             if (!StaffScope::allowsBusiness(request()->user(), $campaign->business_id)) {

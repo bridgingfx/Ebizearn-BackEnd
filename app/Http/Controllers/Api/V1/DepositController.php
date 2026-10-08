@@ -54,7 +54,7 @@ class DepositController extends Controller
 
         return $this->ok([
             'wallet' => $wallet->only(['id', 'currency', 'available_balance_cents', 'pending_balance_cents']),
-            'deposits' => DepositRequest::where('user_id', $user->business_account_id)->latest('id')->limit(50)->get(),
+            'deposits' => DepositRequest::with('creator:id,name,role,business_owner_id')->where('user_id', $user->business_account_id)->latest('id')->limit(50)->get(),
             'transactions' => WalletTransaction::where('wallet_id', $wallet->id)->latest('id')->limit(50)
                 ->get(['id', 'type', 'amount_cents', 'balance_after_cents', 'currency', 'description', 'reference_type', 'reference_id', 'created_at']),
         ]);
@@ -182,7 +182,7 @@ class DepositController extends Controller
     public function staffIndex(Request $request): JsonResponse
     {
         $status = $request->input('status', 'pending');
-        $query = DepositRequest::with(['user:id,name,email,role', 'user.business:id,owner_id,company_name', 'reviewer:id,name']);
+        $query = DepositRequest::with(['user:id,name,email,role', 'user.business:id,owner_id,company_name', 'reviewer:id,name', 'creator:id,name,role,business_owner_id']);
         StaffScope::apply($query, $request->user());
         if ($status !== 'all') {
             $query->where('status', $status);

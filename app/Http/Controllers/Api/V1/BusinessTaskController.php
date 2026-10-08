@@ -34,7 +34,7 @@ class BusinessTaskController extends Controller
             return response()->json(['success' => false, 'message' => 'Business profile not found.'], 404);
         }
 
-        $query = Task::with(['category', 'taskType', 'campaign'])
+        $query = Task::with(['category', 'taskType', 'campaign', 'creator:id,name,role,business_owner_id'])
             ->whereHas('campaign', fn ($q) => $q->where('business_id', $business->id));
 
         if ($request->filled('campaign_id')) {
@@ -56,7 +56,7 @@ class BusinessTaskController extends Controller
 
     public function show(Request $request, string $id): JsonResponse
     {
-        $task = Task::with(['category', 'taskType', 'campaign'])
+        $task = Task::with(['category', 'taskType', 'campaign', 'creator:id,name,role,business_owner_id'])
             ->where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))
             ->firstOrFail();
 

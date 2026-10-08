@@ -119,7 +119,7 @@ class BusinessCampaignController extends Controller
             return response()->json(['success' => false, 'message' => 'Business profile not found.'], 404);
         }
 
-        $campaigns = Campaign::with(['category', 'tasks'])
+        $campaigns = Campaign::with(['category', 'tasks', 'creator:id,name,role,business_owner_id'])
             ->where('business_id', $business->id)
             ->latest()
             ->paginate(15);
@@ -324,7 +324,7 @@ class BusinessCampaignController extends Controller
     {
         // Phase 13: load tenant-agnostically, then authorize explicitly so a
         // cross-business read is a 403 (not a 404 that hides behind scoping).
-        $campaign = Campaign::with(['category', 'tasks'])
+        $campaign = Campaign::with(['category', 'tasks', 'creator:id,name,role,business_owner_id'])
             ->where(fn($q) => $q->where('id', $id)->orWhere('uuid', $id))
             ->firstOrFail();
 
