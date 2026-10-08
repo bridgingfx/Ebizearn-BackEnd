@@ -87,9 +87,36 @@ class User extends Authenticatable
         return $this->hasOne(Wallet::class);
     }
 
+    /**
+     * The business this account works on: its own, or — for a team
+     * member — the owner's (see business_account_id).
+     */
     public function business(): HasOne
     {
-        return $this->hasOne(Business::class, 'owner_id');
+        return $this->hasOne(Business::class, 'owner_id', 'business_account_id');
+    }
+
+    /** User id that owns the business account (the owner for team members). */
+    public function getBusinessAccountIdAttribute(): ?int
+    {
+        return $this->business_owner_id ?: $this->id;
+    }
+
+    public function isTeamMember(): bool
+    {
+        return !empty($this->business_owner_id);
+    }
+
+    /** Business owner this team member works for. */
+    public function teamOwner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'business_owner_id');
+    }
+
+    /** Team members added by this business owner. */
+    public function teamMembers(): HasMany
+    {
+        return $this->hasMany(User::class, 'business_owner_id');
     }
 
     public function taskAssignments(): HasMany
@@ -215,6 +242,12 @@ class User extends Authenticatable
             array_unique(array_merge($this->rolePermissionNames(), $this->grantedPermissionNames())),
             $this->deniedPermissionNames()
         );
+        // Team members: only team-grantable powers, and never more than
+        // the owner currently holds.
+        if ($this->isTeamMember()) {
+            $owner = $this->teamOwner;
+            $set = array_intersect($set, Permission::TEAM_PERMISSIONS, $owner ? $owner->effectivePermissions() : []);
+        }
         sort($set);
 
         return array_values($set);
@@ -239,6 +272,13 @@ class User extends Authenticatable
     {
         if ($this->isSuperAdmin()) {
             return true;
+        }
+
+        if ($this->isTeamMember()) {
+            $owner = $this->teamOwner;
+            if (!in_array($permission, Permission::TEAM_PERMISSIONS, true) || !$owner || !$owner->hasPermission($permission)) {
+                return false;
+            }
         }
 
         $direct = $this->directPermissions()->where('permissions.name', $permission)->first();

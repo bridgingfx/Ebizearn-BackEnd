@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AuthProviderSettingsController;
 use App\Http\Controllers\Api\V1\BusinessCampaignController;
 use App\Http\Controllers\Api\V1\BusinessTaskController;
+use App\Http\Controllers\Api\V1\BusinessTeamController;
 use App\Http\Controllers\Api\V1\CampaignWizardController;
 use App\Http\Controllers\Api\V1\ConfigController;
 use App\Http\Controllers\Api\V1\DemoRequestController;
@@ -186,17 +187,17 @@ Route::prefix('v1')->group(function () {
             Route::get('/dashboard', [BusinessCampaignController::class, 'dashboard']);
             // Wallet deposits: automatic (Stripe) or manual methods configured by
             // Super Admin; manual ones are credited after staff approval.
-            Route::get('/deposit-methods', [DepositController::class, 'methods']);
-            Route::get('/deposits', [DepositController::class, 'index']);
-            Route::post('/deposits', [DepositController::class, 'store'])->middleware('throttle:10,1');
+            Route::get('/deposit-methods', [DepositController::class, 'methods'])->middleware('permission:view_billing');
+            Route::get('/deposits', [DepositController::class, 'index'])->middleware('permission:view_billing');
+            Route::post('/deposits', [DepositController::class, 'store'])->middleware(['permission:view_billing', 'throttle:10,1']);
             // Automatic card payment via Stripe Checkout — the wallet is
             // credited by the webhook, no staff approval needed.
-            Route::post('/deposits/stripe-session', [DepositController::class, 'stripeSession'])->middleware('throttle:10,1');
-            Route::get('/campaigns', [BusinessCampaignController::class, 'index']);
+            Route::post('/deposits/stripe-session', [DepositController::class, 'stripeSession'])->middleware(['permission:view_billing', 'throttle:10,1']);
+            Route::get('/campaigns', [BusinessCampaignController::class, 'index'])->middleware('permission:view_own_campaigns');
             // Round 2: campaign creation + funding gated on verification.
             Route::post('/campaigns', [BusinessCampaignController::class, 'store'])->middleware(['email.verified', 'permission:create_campaigns']);
             Route::post('/campaigns/generate-content', [BusinessCampaignController::class, 'generateContent'])->middleware('throttle:20,1');
-            Route::get('/campaigns/{id}', [BusinessCampaignController::class, 'show']);
+            Route::get('/campaigns/{id}', [BusinessCampaignController::class, 'show'])->middleware('permission:view_own_campaigns');
             Route::patch('/campaigns/{id}/status', [BusinessCampaignController::class, 'updateStatus']);
             Route::patch('/campaigns/{id}', [BusinessCampaignController::class, 'update'])->middleware('permission:edit_own_campaigns');
             Route::delete('/campaigns/{id}', [BusinessCampaignController::class, 'destroy'])->middleware('permission:delete_own_campaigns');
@@ -204,7 +205,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/task-templates', [TaskTemplateController::class, 'index'])->middleware('permission:view_task_library');
             Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund'])->middleware(['email.verified', 'permission:fund_campaigns']);
             Route::post('/campaigns/{id}/logo', [BusinessCampaignController::class, 'uploadLogo']);
-            Route::get('/submissions', [BusinessCampaignController::class, 'submissions']);
+            Route::get('/submissions', [BusinessCampaignController::class, 'submissions'])->middleware('permission:review_campaign_proofs');
             // Two-step review: the business recommends, staff confirm and release payment.
             Route::post('/submissions/{id}/decision', [BusinessCampaignController::class, 'reviewSubmission'])
                 ->middleware(['permission:review_campaign_proofs', 'throttle:60,1']);
@@ -231,7 +232,17 @@ Route::prefix('v1')->group(function () {
             Route::delete('/tasks/{id}', [BusinessTaskController::class, 'destroy'])->middleware(['email.verified', 'permission:manage_business_tasks']);
 
             // Phase 9 — basic business analytics from REAL aggregates.
-            Route::get('/analytics', [BusinessTaskController::class, 'analytics']);
+            Route::get('/analytics', [BusinessTaskController::class, 'analytics'])->middleware('permission:view_business_analytics');
+
+            // Team Access: the owner adds team members who work on this
+            // business with the sections the owner picks for them.
+            Route::middleware('permission:manage_team')->prefix('team')->group(function () {
+                Route::get('/', [BusinessTeamController::class, 'index']);
+                Route::post('/', [BusinessTeamController::class, 'store'])->middleware('throttle:20,1');
+                Route::put('/{id}/permissions', [BusinessTeamController::class, 'updatePermissions'])->whereNumber('id');
+                Route::patch('/{id}/status', [BusinessTeamController::class, 'updateStatus'])->whereNumber('id');
+                Route::delete('/{id}', [BusinessTeamController::class, 'destroy'])->whereNumber('id');
+            });
         });
 
         // Super Admin only: which deposit methods businesses can use, and their details.
@@ -293,11 +304,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/logs', [AdminPaymentController::class, 'logs']);
         });
 
-        // Admin & Super Admin Endpoints
-        // Admin & Super Admin Endpoints. Each area is gated on its permission
-        // so Super Admin can narrow what an admin account may do.
-        Route::middleware('role:admin,superadmin')->prefix('admin')->group(function () {
-            Route::get('/dashboard', [AdminVerificationController::class, 'dashboard']);
+        // Staff panel endpoints. Each area is gated on its sidebar-section
+        // permission, so Super Admin (or an admin, within their own access)
+        // decides per role / per account — moderators included.
+        Route::middleware('role:admin,superadmin,moderator')->prefix('admin')->group(function () {
+            Route::get('/dashboard', [AdminVerificationController::class, 'dashboard'])->middleware('role:admin,superadmin');
             // One permission per sidebar section (Roles & Permissions).
             Route::get('/health', [AdminSystemController::class, 'health'])->middleware('permission:view_system_health');
             Route::middleware('permission:view_traffic')->group(function () {
@@ -354,7 +365,7 @@ Route::prefix('v1')->group(function () {
             // The user list feeds Users & KYC, Businesses and Wallets; the
             // controller narrows it to businesses for a Businesses-only admin.
             Route::get('/users', [AdminSystemController::class, 'users'])
-                ->middleware('permission.any:manage_users,manage_businesses,view_wallets');
+                ->middleware('permission.any:manage_users,manage_businesses,view_wallets,manage_roles');
             // Business accounts can be managed from the Businesses page;
             // everyone else needs manage_users (enforced per target user).
             Route::middleware('permission.any:manage_users,manage_businesses')->group(function () {
@@ -528,12 +539,13 @@ Route::prefix('v1')->group(function () {
 
         // Wallets: directory, ledger inspection, manual credits ("virtual
         // tokens") and corrective debits. Super Admin grants view_wallets /
-        // adjust_wallets to the admins who may use them.
-        Route::middleware(['role:admin,superadmin', 'throttle:ops'])->prefix('ops')->group(function () {
+        // adjust_wallets to the staff who may use them.
+        Route::middleware(['role:admin,superadmin,moderator', 'throttle:ops'])->prefix('ops')->group(function () {
             // Permission management for every role + per-user overrides.
-            // Shared: superadmin (full) and admin with the manage_roles
-            // permission (guarded — cannot touch the admin role or admins,
-            // can only grant what they hold, only their assigned users).
+            // Shared: superadmin (full); admin / moderator with manage_roles
+            // (guarded — only users below their own role, only their
+            // assigned users, only permissions they hold; moderators cannot
+            // edit role-wide grants).
             Route::middleware('permission:manage_roles')->group(function () {
                 Route::get('/roles', [OpsPermissionController::class, 'roles']);
                 Route::put('/roles/{name}/permissions', [OpsPermissionController::class, 'updateRole']);

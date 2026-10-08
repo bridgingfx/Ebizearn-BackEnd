@@ -50,11 +50,11 @@ class DepositController extends Controller
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
-        $wallet = $this->walletFor($user->id);
+        $wallet = $this->walletFor($user->business_account_id);
 
         return $this->ok([
             'wallet' => $wallet->only(['id', 'currency', 'available_balance_cents', 'pending_balance_cents']),
-            'deposits' => DepositRequest::where('user_id', $user->id)->latest('id')->limit(50)->get(),
+            'deposits' => DepositRequest::where('user_id', $user->business_account_id)->latest('id')->limit(50)->get(),
             'transactions' => WalletTransaction::where('wallet_id', $wallet->id)->latest('id')->limit(50)
                 ->get(['id', 'type', 'amount_cents', 'balance_after_cents', 'currency', 'description', 'reference_type', 'reference_id', 'created_at']),
         ]);
@@ -92,7 +92,7 @@ class DepositController extends Controller
         }
 
         $user = $request->user();
-        $open = DepositRequest::where('user_id', $user->id)->where('status', 'pending')->count();
+        $open = DepositRequest::where('user_id', $user->business_account_id)->where('status', 'pending')->count();
         abort_if($open >= self::MAX_OPEN_REQUESTS, 422, 'You already have ' . self::MAX_OPEN_REQUESTS . ' deposits waiting for review. Please wait until they are processed.');
 
         if (!empty($data['reference'])) {
@@ -103,11 +103,11 @@ class DepositController extends Controller
             }
         }
 
-        $wallet = $this->walletFor($user->id);
-        $proofPath = $request->hasFile('proof') ? $request->file('proof')->store('deposits/' . $user->id, 'local') : null;
+        $wallet = $this->walletFor($user->business_account_id);
+        $proofPath = $request->hasFile('proof') ? $request->file('proof')->store('deposits/' . $user->business_account_id, 'local') : null;
 
         $deposit = DepositRequest::create([
-            'user_id' => $user->id,
+            'user_id' => $user->business_account_id,
             'wallet_id' => $wallet->id,
             'method' => $method->key,
             'amount_cents' => $amountCents,
@@ -163,7 +163,7 @@ class DepositController extends Controller
             return response()->json(['success' => false, 'message' => 'Amount is above the maximum.'], 422);
         }
 
-        $wallet = $this->walletFor($request->user()->id);
+        $wallet = $this->walletFor($request->user()->business_account_id);
 
         try {
             $session = $stripe->createSession($wallet, $method, $cents);

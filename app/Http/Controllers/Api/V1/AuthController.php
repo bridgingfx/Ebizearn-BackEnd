@@ -251,6 +251,13 @@ class AuthController extends Controller
                 'message' => 'Your account has been suspended for compliance review. Contact support@ebizearn.com.',
             ], 403);
         }
+        // A team member cannot work on a business whose owner is suspended or gone.
+        if ($user->isTeamMember() && (!$user->teamOwner || $user->teamOwner->status === 'suspended')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This business account is not active. Contact the account owner.',
+            ], 403);
+        }
 
         // Signup hardening: an email signup stays pending until the OTP is
         // verified — password login cannot bypass the OTP gate. Pre-existing

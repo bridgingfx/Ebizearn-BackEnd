@@ -21,6 +21,28 @@ use Illuminate\Support\Facades\DB;
 class StaffScope
 {
     /**
+     * Roles each staff role may be assigned and may set permissions for
+     * (always roles below its own). Super Admin manages everyone.
+     */
+    public const MANAGEABLE_ROLES = [
+        'admin' => ['contributor', 'business', 'moderator'],
+        'moderator' => ['contributor', 'business'],
+    ];
+
+    /** May the actor change this account's permissions (role rank only)? */
+    public static function canSetPermissionsFor(?User $actor, User $target): bool
+    {
+        if (!$actor || $target->isSuperAdmin()) {
+            return false;
+        }
+        if ($actor->isSuperAdmin()) {
+            return true;
+        }
+
+        return in_array($target->role, self::MANAGEABLE_ROLES[$actor->role] ?? [], true);
+    }
+
+    /**
      * Assigned user ids, or null when the actor is unrestricted.
      * Memoised on the current request (never across requests).
      *
@@ -36,6 +58,10 @@ class StaffScope
         $attributes = request()->attributes;
         if (!$attributes->has($key)) {
             $ids = User::where('managed_by', $actor->id)->pluck('id')->all();
+            // Team members of an assigned business come with it.
+            if ($ids !== []) {
+                $ids = array_merge($ids, User::whereIn('business_owner_id', $ids)->pluck('id')->all());
+            }
             $attributes->set($key, $ids === [] ? null : array_map('intval', $ids));
         }
 

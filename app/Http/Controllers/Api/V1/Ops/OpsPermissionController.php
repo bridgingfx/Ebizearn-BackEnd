@@ -55,6 +55,11 @@ class OpsPermissionController extends Controller
 
         $actor = $request->user();
 
+        // Moderators set access per user only — never role-wide.
+        if (!$actor->isSuperAdmin() && $actor->role !== 'admin') {
+            return response()->json(['success' => false, 'message' => 'Only Super Admin and admins can change role-wide access.'], 403);
+        }
+
         // Guard: an admin may manage roles, but only superadmin may change
         // what the admin role itself can do (prevents privilege escalation).
         if (!$actor->isSuperAdmin() && in_array($name, ['admin', 'superadmin'], true)) {
@@ -104,7 +109,8 @@ class OpsPermissionController extends Controller
     public function user(Request $request, string $id): JsonResponse
     {
         $user = User::findOrFail($id);
-        if (!StaffScope::allowsUser($request->user(), $user->id)) {
+        if (!StaffScope::allowsUser($request->user(), $user->id)
+            || (!$user->isSuperAdmin() && !StaffScope::canSetPermissionsFor($request->user(), $user))) {
             return StaffScope::notFound();
         }
 
@@ -135,10 +141,11 @@ class OpsPermissionController extends Controller
 
         $actor = $request->user();
 
-        // Guard: an admin manages moderators and below — never other admins.
-        // Only superadmin touches admin accounts.
-        if (!$actor->isSuperAdmin() && in_array($user->role, ['admin', 'superadmin'], true)) {
-            return response()->json(['success' => false, 'message' => 'Only Super Admin can change permissions of admin accounts.'], 403);
+        // Guard: staff only manage roles below their own — an admin manages
+        // moderators, businesses and contributors; a moderator businesses
+        // and contributors. Only superadmin touches admin accounts.
+        if (!StaffScope::canSetPermissionsFor($actor, $user)) {
+            return response()->json(['success' => false, 'message' => 'You cannot change permissions of this account.'], 403);
         }
         // Assigned-users scope: a scoped admin only manages their own users.
         if (!StaffScope::allowsUser($actor, $user->id)) {

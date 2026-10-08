@@ -147,7 +147,7 @@ class PermissionManagementTest extends TestCase
     public function test_admin_area_gated_by_permission(): void
     {
         $admin = $this->makeUser('admin');
-        $admin->syncPermissionOverrides([], ['manage_users', 'manage_businesses']);
+        $admin->syncPermissionOverrides([], ['manage_users', 'manage_businesses', 'manage_roles']);
         Sanctum::actingAs($admin);
 
         $this->getJson('/api/v1/admin/users')->assertForbidden();

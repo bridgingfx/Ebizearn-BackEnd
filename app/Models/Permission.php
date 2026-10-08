@@ -72,6 +72,22 @@ class Permission extends Model
     public const REVIEW_CAMPAIGN_PROOFS = 'review_campaign_proofs';
     public const EDIT_OWN_CAMPAIGNS = 'edit_own_campaigns';
     public const DELETE_OWN_CAMPAIGNS = 'delete_own_campaigns';
+    // One per business sidebar section (Dashboard and Settings stay open).
+    public const VIEW_OWN_CAMPAIGNS = 'view_own_campaigns';
+    public const VIEW_BUSINESS_ANALYTICS = 'view_business_analytics';
+    public const VIEW_BILLING = 'view_billing';
+    /** Team Access: add team members and set their access (owners only). */
+    public const MANAGE_TEAM = 'manage_team';
+
+    /**
+     * What a business owner can hand to a team member. Account-level
+     * powers (KYC, team management) stay with the owner.
+     */
+    public const TEAM_PERMISSIONS = [
+        self::VIEW_OWN_CAMPAIGNS, self::CREATE_CAMPAIGNS, self::EDIT_OWN_CAMPAIGNS, self::DELETE_OWN_CAMPAIGNS,
+        self::FUND_CAMPAIGNS, self::MANAGE_BUSINESS_TASKS, self::VIEW_TASK_LIBRARY, self::REVIEW_CAMPAIGN_PROOFS,
+        self::VIEW_BUSINESS_ANALYTICS, self::VIEW_BILLING, self::OPEN_SUPPORT_TICKETS,
+    ];
 
     // Shared (contributor + business)
     public const SUBMIT_KYC = 'submit_kyc';
@@ -131,6 +147,10 @@ class Permission extends Model
             self::REVIEW_CAMPAIGN_PROOFS => ['Approve / reject proofs on own campaigns', 'business'],
             self::EDIT_OWN_CAMPAIGNS => ['Edit own campaign details', 'business'],
             self::DELETE_OWN_CAMPAIGNS => ['Delete own campaigns (no contributor activity only)', 'business'],
+            self::VIEW_OWN_CAMPAIGNS => ['Campaigns page (view own campaigns)', 'business'],
+            self::VIEW_BUSINESS_ANALYTICS => ['Analytics page', 'business'],
+            self::VIEW_BILLING => ['Billing & Invoices page (wallet deposits)', 'business'],
+            self::MANAGE_TEAM => ['Team Access page (add team members, set their access)', 'business'],
 
             self::SUBMIT_KYC => ['Submit KYC identity documents', 'account'],
             self::OPEN_SUPPORT_TICKETS => ['Open and reply to support tickets', 'account'],
@@ -176,6 +196,7 @@ class Permission extends Model
             'business' => [
                 self::CREATE_CAMPAIGNS, self::FUND_CAMPAIGNS, self::MANAGE_BUSINESS_TASKS, self::REVIEW_CAMPAIGN_PROOFS,
                 self::EDIT_OWN_CAMPAIGNS, self::DELETE_OWN_CAMPAIGNS,
+                self::VIEW_OWN_CAMPAIGNS, self::VIEW_BUSINESS_ANALYTICS, self::VIEW_BILLING, self::MANAGE_TEAM,
                 self::SUBMIT_KYC, self::OPEN_SUPPORT_TICKETS, self::VIEW_TASK_LIBRARY,
             ],
         ];

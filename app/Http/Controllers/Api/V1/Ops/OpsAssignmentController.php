@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Ops;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Services\Staff\StaffScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,12 +19,6 @@ use Illuminate\Support\Facades\Validator;
  */
 class OpsAssignmentController extends Controller
 {
-    /** Roles each staff role may be given. */
-    private const ASSIGNABLE = [
-        'admin' => ['contributor', 'business', 'moderator'],
-        'moderator' => ['contributor', 'business'],
-    ];
-
     /** GET /ops/staff/{id}/assignments */
     public function show(string $id): JsonResponse
     {
@@ -46,7 +41,7 @@ class OpsAssignmentController extends Controller
         }
 
         $ids = array_map('intval', $validator->validated()['user_ids']);
-        $allowedRoles = self::ASSIGNABLE[$staff->role];
+        $allowedRoles = StaffScope::MANAGEABLE_ROLES[$staff->role];
         $users = User::whereIn('id', $ids)->get(['id', 'role', 'managed_by']);
 
         $invalid = $users->reject(fn (User $u) => in_array($u->role, $allowedRoles, true))->pluck('id');
@@ -82,7 +77,7 @@ class OpsAssignmentController extends Controller
     private function staff(string $id): User
     {
         $staff = User::findOrFail($id);
-        abort_unless(isset(self::ASSIGNABLE[$staff->role]), 422, 'Users can only be assigned to admin or moderator accounts.');
+        abort_unless(isset(StaffScope::MANAGEABLE_ROLES[$staff->role]), 422, 'Users can only be assigned to admin or moderator accounts.');
 
         return $staff;
     }
@@ -91,7 +86,7 @@ class OpsAssignmentController extends Controller
     {
         return [
             'staff' => $staff->only(['id', 'name', 'email', 'role']),
-            'assignable_roles' => self::ASSIGNABLE[$staff->role],
+            'assignable_roles' => StaffScope::MANAGEABLE_ROLES[$staff->role],
             'users' => User::where('managed_by', $staff->id)
                 ->orderBy('name')
                 ->get(['id', 'name', 'email', 'role', 'status']),
