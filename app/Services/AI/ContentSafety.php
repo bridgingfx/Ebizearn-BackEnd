@@ -2,9 +2,6 @@
 
 namespace App\Services\AI;
 
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
-
 /**
  * Keeps campaign content clean: contributors copy and post it publicly, so
  * nothing offensive may get through — not from the AI, not typed by a
@@ -13,23 +10,14 @@ use Illuminate\Support\Facades\Log;
  * Two layers:
  *  1. Blocked words (config/content_safety.php), matched as whole words
  *     after normalising look-alikes (sh1t, f*ck, a$$hole, fuuuck).
- *  2. OpenAI moderation (free endpoint) for context: hate, harassment,
- *     sexual, violence, self-harm. Skipped when no API key is set or the
- *     service is unreachable — layer 1 still applies.
+ *  2. The AI service Super Admin chose (AiClient::moderate — OpenAI's
+ *     moderation endpoint, or Gemini under its strictest safety filters)
+ *     for context: hate, harassment, sexual, violence. Skipped when no AI
+ *     is set up or it is unreachable — layer 1 still applies.
  */
 class ContentSafety
 {
     private const LOOKALIKES = ['0' => 'o', '1' => 'i', '3' => 'e', '4' => 'a', '5' => 's', '7' => 't', '@' => 'a', '$' => 's', '!' => 'i', '|' => 'i'];
-
-    /** Readable names for OpenAI moderation categories. */
-    private const CATEGORY_LABELS = [
-        'hate' => 'hateful language',
-        'harassment' => 'insulting or harassing language',
-        'sexual' => 'sexual content',
-        'violence' => 'violent content',
-        'self-harm' => 'self-harm content',
-        'illicit' => 'illegal activity',
-    ];
 
     /**
      * @return array{ok: bool, reason: ?string, terms: string[]}
@@ -113,42 +101,7 @@ class ContentSafety
     /** @return string[] readable category names the moderation model flagged */
     private function moderationFlags(string $text): array
     {
-        $key = config('services.openai.key');
-        if (!$key) {
-            return [];
-        }
-
-        try {
-            $res = Http::withToken($key)->timeout(10)->acceptJson()
-                ->post('https://api.openai.com/v1/moderations', [
-                    'model' => 'omni-moderation-latest',
-                    'input' => $text,
-                ]);
-            if (!$res->successful()) {
-                Log::warning('Content moderation unavailable', ['status' => $res->status()]);
-
-                return [];
-            }
-
-            $result = $res->json('results.0') ?? [];
-            if (empty($result['flagged'])) {
-                return [];
-            }
-
-            $labels = [];
-            foreach (($result['categories'] ?? []) as $category => $hit) {
-                if ($hit) {
-                    $base = explode('/', $category)[0];
-                    $labels[$base] = self::CATEGORY_LABELS[$base] ?? 'inappropriate content';
-                }
-            }
-
-            return array_values($labels) ?: ['inappropriate content'];
-        } catch (\Throwable $e) {
-            Log::warning('Content moderation failed', ['error' => $e->getMessage()]);
-
-            return [];
-        }
+        return app(AiClient::class)->moderate($text);
     }
 
     /** "fuuuck" -> "fuck", "shiit" -> "shit": repeated letters to one. */

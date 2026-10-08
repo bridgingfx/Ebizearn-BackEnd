@@ -2,8 +2,6 @@
 
 namespace App\Services\AI;
 
-use Illuminate\Support\Facades\Http;
-
 /**
  * Generates ready-to-post social content for campaigns using an LLM.
  * The business describes what the post is for; the AI returns ONLY the
@@ -46,9 +44,10 @@ TXT;
     /** What the model answers when a brief cannot be written appropriately. */
     private const REFUSAL = 'UNSAFE_REQUEST';
 
-    public function __construct(private ?ContentSafety $safety = null)
+    public function __construct(private ?ContentSafety $safety = null, private ?AiClient $ai = null)
     {
         $this->safety ??= app(ContentSafety::class);
+        $this->ai ??= app(AiClient::class);
     }
 
     /**
@@ -56,15 +55,19 @@ TXT;
      */
     public function generate(string $platform, string $brief, ?string $companyName = null): array
     {
-        // 1. The brief itself must be clean before the AI sees it.
-        $briefCheck = $this->safety->check(trim($brief . ' ' . $companyName));
-        if (!$briefCheck['ok']) {
-            return $this->fail('Please rewrite your description. ' . $briefCheck['reason']);
+        if (!$this->ai->ready()) {
+            return $this->fail('AI content generation is not set up yet. You can still write the post text yourself.');
         }
 
-        $apiKey = config('services.openai.key');
-        if (!$apiKey) {
-            return $this->fail('AI content generation is not configured. Add OPENAI_API_KEY to enable it.');
+        // A provider that screens its own requests/answers (Gemini, strictest
+        // safety settings) needs no extra moderation call — one AI call per
+        // post instead of three. Blocked words are always checked.
+        $moderate = !$this->ai->screensOwnOutput();
+
+        // 1. The brief itself must be clean before the AI sees it.
+        $briefCheck = $this->safety->check(trim($brief . ' ' . $companyName), $moderate);
+        if (!$briefCheck['ok']) {
+            return $this->fail('Please rewrite your description. ' . $briefCheck['reason']);
         }
 
         $platformKey = strtolower($platform);
@@ -85,10 +88,17 @@ TXT;
         // 2. Generate, 3. clean, 4. check again — one stricter retry.
         $lastReason = null;
         foreach ([0.7, 0.3] as $temperature) {
-            $raw = $this->complete($apiKey, $system, $user, $temperature);
-            if ($raw === null) {
-                return $this->fail('AI service unavailable. Please try again.');
+            $result = $this->ai->chat($system, $user, $temperature);
+            if ($result['blocked']) {
+                // The AI provider's own safety filter refused it.
+                return $this->fail('This description cannot be turned into appropriate content. Please describe your product or service in a neutral, positive way.');
             }
+            if (!$result['ok']) {
+                return $this->fail(!empty($result['busy'])
+                    ? 'The AI is busy right now — please try again in a minute.'
+                    : 'AI service unavailable. Please try again.');
+            }
+            $raw = (string) $result['text'];
 
             if (str_contains($raw, self::REFUSAL)) {
                 return $this->fail('This description cannot be turned into appropriate content. Please describe your product or service in a neutral, positive way.');
@@ -99,7 +109,7 @@ TXT;
                 continue;
             }
 
-            $check = $this->safety->check($content);
+            $check = $this->safety->check($content, $moderate);
             if ($check['ok']) {
                 return ['success' => true, 'message' => 'Content generated.', 'content' => $content];
             }
@@ -120,8 +130,7 @@ TXT;
      */
     public function variation(string $approved, string $platform, ?string $brief = null): ?string
     {
-        $apiKey = config('services.openai.key');
-        if (!$apiKey || trim($approved) === '') {
+        if (!$this->ai->ready() || trim($approved) === '') {
             return null;
         }
 
@@ -139,38 +148,17 @@ TXT;
         }
 
         foreach ([0.9, 0.6] as $temperature) {
-            $raw = $this->complete($apiKey, $system, $user, $temperature);
-            if ($raw === null) {
+            $result = $this->ai->chat($system, $user, $temperature);
+            if (!$result['ok']) {
                 return null;
             }
-            $content = $this->clean($raw);
-            if ($content !== '' && !str_contains($content, self::REFUSAL) && $this->safety->check($content)['ok']) {
+            $content = $this->clean((string) $result['text']);
+            if ($content !== '' && !str_contains($content, self::REFUSAL) && $this->safety->check($content, !$this->ai->screensOwnOutput())['ok']) {
                 return $content;
             }
         }
 
         return null;
-    }
-
-    /** Raw model text, or null when the API call failed. */
-    private function complete(string $apiKey, string $system, string $user, float $temperature): ?string
-    {
-        try {
-            $res = Http::withToken($apiKey)->timeout(30)->acceptJson()
-                ->post('https://api.openai.com/v1/chat/completions', [
-                    'model' => 'gpt-4o-mini',
-                    'messages' => [
-                        ['role' => 'system', 'content' => $system],
-                        ['role' => 'user', 'content' => $user],
-                    ],
-                    'max_tokens' => 500,
-                    'temperature' => $temperature,
-                ]);
-
-            return $res->successful() ? trim((string) $res->json('choices.0.message.content')) : null;
-        } catch (\Throwable $e) {
-            return null;
-        }
     }
 
     /**

@@ -74,7 +74,9 @@ class AdminSystemController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data' => SystemSetting::all(),
+            // AI settings (incl. the encrypted API key) are Super Admin only —
+            // managed through /admin/ai-settings, never listed here.
+            'data' => SystemSetting::all()->reject(fn (SystemSetting $s) => str_starts_with($s->key, 'ai_'))->values(),
         ]);
     }
 
@@ -100,6 +102,10 @@ class AdminSystemController extends Controller
 
         $key = $validator->validated()['key'];
         $value = $validator->validated()['value'] ?? null;
+
+        if (str_starts_with($key, 'ai_')) {
+            return response()->json(['success' => false, 'message' => 'AI settings are managed by Super Admin under AI content generator.'], 403);
+        }
 
         $before = SystemSetting::get($key);
         SystemSetting::set($key, $value);

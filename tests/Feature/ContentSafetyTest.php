@@ -3,8 +3,11 @@
 namespace Tests\Feature;
 
 use App\Services\AI\ContentGeneratorService;
+use App\Services\AI\AiSettings;
 use App\Services\AI\ContentSafety;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 /**
@@ -14,6 +17,8 @@ use Tests\TestCase;
  */
 class ContentSafetyTest extends TestCase
 {
+    use RefreshDatabase;
+
     private function chat(string $content): array
     {
         return ['choices' => [['message' => ['content' => $content]]]];

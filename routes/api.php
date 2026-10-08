@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\AdminVerificationController;
 use App\Http\Controllers\Api\V1\TrafficAnalyticsController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AuthProviderSettingsController;
+use App\Http\Controllers\Api\V1\AiSettingsController;
 use App\Http\Controllers\Api\V1\BusinessCampaignController;
 use App\Http\Controllers\Api\V1\BusinessTaskController;
 use App\Http\Controllers\Api\V1\BusinessTeamController;
@@ -257,6 +258,14 @@ Route::prefix('v1')->group(function () {
         Route::middleware('role:superadmin')->prefix('admin/auth-providers')->group(function () {
             Route::get('/', [AuthProviderSettingsController::class, 'show']);
             Route::put('/', [AuthProviderSettingsController::class, 'update']);
+        });
+
+        // Super Admin only: AI content generator (provider, encrypted API key, model).
+        Route::middleware('role:superadmin')->prefix('admin/ai-settings')->group(function () {
+            Route::get('/', [AiSettingsController::class, 'show']);
+            Route::put('/', [AiSettingsController::class, 'update']);
+            Route::post('/test', [AiSettingsController::class, 'test'])->middleware('throttle:10,1');
+            Route::delete('/key', [AiSettingsController::class, 'removeKey']);
         });
 
         // Super Admin only: contributor rank tiers (promotion thresholds + bonus %)
