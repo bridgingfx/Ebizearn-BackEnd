@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\V1\Ops\OpsPermissionController;
 use App\Http\Controllers\Api\V1\Ops\OpsDepartmentController;
 use App\Http\Controllers\Api\V1\Ops\OpsSettingsController;
 use App\Http\Controllers\Api\V1\Ops\OpsTaskTypeController;
+use App\Http\Controllers\Api\V1\Ops\OpsDropdownController;
 use App\Http\Controllers\Api\V1\Ops\OpsSocialPlatformController;
 use App\Http\Controllers\Api\V1\Ops\OpsWalletController;
 use App\Http\Controllers\Api\V1\OtpController;
@@ -57,6 +58,8 @@ Route::prefix('v1')->group(function () {
     // Phase 4 (public): task-type catalog with proof contracts and
     // enforceable reward bands.
     Route::get('/task-types', [TaskTypeController::class, 'index']);
+    // Public: active wizard presets (what a Task Library template pre-fills).
+    Route::get('/wizard-presets', [OpsDropdownController::class, 'publicPresets']);
 
     // Public: social platforms Super Admin configured (additive 2026-10-07).
     Route::get('/platforms', [SocialPlatformController::class, 'index']);
@@ -549,6 +552,14 @@ Route::prefix('v1')->group(function () {
             Route::get('/task-types', [OpsTaskTypeController::class, 'index']);
             Route::patch('/task-types/{key}', [OpsTaskTypeController::class, 'update']);
             Route::post('/task-types/seed', [OpsTaskTypeController::class, 'seed']);
+            // Task Library → Dropdown lists: add / delete options.
+            Route::post('/task-types', [OpsDropdownController::class, 'storeTaskType']);
+            Route::delete('/task-types/{key}', [OpsDropdownController::class, 'destroyTaskType']);
+            Route::delete('/task-categories/{id}', [OpsDropdownController::class, 'destroyCategory'])->whereNumber('id');
+            Route::get('/wizard-presets', [OpsDropdownController::class, 'presets']);
+            Route::post('/wizard-presets', [OpsDropdownController::class, 'storePreset']);
+            Route::patch('/wizard-presets/{id}', [OpsDropdownController::class, 'updatePreset'])->whereNumber('id');
+            Route::delete('/wizard-presets/{id}', [OpsDropdownController::class, 'destroyPreset'])->whereNumber('id');
             // Sumsub KYC credentials (DB-backed, never env). Superadmin only.
             Route::post('/kyc/sumsub/credentials', [KycProviderController::class, 'saveCredentials']);
             // Social platforms: Super Admin adds a network (name + SVG/PNG
