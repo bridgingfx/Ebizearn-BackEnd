@@ -61,6 +61,18 @@ class Campaign extends Model
         'content_reviewed_at' => 'datetime',
     ];
 
+    /** The post image as a full URL (the stored path stays internal). */
+    protected $appends = ['content_image_url'];
+
+    protected $hidden = ['content_image_path'];
+
+    public function getContentImageUrlAttribute(): ?string
+    {
+        $path = $this->attributes['content_image_path'] ?? null;
+
+        return $path ? \Illuminate\Support\Facades\Storage::disk('public')->url($path) : null;
+    }
+
     public const CONTENT_MANUAL = 'manual';
     public const CONTENT_AUTO = 'auto';
 

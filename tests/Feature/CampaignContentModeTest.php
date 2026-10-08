@@ -167,4 +167,36 @@ class CampaignContentModeTest extends TestCase
             ->assertJsonPath('data.content_mode', 'auto')
             ->assertJsonPath('data.content_status', 'approved');
     }
+
+    public function test_post_image_is_uploaded_reviewed_and_given_to_contributors(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+        $task = $this->makeTask('manual', 'approved');
+        $owner = \App\Models\Business::find($task->campaign->business_id)->owner;
+
+        // The business adds an image to approved content → back to review.
+        $this->actAs($owner);
+        $this->post("/api/v1/business/campaigns/{$task->campaign_id}/content-image", [
+            'image' => \Illuminate\Http\UploadedFile::fake()->image('post.jpg', 1080, 1080),
+        ], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.content_status', 'pending');
+        $this->post("/api/v1/business/campaigns/{$task->campaign_id}/content-image", [
+            'image' => \Illuminate\Http\UploadedFile::fake()->create('notes.pdf', 10, 'application/pdf'),
+        ], ['Accept' => 'application/json'])->assertStatus(422);
+
+        // Another business cannot touch it.
+        $this->actAs($this->makeUser('business'));
+        $this->post("/api/v1/business/campaigns/{$task->campaign_id}/content-image", [
+            'image' => \Illuminate\Http\UploadedFile::fake()->image('x.jpg'),
+        ], ['Accept' => 'application/json'])->assertForbidden();
+
+        // Staff approve; contributors get the image with their text.
+        $this->actAs($this->makeUser('admin'));
+        $this->postJson("/api/v1/staff/campaigns/{$task->campaign_id}/content/decision", ['decision' => 'approve'])->assertOk();
+
+        $this->actAs($this->makeUser('contributor'));
+        $this->getJson("/api/v1/tasks/{$task->uuid}")->assertOk()->assertJsonMissingPath('data.campaign.content_image_url');
+        $this->postJson("/api/v1/tasks/{$task->uuid}/start")->assertCreated();
+        $url = $this->getJson("/api/v1/tasks/{$task->uuid}/content")->assertOk()->json('data.image_url');
+        $this->assertStringContainsString('campaign-content/', (string) $url);
+    }
 }

@@ -183,7 +183,7 @@ class TaskController extends Controller
 
         // Post text is handed out per contributor after they start the task
         // (GET /tasks/{id}/content); the campaign only says whether there is any.
-        $task->campaign?->makeHidden(['generated_content', 'content_brief', 'content_review_note', 'content_reviewed_by', 'content_reviewed_at']);
+        $task->campaign?->makeHidden(['generated_content', 'content_brief', 'content_review_note', 'content_reviewed_by', 'content_reviewed_at', 'content_image_url']);
 
         return response()->json([
             'success' => true,
@@ -229,7 +229,13 @@ class TaskController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => ['mode' => $campaign->content_mode, 'content' => $content, 'personal' => $personal],
+            'data' => [
+                'mode' => $campaign->content_mode,
+                'content' => $content,
+                'personal' => $personal,
+                // Image to post with the text (same for every contributor).
+                'image_url' => $campaign->content_image_url,
+            ],
         ]);
     }
 

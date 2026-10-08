@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\BusinessCampaignController;
 use App\Http\Controllers\Api\V1\BusinessTaskController;
 use App\Http\Controllers\Api\V1\BusinessTeamController;
 use App\Http\Controllers\Api\V1\CampaignWizardController;
+use App\Http\Controllers\Api\V1\CampaignContentImageController;
 use App\Http\Controllers\Api\V1\ConfigController;
 use App\Http\Controllers\Api\V1\DemoRequestController;
 use App\Http\Controllers\Api\V1\DepositController;
@@ -212,6 +213,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/task-templates', [TaskTemplateController::class, 'index'])->middleware('permission:view_task_library');
             Route::post('/campaigns/{id}/fund', [BusinessCampaignController::class, 'fund'])->middleware(['email.verified', 'permission:fund_campaigns']);
             Route::post('/campaigns/{id}/logo', [BusinessCampaignController::class, 'uploadLogo']);
+            // Image contributors post with the post text.
+            Route::post('/campaigns/{id}/content-image', [CampaignContentImageController::class, 'businessUpload'])->middleware('throttle:20,1');
+            Route::delete('/campaigns/{id}/content-image', [CampaignContentImageController::class, 'businessRemove']);
             Route::get('/submissions', [BusinessCampaignController::class, 'submissions'])->middleware('permission:review_campaign_proofs');
             // Two-step review: the business recommends, staff confirm and release payment.
             Route::post('/submissions/{id}/decision', [BusinessCampaignController::class, 'reviewSubmission'])
@@ -482,6 +486,8 @@ Route::prefix('v1')->group(function () {
             Route::patch('/{id}/status', [StaffCampaignController::class, 'updateStatus']);
             // Post content contributors copy: staff override + approval.
             Route::patch('/{id}/content', [StaffCampaignController::class, 'updateContent'])->middleware('permission:edit_campaigns');
+            Route::post('/{id}/content-image', [CampaignContentImageController::class, 'staffUpload'])->middleware('permission:edit_campaigns');
+            Route::delete('/{id}/content-image', [CampaignContentImageController::class, 'staffRemove'])->middleware('permission:edit_campaigns');
             Route::post('/{id}/content/decision', [StaffCampaignController::class, 'contentDecision']);
             Route::patch('/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');
             Route::delete('/{id}', [StaffCampaignController::class, 'destroy'])->middleware('permission:delete_campaigns');
