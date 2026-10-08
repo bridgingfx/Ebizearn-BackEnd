@@ -2,11 +2,17 @@
 
 namespace App\Services\AI;
 
+use Illuminate\Support\Facades\Http;
+
 /**
  * Generates ready-to-post social content for campaigns using an LLM.
- * The business describes what the post is for; the AI returns creative,
- * platform-appropriate content (hashtags, keywords, length limits).
- * Contributors copy-paste it, screenshot, and submit.
+ * The business describes what the post is for; the AI returns ONLY the
+ * post text, which contributors copy, paste, screenshot and submit.
+ *
+ * Contributors post this publicly under their own names, so every result
+ * must be clean and appropriate: the brief is checked before the AI is
+ * called, the AI works under strict content rules, and its output is
+ * cleaned and checked again (ContentSafety) before anyone sees it.
  */
 class ContentGeneratorService
 {
@@ -15,80 +21,140 @@ class ContentGeneratorService
      */
     private const PLATFORM_RULES = [
         'instagram' => 'Instagram caption: engaging, 5-10 relevant hashtags at the end, max 150 words, emoji okay but tasteful.',
-        'tiktok' => 'TikTok caption: punchy and casual, 3-5 hashtags, max 80 words, Gen-Z friendly tone.',
+        'tiktok' => 'TikTok caption: punchy and casual, 3-5 hashtags, max 80 words, friendly tone.',
         'facebook' => 'Facebook post: warm and conversational, 2-4 hashtags, max 120 words.',
-        'youtube' => 'YouTube comment: genuine and specific, no hashtags needed, max 60 words, must sound like a real viewer.',
-        'google_review' => 'Google review: authentic 5-star review, specific details, natural language, 40-80 words, no hashtags, no emoji.',
-        'trustpilot' => 'Trustpilot review: honest-sounding 5-star review, mentions specific positives, 40-80 words, no hashtags.',
+        'youtube' => 'YouTube comment: genuine and specific to the video topic in the brief, no hashtags, max 60 words.',
+        'google_review' => 'Google review: positive, natural language, 40-80 words, no hashtags, no emoji. Mention only what the brief says about the business; never invent prices, staff names or events.',
+        'trustpilot' => 'Trustpilot review: positive, natural language, 40-80 words, no hashtags. Mention only what the brief says about the business; never invent prices, staff names or events.',
         'twitter' => 'X/Twitter post: concise and sharp, 1-2 hashtags, max 40 words.',
         'linkedin' => 'LinkedIn post: professional but human, 2-3 hashtags, max 120 words.',
         'default' => 'Social media post: engaging and natural, 3-5 relevant hashtags, max 100 words.',
     ];
 
+    /** Non-negotiable language rules for every platform. */
+    private const SAFETY_RULES = <<<'TXT'
+Content rules (must always be followed):
+- Clean, polite, family-friendly language that is safe for every audience and every country.
+- No swear words, slang insults, crude jokes or offensive words of any kind — not even mild or censored ones (no f*ck, sh*t, damn).
+- No sexual content, no violence or threats, no hate, no discrimination or stereotypes about any race, religion, caste, nationality, gender, age, disability or sexual orientation.
+- No politics, no religion, no alcohol, drugs, tobacco or gambling promotion.
+- Never insult, mock or name competitors or any person.
+- No false, misleading or exaggerated claims: no guarantees, no "best in the world", no medical, financial or legal promises.
+- Respectful and positive tone.
+TXT;
+
+    /** What the model answers when a brief cannot be written appropriately. */
+    private const REFUSAL = 'UNSAFE_REQUEST';
+
+    public function __construct(private ?ContentSafety $safety = null)
+    {
+        $this->safety ??= app(ContentSafety::class);
+    }
+
     /**
-     * Generate content via OpenAI (or return a template fallback when no key).
+     * @return array{success: bool, message: string, content: ?string}
      */
     public function generate(string $platform, string $brief, ?string $companyName = null): array
     {
-        $platformKey = strtolower($platform);
-        $rules = self::PLATFORM_RULES[$platformKey] ?? self::PLATFORM_RULES['default'];
+        // 1. The brief itself must be clean before the AI sees it.
+        $briefCheck = $this->safety->check(trim($brief . ' ' . $companyName));
+        if (!$briefCheck['ok']) {
+            return $this->fail('Please rewrite your description. ' . $briefCheck['reason']);
+        }
 
         $apiKey = config('services.openai.key');
         if (!$apiKey) {
-            return [
-                'success' => false,
-                'message' => 'AI content generation is not configured. Add OPENAI_API_KEY to enable it.',
-                'content' => null,
-            ];
+            return $this->fail('AI content generation is not configured. Add OPENAI_API_KEY to enable it.');
         }
 
-        $system = "You write social media content for real marketing campaigns. "
-            . "Rules: {$rules} "
-            . "Never use placeholder brackets like [Your Name]. Write ready-to-post text. "
-            . "Return ONLY the post content, no explanations.";
+        $platformKey = strtolower($platform);
+        $rules = self::PLATFORM_RULES[$platformKey] ?? self::PLATFORM_RULES['default'];
 
-        $user = "Write a post for this: {$brief}";
+        $system = "You write social media content that ordinary people will copy and post publicly for a real marketing campaign.\n"
+            . "Format: {$rules}\n"
+            . self::SAFETY_RULES . "\n"
+            . "Output: return ONLY the final post text, ready to copy and paste — no title, no introduction such as \"Here is your post\", "
+            . "no quotation marks around it, no notes, no options, no placeholders like [Your Name].\n"
+            . 'If the request cannot be written while following every content rule, reply with exactly ' . self::REFUSAL . ' and nothing else.';
+
+        $user = "Write the post for this: {$brief}";
         if ($companyName) {
             $user .= " (Brand: {$companyName})";
         }
 
+        // 2. Generate, 3. clean, 4. check again — one stricter retry.
+        $lastReason = null;
+        foreach ([0.7, 0.3] as $temperature) {
+            $raw = $this->complete($apiKey, $system, $user, $temperature);
+            if ($raw === null) {
+                return $this->fail('AI service unavailable. Please try again.');
+            }
+
+            if (str_contains($raw, self::REFUSAL)) {
+                return $this->fail('This description cannot be turned into appropriate content. Please describe your product or service in a neutral, positive way.');
+            }
+
+            $content = $this->clean($raw);
+            if ($content === '') {
+                continue;
+            }
+
+            $check = $this->safety->check($content);
+            if ($check['ok']) {
+                return ['success' => true, 'message' => 'Content generated.', 'content' => $content];
+            }
+            $lastReason = $check['reason'];
+        }
+
+        return $this->fail($lastReason
+            ? 'The AI could not produce suitable content for this description. Please rephrase it and try again.'
+            : 'AI returned empty content. Please try again.');
+    }
+
+    /** Raw model text, or null when the API call failed. */
+    private function complete(string $apiKey, string $system, string $user, float $temperature): ?string
+    {
         try {
-            $ch = curl_init('https://api.openai.com/v1/chat/completions');
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => 30,
-                CURLOPT_HTTPHEADER => [
-                    'Content-Type: application/json',
-                    'Authorization: Bearer ' . $apiKey,
-                ],
-                CURLOPT_POSTFIELDS => json_encode([
+            $res = Http::withToken($apiKey)->timeout(30)->acceptJson()
+                ->post('https://api.openai.com/v1/chat/completions', [
                     'model' => 'gpt-4o-mini',
                     'messages' => [
                         ['role' => 'system', 'content' => $system],
                         ['role' => 'user', 'content' => $user],
                     ],
                     'max_tokens' => 500,
-                    'temperature' => 0.8,
-                ]),
-            ]);
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
+                    'temperature' => $temperature,
+                ]);
 
-            if ($httpCode !== 200 || !$response) {
-                return ['success' => false, 'message' => 'AI service unavailable. Please try again.', 'content' => null];
-            }
-
-            $data = json_decode($response, true);
-            $content = trim($data['choices'][0]['message']['content'] ?? '');
-
-            if (!$content) {
-                return ['success' => false, 'message' => 'AI returned empty content. Please try again.', 'content' => null];
-            }
-
-            return ['success' => true, 'message' => 'Content generated.', 'content' => $content];
+            return $res->successful() ? trim((string) $res->json('choices.0.message.content')) : null;
         } catch (\Throwable $e) {
-            return ['success' => false, 'message' => 'AI service error. Please try again.', 'content' => null];
+            return null;
         }
+    }
+
+    /**
+     * Keep only the post: drop "Here's your post:" lead-ins, wrapping quotes,
+     * code fences and markdown emphasis.
+     */
+    public function clean(string $text): string
+    {
+        $text = trim(preg_replace('/^```[a-z]*\s*|\s*```$/i', '', trim($text)));
+        $text = preg_replace('/^(sure|certainly|of course)[^\n]*\n+/i', '', $text);
+        $text = preg_replace('/^(here(\'s| is| are)[^\n:]*|caption|post|review|comment)\s*:\s*\n*/i', '', trim($text));
+        $text = preg_replace('/\*\*(.+?)\*\*|__(.+?)__/s', '$1$2', $text);
+        $text = trim($text);
+
+        foreach (['"' => '"', "'" => "'", '“' => '”', '‘' => '’'] as $open => $close) {
+            if (mb_strlen($text) > 1 && str_starts_with($text, $open) && str_ends_with($text, $close)) {
+                $text = trim(mb_substr($text, 1, -1));
+            }
+        }
+
+        return $text;
+    }
+
+    private function fail(string $message): array
+    {
+        return ['success' => false, 'message' => $message, 'content' => null];
     }
 }

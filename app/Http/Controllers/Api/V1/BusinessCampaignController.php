@@ -173,6 +173,22 @@ class BusinessCampaignController extends Controller
             ], 422);
         }
 
+        // Contributors copy and post this text publicly — it must be clean
+        // even when the business typed or edited it by hand.
+        $safety = app(\App\Services\AI\ContentSafety::class);
+        foreach (['generated_content' => 'Post content', 'content_brief' => 'Content description'] as $field => $label) {
+            $check = $safety->check($request->input($field));
+            if (!$check['ok']) {
+                $message = "{$label}: {$check['reason']} Please edit it before creating the campaign.";
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $message,
+                    'errors' => [$field => [$message]],
+                ], 422);
+            }
+        }
+
         try {
             $campaign = app(CampaignCreationService::class)->create(
                 $business,
