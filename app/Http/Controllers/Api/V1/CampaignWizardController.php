@@ -103,7 +103,7 @@ class CampaignWizardController extends Controller
      */
     public function updateDraft(Request $request, string $id): JsonResponse
     {
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
 
         Gate::authorize('update', $campaign);
 
@@ -220,7 +220,7 @@ class CampaignWizardController extends Controller
      */
     public function launch(Request $request, string $id): JsonResponse
     {
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
 
         Gate::authorize('launch', $campaign);
 

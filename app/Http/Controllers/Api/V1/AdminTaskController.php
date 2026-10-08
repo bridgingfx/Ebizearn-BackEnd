@@ -107,7 +107,7 @@ class AdminTaskController extends Controller
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $task = Task::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $task = Task::whereKeyOrUuid($id)->firstOrFail();
         if (!$this->taskInScope($task)) {
             return StaffScope::notFound();
         }
@@ -131,7 +131,7 @@ class AdminTaskController extends Controller
 
     public function destroy(string $id): JsonResponse
     {
-        $task = Task::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $task = Task::whereKeyOrUuid($id)->firstOrFail();
         if (!$this->taskInScope($task)) {
             return StaffScope::notFound();
         }

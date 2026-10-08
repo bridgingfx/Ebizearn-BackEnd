@@ -85,7 +85,7 @@ class StaffCampaignController extends Controller
     public function show(string $id): JsonResponse
     {
         try {
-            $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))
+            $campaign = Campaign::whereKeyOrUuid($id)
                 ->with(['business.owner', 'category', 'tasks.taskType', 'creator:id,name,role,business_owner_id'])
                 ->withCount('tasks')
                 ->firstOrFail();
@@ -214,7 +214,7 @@ class StaffCampaignController extends Controller
             ], 422);
         }
 
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
         if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
             return StaffScope::notFound();
         }
@@ -290,7 +290,7 @@ class StaffCampaignController extends Controller
             'content_brief' => 'nullable|string|max:500',
         ]);
 
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
         if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
             return StaffScope::notFound();
         }
@@ -340,7 +340,7 @@ class StaffCampaignController extends Controller
             'note' => 'nullable|string|max:500|required_if:decision,reject',
         ], ['note.required_if' => 'Tell the business what to change.']);
 
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
         if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
             return StaffScope::notFound();
         }
@@ -384,7 +384,7 @@ class StaffCampaignController extends Controller
             ], 422);
         }
 
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
         if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
             return StaffScope::notFound();
         }
@@ -413,7 +413,7 @@ class StaffCampaignController extends Controller
      */
     public function destroy(Request $request, string $id): JsonResponse
     {
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
         if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
             return StaffScope::notFound();
         }

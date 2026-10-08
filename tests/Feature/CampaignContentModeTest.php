@@ -98,6 +98,24 @@ class CampaignContentModeTest extends TestCase
         $this->postJson("/api/v1/tasks/{$task->uuid}/start")->assertCreated();
     }
 
+    public function test_a_uuid_always_opens_its_own_task_never_the_task_with_that_number(): void
+    {
+        $first = $this->makeTask('manual', 'approved', 'First task text');
+        $second = $this->makeTask('manual', 'approved', 'Second task text');
+        // A uuid that starts with the other task's id (MySQL reads "6c19…" as 6).
+        $first->forceFill(['uuid' => $second->id . 'c199a0f-d3db-4c38-b391-8404d0c5a0b1'])->save();
+
+        $this->actAs($this->makeUser('contributor'));
+        $this->getJson("/api/v1/tasks/{$first->uuid}")->assertOk()->assertJsonPath('data.id', $first->id);
+        $this->postJson("/api/v1/tasks/{$first->uuid}/start")->assertCreated()->assertJsonPath('data.task_id', $first->id);
+        $this->getJson("/api/v1/tasks/{$first->uuid}/content")->assertJsonPath('data.content', 'First task text');
+        // Numeric ids still work.
+        $this->getJson("/api/v1/tasks/{$second->id}")->assertOk()->assertJsonPath('data.id', $second->id);
+
+        $sql = \App\Models\Task::query()->whereKeyOrUuid($first->uuid)->toSql();
+        $this->assertStringNotContainsString('"id"', $sql);
+    }
+
     public function test_manual_mode_gives_everyone_the_approved_text(): void
     {
         $task = $this->makeTask('manual', 'approved');
@@ -194,7 +212,7 @@ class CampaignContentModeTest extends TestCase
         $this->postJson("/api/v1/staff/campaigns/{$task->campaign_id}/content/decision", ['decision' => 'approve'])->assertOk();
 
         $this->actAs($this->makeUser('contributor'));
-        $this->getJson("/api/v1/tasks/{$task->uuid}")->assertOk()->assertJsonMissingPath('data.campaign.content_image_url');
+        $this->getJson("/api/v1/tasks/{$task->uuid}")->assertOk()->assertJsonPath('data.campaign.content_image_url', fn ($u) => str_contains((string) $u, 'campaign-content/'));
         $this->postJson("/api/v1/tasks/{$task->uuid}/start")->assertCreated();
         $url = $this->getJson("/api/v1/tasks/{$task->uuid}/content")->assertOk()->json('data.image_url');
         $this->assertStringContainsString('campaign-content/', (string) $url);

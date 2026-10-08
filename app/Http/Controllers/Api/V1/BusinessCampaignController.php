@@ -281,7 +281,7 @@ class BusinessCampaignController extends Controller
         }
 
         $campaign = Campaign::where('business_id', $business->id)
-            ->where(fn($q) => $q->where('id', $id)->orWhere('uuid', $id))
+            ->whereKeyOrUuid($id)
             ->firstOrFail();
 
         $validator = Validator::make($request->all(), [
@@ -369,7 +369,7 @@ class BusinessCampaignController extends Controller
         // Phase 13: load tenant-agnostically, then authorize explicitly so a
         // cross-business read is a 403 (not a 404 that hides behind scoping).
         $campaign = Campaign::with(['category', 'tasks', 'creator:id,name,role,business_owner_id'])
-            ->where(fn($q) => $q->where('id', $id)->orWhere('uuid', $id))
+            ->whereKeyOrUuid($id)
             ->firstOrFail();
 
         Gate::authorize('view', $campaign);
@@ -407,7 +407,7 @@ class BusinessCampaignController extends Controller
         }
 
         $campaign = Campaign::where('business_id', $business->id)
-            ->where(fn($q) => $q->where('id', $id)->orWhere('uuid', $id))
+            ->whereKeyOrUuid($id)
             ->firstOrFail();
 
         $status = $request->input('status');
@@ -536,7 +536,7 @@ class BusinessCampaignController extends Controller
         $business = $request->user()->business;
         abort_unless($business, 403, 'Business profile not found.');
 
-        $submission = TaskSubmission::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))
+        $submission = TaskSubmission::whereKeyOrUuid($id)
             ->whereHas('task.campaign', fn ($q) => $q->where('business_id', $business->id))
             ->firstOrFail();
 
@@ -578,7 +578,7 @@ class BusinessCampaignController extends Controller
      */
     public function update(Request $request, string $id): JsonResponse
     {
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
         Gate::authorize('update', $campaign);
 
         $validator = Validator::make($request->all(), CampaignManagementService::editRules());
@@ -610,7 +610,7 @@ class BusinessCampaignController extends Controller
      */
     public function destroy(Request $request, string $id): JsonResponse
     {
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
         Gate::authorize('delete', $campaign);
 
         try {
@@ -643,7 +643,7 @@ class BusinessCampaignController extends Controller
      */
     public function uploadLogo(Request $request, string $id): JsonResponse
     {
-        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $campaign = Campaign::whereKeyOrUuid($id)->firstOrFail();
         Gate::authorize('update', $campaign);
 
         $validator = Validator::make($request->all(), [

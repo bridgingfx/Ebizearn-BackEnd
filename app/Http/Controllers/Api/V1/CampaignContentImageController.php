@@ -71,7 +71,7 @@ class CampaignContentImageController extends Controller
 
     private function find(string $id): Campaign
     {
-        return Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        return Campaign::whereKeyOrUuid($id)->firstOrFail();
     }
 
     private function store(Request $request, Campaign $campaign, bool $staff): JsonResponse

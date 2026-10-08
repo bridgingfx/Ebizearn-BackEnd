@@ -57,7 +57,7 @@ class BusinessTaskController extends Controller
     public function show(Request $request, string $id): JsonResponse
     {
         $task = Task::with(['category', 'taskType', 'campaign', 'creator:id,name,role,business_owner_id'])
-            ->where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))
+            ->whereKeyOrUuid($id)
             ->firstOrFail();
 
         Gate::authorize('view', $task);
@@ -95,7 +95,7 @@ class BusinessTaskController extends Controller
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $task = Task::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $task = Task::whereKeyOrUuid($id)->firstOrFail();
 
         Gate::authorize('update', $task);
 
@@ -118,7 +118,7 @@ class BusinessTaskController extends Controller
 
     public function destroy(Request $request, string $id): JsonResponse
     {
-        $task = Task::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        $task = Task::whereKeyOrUuid($id)->firstOrFail();
 
         Gate::authorize('delete', $task);
 

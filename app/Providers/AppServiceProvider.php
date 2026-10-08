@@ -37,5 +37,18 @@ class AppServiceProvider extends ServiceProvider
         // New sign-ups, tasks, campaigns, proofs, withdrawals and tickets go
         // into the audit trail — the source of the staff notification feed.
         \App\Services\Audit\ActivityRecorder::register();
+
+        // Look a record up by numeric id OR uuid. Never "id = ? OR uuid = ?"
+        // with the same value: MySQL casts a uuid like "6c199a0f-…" to the
+        // number 6 when comparing with the integer id, so it matched record
+        // #6 — the wrong task / campaign.
+        \Illuminate\Database\Eloquent\Builder::macro('whereKeyOrUuid', function ($value, string $prefix = '') {
+            /** @var \Illuminate\Database\Eloquent\Builder $this */
+            $value = (string) $value;
+
+            return ctype_digit($value)
+                ? $this->where($prefix . 'id', (int) $value)
+                : $this->where($prefix . 'uuid', $value);
+        });
     }
 }

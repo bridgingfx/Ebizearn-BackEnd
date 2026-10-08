@@ -177,13 +177,14 @@ class TaskController extends Controller
             ->where('status', 'available')
             ->whereHas('campaign', fn ($q) => $q->where('status', 'active')->contentReady())
             ->where(function ($q) use ($id) {
-                $q->where('tasks.id', $id)->orWhere('tasks.uuid', $id);
+                $q->whereKeyOrUuid($id, 'tasks.');
             })
             ->firstOrFail();
 
         // Post text is handed out per contributor after they start the task
-        // (GET /tasks/{id}/content); the campaign only says whether there is any.
-        $task->campaign?->makeHidden(['generated_content', 'content_brief', 'content_review_note', 'content_reviewed_by', 'content_reviewed_at', 'content_image_url']);
+        // (GET /tasks/{id}/content); the campaign only says whether there is
+        // any. The post image is the same for everyone, so it is shown up front.
+        $task->campaign?->makeHidden(['generated_content', 'content_brief', 'content_review_note', 'content_reviewed_by', 'content_reviewed_at']);
 
         return response()->json([
             'success' => true,
@@ -200,7 +201,7 @@ class TaskController extends Controller
     public function content(Request $request, string $id): JsonResponse
     {
         $user = $request->user();
-        $task = Task::with('campaign')->where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $task = Task::with('campaign')->whereKeyOrUuid($id)->firstOrFail();
         $campaign = $task->campaign;
 
         $assignment = TaskAssignment::where('task_id', $task->id)->where('user_id', $user->id)->latest('id')->first();
@@ -251,7 +252,7 @@ class TaskController extends Controller
             return response()->json($lock, 403);
         }
 
-        $task = Task::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $task = Task::whereKeyOrUuid($id)->firstOrFail();
 
         if ($task->status !== 'available' || $task->slots_taken >= $task->slots_total) {
             return response()->json([
@@ -357,7 +358,7 @@ class TaskController extends Controller
             return response()->json($lock, 403);
         }
 
-        $task = Task::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $task = Task::whereKeyOrUuid($id)->firstOrFail();
 
         if ($task->status !== 'available') {
             return response()->json([

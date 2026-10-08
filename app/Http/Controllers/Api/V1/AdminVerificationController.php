@@ -179,8 +179,7 @@ class AdminVerificationController extends Controller
             'reviewer',
             'businessReviewer:id,name',
         ])
-        ->where('id', $id)
-        ->orWhere('uuid', $id)
+        ->whereKeyOrUuid($id)
         ->firstOrFail();
         if (!StaffScope::allowsUser(request()->user(), $submission->user_id)) {
             return StaffScope::notFound();
@@ -225,7 +224,7 @@ class AdminVerificationController extends Controller
             ], 422);
         }
 
-        $submission = TaskSubmission::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $submission = TaskSubmission::whereKeyOrUuid($id)->firstOrFail();
         if (!StaffScope::allowsUser($request->user(), $submission->user_id)) {
             return StaffScope::notFound();
         }
@@ -345,7 +344,7 @@ class AdminVerificationController extends Controller
             ], 422);
         }
 
-        $withdrawal = WithdrawalRequest::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $withdrawal = WithdrawalRequest::whereKeyOrUuid($id)->firstOrFail();
         if (!StaffScope::allowsUser($request->user(), $withdrawal->user_id)) {
             return StaffScope::notFound();
         }
@@ -404,7 +403,7 @@ class AdminVerificationController extends Controller
             ], 422);
         }
 
-        $withdrawal = WithdrawalRequest::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $withdrawal = WithdrawalRequest::whereKeyOrUuid($id)->firstOrFail();
         if (!StaffScope::allowsUser($request->user(), $withdrawal->user_id)) {
             return StaffScope::notFound();
         }
