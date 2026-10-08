@@ -170,6 +170,8 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['role:contributor', 'email.verified', 'permission:perform_tasks'])->group(function () {
             Route::post('/tasks/{id}/start', [TaskController::class, 'start']);
             Route::post('/tasks/{id}/submit', [TaskController::class, 'submit']);
+            // The post text this contributor copies (own AI version in auto mode).
+            Route::get('/tasks/{id}/content', [TaskController::class, 'content'])->middleware('throttle:30,1');
         });
 
         // Contributor Wallet Operations (Round 2: wallet actions gated on
@@ -374,6 +376,8 @@ Route::prefix('v1')->group(function () {
                 Route::post('/users/{id}/impersonate', [AdminSystemController::class, 'impersonate'])->whereNumber('id');
                 Route::post('/impersonation/stop', [AdminSystemController::class, 'stopImpersonation']);
                 Route::patch('/users/{id}/status', [AdminSystemController::class, 'updateUserStatus']);
+                // Contributor level: set by hand and lock, or follow completed tasks.
+                Route::patch('/users/{id}/level', [AdminSystemController::class, 'updateContributorLevel'])->whereNumber('id');
             });
         });
 
@@ -456,6 +460,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/', [StaffCampaignController::class, 'store'])->middleware('permission:post_campaigns');
             Route::get('/{id}', [StaffCampaignController::class, 'show']);
             Route::patch('/{id}/status', [StaffCampaignController::class, 'updateStatus']);
+            // Post content contributors copy: staff override + approval.
+            Route::patch('/{id}/content', [StaffCampaignController::class, 'updateContent'])->middleware('permission:edit_campaigns');
+            Route::post('/{id}/content/decision', [StaffCampaignController::class, 'contentDecision']);
             Route::patch('/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');
             Route::delete('/{id}', [StaffCampaignController::class, 'destroy'])->middleware('permission:delete_campaigns');
         });

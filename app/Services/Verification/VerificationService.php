@@ -318,12 +318,8 @@ class VerificationService
             );
         }
 
-        // 1b. Auto-promotion check after every approval.
-        $newRank = $rankService->maybePromote($submission->user);
-        if ($newRank) {
-            // Log the promotion for audit.
-            \Illuminate\Support\Facades\Log::info("Contributor {$submission->user_id} promoted to {$newRank}");
-        }
+        // (Level changes happen in step 4 — ContributorTierService is the one
+        // place that decides a contributor's level, from admin-set thresholds.)
 
         // 1b. Retention: approved rewards enter PENDING, not available, when
         // the task carries a retention period (task-level override, else the
@@ -383,9 +379,13 @@ class VerificationService
             $campaign->increment('completed_contributors_count');
         }
 
-        // 4. Reconcile contributor stats + earned tier from real submission
-        // history (the tier is earned, never assigned by hand).
-        (new ContributorTierService())->recalculateFor($submission->user);
+        // 4. Reconcile contributor stats + level from approved tasks against
+        // the admin-set thresholds (unless staff locked the level).
+        $levelBefore = $submission->user->profile?->contributor_level;
+        $levelNow = (new ContributorTierService())->recalculateFor($submission->user);
+        if ($levelBefore && $levelNow !== $levelBefore) {
+            \Illuminate\Support\Facades\Log::info("Contributor {$submission->user_id} level {$levelBefore} -> {$levelNow}");
+        }
 
         // 5. Affiliate qualification (Phase 8, three-level ledger): on the
         // contributor's FIRST approved task, pay every pending referral level

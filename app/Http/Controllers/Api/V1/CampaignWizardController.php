@@ -76,6 +76,9 @@ class CampaignWizardController extends Controller
         if ($validator->fails()) {
             return response()->json(['success' => false, 'message' => 'Validation error', 'errors' => $validator->errors()], 422);
         }
+        if ($error = $this->contentError($request)) {
+            return $error;
+        }
 
         try {
             $campaign = $this->wizard->createDraft($business, $validator->validated());
@@ -84,6 +87,7 @@ class CampaignWizardController extends Controller
         } catch (Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         }
+        $this->saveContent($request, $campaign);
 
         return response()->json([
             'success' => true,
@@ -115,6 +119,9 @@ class CampaignWizardController extends Controller
         if ($validator->fails()) {
             return response()->json(['success' => false, 'message' => 'Validation error', 'errors' => $validator->errors()], 422);
         }
+        if ($error = $this->contentError($request)) {
+            return $error;
+        }
 
         try {
             $campaign = $this->wizard->updateDraft($campaign, $validator->validated());
@@ -123,12 +130,60 @@ class CampaignWizardController extends Controller
         } catch (Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
         }
+        $this->saveContent($request, $campaign);
 
         return response()->json([
             'success' => true,
             'message' => 'Draft updated.',
             'data' => $campaign->load(['category']),
         ]);
+    }
+
+    /**
+     * Post content on a draft: content_mode none/manual/auto + the text.
+     * Returns a 422 response when it is incomplete or not clean.
+     */
+    protected function contentError(Request $request): ?JsonResponse
+    {
+        $mode = $request->input('content_mode');
+        if ($mode !== null && !in_array($mode, [Campaign::CONTENT_MANUAL, Campaign::CONTENT_AUTO], true)) {
+            return response()->json(['success' => false, 'message' => 'Choose manual or auto content.'], 422);
+        }
+        $text = trim((string) $request->input('generated_content'));
+        if ($mode && $text === '') {
+            $message = $mode === Campaign::CONTENT_AUTO
+                ? 'Auto content needs an approved sample — generate the post with AI first.'
+                : 'Write the post content contributors will copy, or switch content off.';
+
+            return response()->json(['success' => false, 'message' => $message, 'errors' => ['generated_content' => [$message]]], 422);
+        }
+        if (mb_strlen($text) > 2000) {
+            return response()->json(['success' => false, 'message' => 'Post content can be at most 2000 characters.'], 422);
+        }
+
+        $safety = app(\App\Services\AI\ContentSafety::class);
+        foreach (['generated_content' => 'Post content', 'content_brief' => 'Content description'] as $field => $label) {
+            $check = $safety->check($request->input($field));
+            if (!$check['ok']) {
+                $message = "{$label}: {$check['reason']} Please edit it.";
+
+                return response()->json(['success' => false, 'message' => $message, 'errors' => [$field => [$message]]], 422);
+            }
+        }
+
+        return null;
+    }
+
+    /** Store the draft's post content; staff approve it after launch. */
+    protected function saveContent(Request $request, Campaign $campaign): void
+    {
+        $mode = $request->input('content_mode') ?: null;
+        $campaign->forceFill([
+            'content_mode' => $mode,
+            'generated_content' => $mode ? trim((string) $request->input('generated_content')) : null,
+            'content_brief' => $mode ? (mb_substr(trim((string) $request->input('content_brief')), 0, 500) ?: null) : null,
+            'content_status' => $mode ? 'pending' : null,
+        ])->save();
     }
 
     /**

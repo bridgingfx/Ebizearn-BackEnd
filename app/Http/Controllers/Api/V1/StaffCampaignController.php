@@ -249,6 +249,17 @@ class StaffCampaignController extends Controller
 
                 $locked->update(['status' => $target]);
 
+                // Approving a campaign in review also approves its post
+                // content (staff see it on the campaign before approving).
+                if ($campaign->status === 'pending_review' && $target === 'active' && $locked->content_mode && $locked->content_status === 'pending') {
+                    $locked->forceFill([
+                        'content_status' => 'approved',
+                        'content_reviewed_by' => $request->user()->id,
+                        'content_reviewed_at' => now(),
+                        'content_review_note' => null,
+                    ])->save();
+                }
+
                 AuditLogger::log(
                     $request->user(),
                     'campaign.status_changed',
@@ -264,6 +275,97 @@ class StaffCampaignController extends Controller
         }
 
         return response()->json(['success' => true, 'data' => $campaign]);
+    }
+
+    /**
+     * PATCH /staff/campaigns/{id}/content (edit_campaigns) — staff override
+     * of the post content: mode (manual / auto / none) and text. Text staff
+     * write is checked for safety and approved by them.
+     */
+    public function updateContent(Request $request, string $id): JsonResponse
+    {
+        $data = $request->validate([
+            'content_mode' => 'nullable|in:manual,auto',
+            'generated_content' => 'nullable|string|max:2000',
+            'content_brief' => 'nullable|string|max:500',
+        ]);
+
+        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
+            return StaffScope::notFound();
+        }
+
+        $mode = $data['content_mode'] ?? null;
+        $text = trim((string) ($data['generated_content'] ?? ''));
+        if ($mode && $text === '') {
+            return response()->json(['success' => false, 'message' => 'Add the approved post text (the base for auto mode).', 'errors' => ['generated_content' => ['Required.']]], 422);
+        }
+
+        $safety = app(\App\Services\AI\ContentSafety::class);
+        foreach (['generated_content' => $text, 'content_brief' => $data['content_brief'] ?? null] as $field => $value) {
+            $check = $safety->check($value);
+            if (!$check['ok']) {
+                $message = "{$check['reason']} Please edit it.";
+
+                return response()->json(['success' => false, 'message' => $message, 'errors' => [$field => [$message]]], 422);
+            }
+        }
+
+        $before = $campaign->only(['content_mode', 'content_status', 'generated_content']);
+        $campaign->forceFill([
+            'content_mode' => $mode,
+            'generated_content' => $mode ? $text : $campaign->generated_content,
+            'content_brief' => array_key_exists('content_brief', $data) ? ($data['content_brief'] ?: null) : $campaign->content_brief,
+            'content_status' => $mode ? 'approved' : null,
+            'content_reviewed_by' => $mode ? $request->user()->id : null,
+            'content_reviewed_at' => $mode ? now() : null,
+            'content_review_note' => null,
+        ])->save();
+
+        AuditLogger::log($request->user(), 'campaign.content_updated', Campaign::class, $campaign->id, [], $before,
+            $campaign->only(['content_mode', 'content_status', 'generated_content']));
+
+        return response()->json(['success' => true, 'message' => 'Content saved and approved.', 'data' => $campaign->fresh()]);
+    }
+
+    /**
+     * POST /staff/campaigns/{id}/content/decision (manage_campaigns)
+     * { decision: approve|reject, note? } — tasks show to contributors only
+     * once the content is approved.
+     */
+    public function contentDecision(Request $request, string $id): JsonResponse
+    {
+        $data = $request->validate([
+            'decision' => 'required|in:approve,reject',
+            'note' => 'nullable|string|max:500|required_if:decision,reject',
+        ], ['note.required_if' => 'Tell the business what to change.']);
+
+        $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
+            return StaffScope::notFound();
+        }
+        if (!$campaign->content_mode) {
+            return response()->json(['success' => false, 'message' => 'This campaign has no post content.'], 422);
+        }
+        if ($data['decision'] === 'approve' && !app(\App\Services\AI\ContentSafety::class)->check($campaign->generated_content)['ok']) {
+            return response()->json(['success' => false, 'message' => 'This content contains inappropriate words — edit it before approving.'], 422);
+        }
+
+        $status = $data['decision'] === 'approve' ? 'approved' : 'rejected';
+        $campaign->forceFill([
+            'content_status' => $status,
+            'content_review_note' => $data['note'] ?? null,
+            'content_reviewed_by' => $request->user()->id,
+            'content_reviewed_at' => now(),
+        ])->save();
+
+        AuditLogger::log($request->user(), 'campaign.content_' . $status, Campaign::class, $campaign->id, ['note' => $data['note'] ?? null]);
+
+        return response()->json([
+            'success' => true,
+            'message' => $status === 'approved' ? 'Content approved — the tasks are visible to contributors.' : 'Content rejected.',
+            'data' => $campaign->fresh(),
+        ]);
     }
 
     /**

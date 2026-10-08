@@ -363,6 +363,50 @@ class AdminSystemController extends Controller
     }
 
     /**
+     * PATCH /admin/users/{id}/level { level, locked }
+     *
+     * Set a contributor's level by hand. Locked: task completions no longer
+     * change it. Unlocked: the level is recalculated from approved tasks
+     * against the admin-set thresholds straight away.
+     */
+    public function updateContributorLevel(Request $request, string $id): JsonResponse
+    {
+        $data = $request->validate([
+            'level' => ['required', \Illuminate\Validation\Rule::in(\App\Services\Contributors\ContributorTierService::TIERS)],
+            'locked' => 'required|boolean',
+        ]);
+
+        $user = User::with('profile')->findOrFail($id);
+        if (!StaffScope::canManageAccount($request->user(), $user)) {
+            return StaffScope::notFound();
+        }
+        if ($user->role !== 'contributor' || !$user->profile) {
+            return response()->json(['success' => false, 'message' => 'Levels apply to contributor accounts only.'], 422);
+        }
+
+        $profile = $user->profile;
+        $before = ['level' => $profile->contributor_level, 'locked' => (bool) $profile->level_locked];
+
+        $profile->contributor_level = $data['level'];
+        $profile->level_locked = $data['locked'];
+        $profile->save();
+
+        $level = $data['locked']
+            ? $data['level']
+            : app(\App\Services\Contributors\ContributorTierService::class)->recalculateFor($user->fresh('profile'));
+
+        AuditLogger::log($request->user(), 'user.level_updated', User::class, $user->id, [], $before, ['level' => $level, 'locked' => $data['locked']]);
+
+        return response()->json([
+            'success' => true,
+            'message' => $data['locked']
+                ? "Level set to {$level} and locked."
+                : "Level follows completed tasks again — now {$level}.",
+            'data' => ['level' => $level, 'locked' => $data['locked']],
+        ]);
+    }
+
+    /**
      * Toggle user status (active/suspended).
      *
      * Guards:

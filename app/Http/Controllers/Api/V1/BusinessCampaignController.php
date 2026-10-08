@@ -163,6 +163,7 @@ class BusinessCampaignController extends Controller
             'idempotency_key' => 'nullable|string|max:128',
             'generated_content' => 'nullable|string|max:2000',
             'content_brief' => 'nullable|string|max:500',
+            'content_mode' => 'nullable|in:manual,auto',
         ]);
 
         if ($validator->fails()) {
@@ -189,6 +190,16 @@ class BusinessCampaignController extends Controller
             }
         }
 
+        $content = trim((string) $request->input('generated_content'));
+        $contentMode = $request->input('content_mode') ?: ($content !== '' ? Campaign::CONTENT_MANUAL : null);
+        if ($contentMode && $content === '') {
+            $message = $contentMode === Campaign::CONTENT_AUTO
+                ? 'Auto content needs an approved sample — generate the post with AI first.'
+                : 'Write the post content contributors will copy, or switch content off.';
+
+            return response()->json(['success' => false, 'message' => $message, 'errors' => ['generated_content' => [$message]]], 422);
+        }
+
         try {
             $campaign = app(CampaignCreationService::class)->create(
                 $business,
@@ -205,6 +216,19 @@ class BusinessCampaignController extends Controller
                 'success' => false,
                 'message' => $e->getMessage(),
             ], 400);
+        }
+
+        // Post content for contributors. The creation service does not
+        // store it, so it is saved here: manual = one approved text, auto =
+        // each contributor gets their own rewording of the approved text.
+        // Staff approve it before the tasks are shown to contributors.
+        if ($campaign->wasRecentlyCreated && $content !== '') {
+            $campaign->forceFill([
+                'generated_content' => $content,
+                'content_brief' => $request->input('content_brief') ?: null,
+                'content_mode' => $contentMode,
+                'content_status' => 'pending',
+            ])->save();
         }
 
         return response()->json([

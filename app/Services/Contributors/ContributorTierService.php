@@ -2,92 +2,92 @@
 
 namespace App\Services\Contributors;
 
+use App\Models\ContributorRankTier;
 use App\Models\Profile;
 use App\Models\TaskSubmission;
 use App\Models\User;
 
 /**
- * Earned contributor tiers.
+ * Contributor levels — the ONE place a contributor's level is decided.
  *
- * Tiers are EARNED from real activity — never purchased, never assigned by
- * hand (staff can still see them, not set them). The tier is recomputed from
- * the contributor's actual submission history every time a submission is
- * approved or a prior approval is reversed:
+ * Levels go up with completed (approved) tasks. Admin sets how many
+ * approved tasks each level needs on the Contributor Ranks page
+ * (contributor_rank_tiers.required_tasks); the level is the highest active
+ * tier whose requirement is met. It is recomputed whenever a submission is
+ * approved or an approval is reversed (a reversal can move a contributor
+ * back down).
  *
- *   tier = highest tier whose thresholds are met
+ * Staff can also set a level by hand and lock it (profiles.level_locked):
+ * while locked, task completions do not change the level.
  *
- * Thresholds (approved tasks + approval rate over decided submissions):
- *   explorer:  >= 5 approved, rate >= 60%
- *   trusted:   >= 20 approved, rate >= 75%
- *   pro:       >= 50 approved, rate >= 85%
- *   elite:     >= 150 approved, rate >= 90%
- *   otherwise: starter
- *
- * The same pass also reconciles the profile's completed_tasks_count and
- * approval_rate so they always reflect reality instead of going stale.
+ * Stats (completed_tasks_count, approval_rate) are reconciled on every
+ * pass. Fields are assigned directly — they are not mass-assignable.
  */
 class ContributorTierService
 {
     public const TIERS = ['starter', 'explorer', 'trusted', 'pro', 'elite'];
 
     /**
-     * [tier => [min_approved, min_rate_percent]]
-     */
-    public const THRESHOLDS = [
-        'explorer' => [5, 60.0],
-        'trusted' => [20, 75.0],
-        'pro' => [50, 85.0],
-        'elite' => [150, 90.0],
-    ];
-
-    /**
-     * Recompute and persist the contributor's tier from real submission
-     * history. Returns the tier assigned.
+     * Recompute and persist the contributor's level + stats from real
+     * submission history. Returns the level the contributor now has.
      */
     public function recalculateFor(User $user): string
     {
-        $approved = TaskSubmission::where('user_id', $user->id)
-            ->where('status', 'approved')
-            ->count();
-
-        $rejected = TaskSubmission::where('user_id', $user->id)
-            ->where('status', 'rejected')
-            ->count();
-
+        $approved = TaskSubmission::where('user_id', $user->id)->where('status', 'approved')->count();
+        $rejected = TaskSubmission::where('user_id', $user->id)->where('status', 'rejected')->count();
         $decided = $approved + $rejected;
         $rate = $decided > 0 ? round($approved / $decided * 100, 2) : 100.0;
 
-        $tier = 'starter';
-        foreach (self::THRESHOLDS as $candidate => [$minApproved, $minRate]) {
-            if ($approved >= $minApproved && $rate >= $minRate) {
-                $tier = $candidate;
+        $profile = $user->profile;
+        if (!$profile instanceof Profile) {
+            return $this->evaluate($approved);
+        }
+
+        $level = $profile->level_locked ? ($profile->contributor_level ?: 'starter') : $this->evaluate($approved);
+
+        $profile->contributor_level = $level;
+        $profile->completed_tasks_count = $approved;
+        $profile->approval_rate = $rate;
+        $profile->save();
+
+        return $level;
+    }
+
+    /** Level for a number of approved tasks, from the admin-set thresholds. */
+    public function evaluate(int $approved): string
+    {
+        $level = 'starter';
+        foreach (ContributorRankTier::ordered() as $tier) {
+            if ($approved >= (int) $tier->required_tasks) {
+                $level = $tier->level;
+            } else {
+                break;
             }
         }
 
-        $profile = $user->profile;
-        if ($profile instanceof Profile) {
-            $profile->update([
-                'contributor_level' => $tier,
-                'completed_tasks_count' => $approved,
-                'approval_rate' => $rate,
-            ]);
-        }
-
-        return $tier;
+        return $level;
     }
 
     /**
-     * Read-only tier evaluation without persisting (for previews / tests).
+     * Progress toward the next level (for the contributor's UI).
+     *
+     * @return array{level: string, next_level: ?string, next_name: ?string, tasks_done: int, tasks_needed: int}
      */
-    public function evaluate(int $approved, float $approvalRate): string
+    public function progress(User $user): array
     {
-        $tier = 'starter';
-        foreach (self::THRESHOLDS as $candidate => [$minApproved, $minRate]) {
-            if ($approved >= $minApproved && $approvalRate >= $minRate) {
-                $tier = $candidate;
-            }
-        }
+        $approved = TaskSubmission::where('user_id', $user->id)->where('status', 'approved')->count();
+        $current = $user->profile?->contributor_level ?: 'starter';
+        $tiers = ContributorRankTier::ordered()->values();
+        $idx = $tiers->search(fn ($t) => $t->level === $current);
+        $next = $idx === false ? $tiers->first(fn ($t) => (int) $t->required_tasks > $approved) : $tiers->get($idx + 1);
 
-        return $tier;
+        return [
+            'level' => $current,
+            'locked' => (bool) $user->profile?->level_locked,
+            'next_level' => $next?->level,
+            'next_name' => $next?->display_name,
+            'tasks_done' => $approved,
+            'tasks_needed' => (int) ($next?->required_tasks ?? 0),
+        ];
     }
 }

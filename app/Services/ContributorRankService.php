@@ -42,61 +42,19 @@ class ContributorRankService
     }
 
     /**
-     * Check and apply promotion. Returns the new level or null if unchanged.
-     * Call after every approved submission.
+     * Recompute the level. Returns the new level, or null if unchanged.
+     * Levels are decided in ONE place — ContributorTierService (approved
+     * tasks vs the admin-set thresholds, respecting a staff lock).
      */
     public function maybePromote(User $user): ?string
     {
-        if ($user->role !== 'contributor') {
+        if ($user->role !== 'contributor' || !$user->profile) {
             return null;
         }
-        $profile = $user->profile;
-        if (!$profile) {
-            return null;
-        }
+        $before = $user->profile->contributor_level ?? 'starter';
+        $after = app(\App\Services\Contributors\ContributorTierService::class)->recalculateFor($user);
 
-        $tiers = ContributorRankTier::ordered();
-        if ($tiers->isEmpty()) {
-            return null;
-        }
-
-        // Find current tier position.
-        $currentLevel = $profile->contributor_level ?? 'starter';
-        $currentIdx = $tiers->search(fn ($t) => $t->level === $currentLevel);
-        if ($currentIdx === false) {
-            $currentIdx = -1;
-        }
-
-        // Contributor stats.
-        $approvedCount = TaskSubmission::where('user_id', $user->id)
-            ->where('status', 'approved')
-            ->count();
-        $totalEarned = TaskSubmission::where('user_id', $user->id)
-            ->where('status', 'approved')
-            ->with('task')
-            ->get()
-            ->sum(fn ($s) => ($s->task->reward_cents ?? 0) + ($s->bonus_cents ?? 0));
-
-        // Promote through every tier whose thresholds are met.
-        $newLevel = null;
-        for ($i = $currentIdx + 1; $i < $tiers->count(); $i++) {
-            $tier = $tiers[$i];
-            $tasksOk = $tier->required_tasks <= 0 || $approvedCount >= $tier->required_tasks;
-            $earnOk = $tier->required_earnings_cents <= 0 || $totalEarned >= $tier->required_earnings_cents;
-            if ($tasksOk && $earnOk) {
-                $newLevel = $tier->level;
-            } else {
-                break;
-            }
-        }
-
-        if ($newLevel && $newLevel !== $currentLevel) {
-            // Direct assignment: 'contributor_level' is not fillable.
-            $profile->contributor_level = $newLevel;
-            $profile->save();
-            return $newLevel;
-        }
-        return null;
+        return $after !== $before ? $after : null;
     }
 
     /**

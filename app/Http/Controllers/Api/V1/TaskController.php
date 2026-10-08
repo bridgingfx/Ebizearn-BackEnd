@@ -102,7 +102,8 @@ class TaskController extends Controller
             // Geographic targeting: global campaigns (ALL) plus campaigns
             // targeting the contributor's own country.
             ->whereHas('campaign', function ($q) use ($userCountry) {
-                $q->where('status', 'active');
+                // Post content (if any) must be approved by staff first.
+                $q->where('status', 'active')->contentReady();
                 $q->where(function ($w) use ($userCountry) {
                     // No targeting saved (older campaigns) = global.
                     $w->whereNull('target_countries_json')
@@ -174,15 +175,61 @@ class TaskController extends Controller
         }
         $task = Task::with(['category', 'campaign.business'])
             ->where('status', 'available')
-            ->whereHas('campaign', fn ($q) => $q->where('status', 'active'))
+            ->whereHas('campaign', fn ($q) => $q->where('status', 'active')->contentReady())
             ->where(function ($q) use ($id) {
                 $q->where('tasks.id', $id)->orWhere('tasks.uuid', $id);
             })
             ->firstOrFail();
 
+        // Post text is handed out per contributor after they start the task
+        // (GET /tasks/{id}/content); the campaign only says whether there is any.
+        $task->campaign?->makeHidden(['generated_content', 'content_brief', 'content_review_note', 'content_reviewed_by', 'content_reviewed_at']);
+
         return response()->json([
             'success' => true,
             'data' => $task,
+        ]);
+    }
+
+    /**
+     * GET /tasks/{id}/content — the post text this contributor copies.
+     * Manual: the approved campaign text. Auto: the contributor's own AI
+     * rewording of the approved text, made once and kept on the assignment
+     * (falls back to the approved text if the AI is unavailable).
+     */
+    public function content(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+        $task = Task::with('campaign')->where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        $campaign = $task->campaign;
+
+        $assignment = TaskAssignment::where('task_id', $task->id)->where('user_id', $user->id)->latest('id')->first();
+        if (!$assignment) {
+            return response()->json(['success' => false, 'message' => 'Start the task to get your post content.'], 403);
+        }
+
+        if (!$campaign || !$campaign->content_mode || !$campaign->contentReady() || !$campaign->generated_content) {
+            return response()->json(['success' => true, 'data' => ['mode' => null, 'content' => null]]);
+        }
+
+        $content = $campaign->generated_content;
+        $personal = false;
+        if ($campaign->content_mode === Campaign::CONTENT_AUTO) {
+            if ($assignment->content) {
+                $content = $assignment->content;
+                $personal = true;
+            } elseif ($variation = app(\App\Services\AI\ContentGeneratorService::class)
+                ->variation($campaign->generated_content, (string) ($campaign->platform ?? ''), $campaign->content_brief)) {
+                // First write wins if two requests race.
+                TaskAssignment::whereKey($assignment->id)->whereNull('content')->update(['content' => $variation]);
+                $content = TaskAssignment::whereKey($assignment->id)->value('content') ?: $variation;
+                $personal = true;
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => ['mode' => $campaign->content_mode, 'content' => $content, 'personal' => $personal],
         ]);
     }
 
@@ -253,6 +300,9 @@ class TaskController extends Controller
 
             if ($campaign->status !== 'active') {
                 throw new Exception('This campaign is not currently active.');
+            }
+            if (!$campaign->contentReady()) {
+                throw new Exception('This campaign is waiting for content approval.');
             }
 
             if ($campaign->remaining_budget_cents < $lockedTask->reward_cents) {
@@ -503,7 +553,8 @@ class TaskController extends Controller
                     ->where('task_submissions.user_id', $userId);
             })
             ->whereHas('campaign', function ($q) use ($userCountry) {
-                $q->where('status', 'active');
+                // Post content (if any) must be approved by staff first.
+                $q->where('status', 'active')->contentReady();
                 $q->where(function ($w) use ($userCountry) {
                     // No targeting saved (older campaigns) = global.
                     $w->whereNull('target_countries_json')

@@ -111,6 +111,47 @@ TXT;
             : 'AI returned empty content. Please try again.');
     }
 
+    /**
+     * Auto mode: one contributor's own wording of the APPROVED post, so many
+     * people don't publish identical text. Same meaning, facts, brand,
+     * links and hashtags — nothing new. Returns null when the AI is
+     * unavailable or no clean version came back (caller falls back to the
+     * approved text).
+     */
+    public function variation(string $approved, string $platform, ?string $brief = null): ?string
+    {
+        $apiKey = config('services.openai.key');
+        if (!$apiKey || trim($approved) === '') {
+            return null;
+        }
+
+        $rules = self::PLATFORM_RULES[strtolower($platform)] ?? self::PLATFORM_RULES['default'];
+        $system = "You rewrite an approved social media post so one more person can post it in their own words.\n"
+            . "Format: {$rules}\n"
+            . self::SAFETY_RULES . "\n"
+            . "Keep exactly the same meaning, facts, brand names, links and @mentions. Keep the same hashtags (order may change). "
+            . "Do not add any new claim, offer, number or detail. Similar length.\n"
+            . 'Output: return ONLY the rewritten post text — no introduction, no quotation marks, no notes.';
+
+        $user = "Approved post:\n{$approved}";
+        if ($brief) {
+            $user .= "\n\nCampaign description (context only): {$brief}";
+        }
+
+        foreach ([0.9, 0.6] as $temperature) {
+            $raw = $this->complete($apiKey, $system, $user, $temperature);
+            if ($raw === null) {
+                return null;
+            }
+            $content = $this->clean($raw);
+            if ($content !== '' && !str_contains($content, self::REFUSAL) && $this->safety->check($content)['ok']) {
+                return $content;
+            }
+        }
+
+        return null;
+    }
+
     /** Raw model text, or null when the API call failed. */
     private function complete(string $apiKey, string $system, string $user, float $temperature): ?string
     {

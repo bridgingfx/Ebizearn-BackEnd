@@ -58,7 +58,28 @@ class Campaign extends Model
         'retention_hours' => 'integer',
         'starts_at' => 'datetime',
         'ends_at' => 'datetime',
+        'content_reviewed_at' => 'datetime',
     ];
+
+    public const CONTENT_MANUAL = 'manual';
+    public const CONTENT_AUTO = 'auto';
+
+    /**
+     * Campaigns contributors may see: no post content needed, or the post
+     * content has been approved by staff (content_status is set only via
+     * forceFill — never mass-assigned).
+     */
+    public function scopeContentReady($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('campaigns.content_mode')->orWhere('campaigns.content_status', 'approved');
+        });
+    }
+
+    public function contentReady(): bool
+    {
+        return $this->content_mode === null || $this->content_status === 'approved';
+    }
 
     protected static function booted(): void
     {

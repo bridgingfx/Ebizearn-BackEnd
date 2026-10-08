@@ -2,155 +2,134 @@
 
 namespace Tests\Feature;
 
-use App\Models\Profile;
 use App\Models\Business;
 use App\Models\Campaign;
-use App\Models\TaskCategory;
+use App\Models\ContributorRankTier;
+use App\Models\Profile;
 use App\Models\Task;
+use App\Models\TaskCategory;
 use App\Models\TaskSubmission;
 use App\Models\User;
 use App\Services\Contributors\ContributorTierService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 /**
- * Earned contributor tiers: tiers are computed from real submission history
- * (approved count + approval rate), never purchased or hand-assigned.
+ * Contributor levels go up with completed (approved) tasks, using the
+ * thresholds admin sets on the Contributor Ranks page. Staff can set a
+ * level by hand and lock it.
  */
 class ContributorTierTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected function makeContributor(string $email): User
+    protected function setUp(): void
     {
-        $user = User::create([
-            'name' => 'Contributor ' . $email,
-            'email' => $email,
+        parent::setUp();
+        $this->seed();
+    }
+
+    protected function makeUser(string $role): User
+    {
+        $user = User::forceCreate([
+            'uuid' => (string) Str::uuid(),
+            'name' => ucfirst($role) . ' ' . Str::random(4),
+            'email' => $role . Str::random(6) . '@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
-            'role' => 'contributor',
+            'role' => $role,
             'status' => 'active',
             'email_verified_at' => now(),
         ]);
-        Profile::create(['user_id' => $user->id, 'contributor_level' => 'starter']);
+        Profile::forceCreate(['user_id' => $user->id, 'country_code' => 'AE', 'contributor_level' => 'starter']);
 
         return $user;
     }
 
-    protected function addSubmissions(User $user, int $approved, int $rejected): void
+    protected function addSubmissions(User $user, int $approved, int $rejected = 0): void
     {
-        $bizUser = User::create([
-            'name' => 'Biz tier probe',
-            'email' => 'biz-tier-' . Str::random(6) . '@example.com',
-            'password' => Hash::make('V3r1fy!Strong'),
-            'role' => 'business',
-            'status' => 'active',
-            'email_verified_at' => now(),
-        ]);
-        $business = Business::create([
-            'owner_id' => $bizUser->id,
-            'company_name' => 'Tier Probe Co',
-            'status' => 'active',
-        ]);
-        $category = TaskCategory::create([
-            'slug' => 'tier-probe-' . Str::random(6),
-            'name' => 'Tier Probe',
-            'is_active' => true,
-        ]);
-        $campaign = Campaign::create([
-            'uuid' => (string) Str::uuid(),
-            'business_id' => $business->id,
-            'category_id' => $category->id,
-            'title' => 'Tier probe campaign',
-            'description' => 'tier test',
-            'status' => 'active',
-            'total_budget_cents' => 100000,
-            'remaining_budget_cents' => 100000,
-            'reserved_budget_cents' => 0,
-            'reward_per_task_cents' => 50,
-            'target_contributors_count' => 1000,
+        $owner = $this->makeUser('business');
+        $business = Business::forceCreate(['owner_id' => $owner->id, 'company_name' => 'Tier Probe Co', 'status' => 'active']);
+        $category = TaskCategory::forceCreate(['slug' => 'tier-' . Str::random(6), 'name' => 'Tier Probe', 'is_active' => true]);
+        $campaign = Campaign::forceCreate([
+            'uuid' => (string) Str::uuid(), 'business_id' => $business->id, 'category_id' => $category->id,
+            'title' => 'Tier probe', 'description' => 'tier test', 'status' => 'active',
+            'total_budget_cents' => 100000, 'remaining_budget_cents' => 100000, 'reserved_budget_cents' => 0,
+            'reward_per_task_cents' => 50, 'target_contributors_count' => 1000,
         ]);
 
-        $makeTask = function () use ($campaign, $category) {
-            return Task::create([
-                'uuid' => (string) Str::uuid(),
-                'campaign_id' => $campaign->id,
-                'category_id' => $category->id,
-                'title' => 'Tier probe task',
-                'status' => 'available',
-                'reward_cents' => 50,
-                'slots_total' => 1000,
+        foreach (array_merge(array_fill(0, $approved, 'approved'), array_fill(0, $rejected, 'rejected')) as $status) {
+            $task = Task::forceCreate([
+                'uuid' => (string) Str::uuid(), 'campaign_id' => $campaign->id, 'category_id' => $category->id,
+                'title' => 'Tier task', 'status' => 'available', 'reward_cents' => 50, 'slots_total' => 1000,
             ]);
-        };
-
-        for ($i = 0; $i < $approved; $i++) {
-            TaskSubmission::create([
-                'uuid' => (string) Str::uuid(),
-                'task_id' => $makeTask()->id,
-                'user_id' => $user->id,
-                'status' => 'approved',
-            ]);
-        }
-        for ($i = 0; $i < $rejected; $i++) {
-            TaskSubmission::create([
-                'uuid' => (string) Str::uuid(),
-                'task_id' => $makeTask()->id,
-                'user_id' => $user->id,
-                'status' => 'rejected',
-            ]);
+            TaskSubmission::forceCreate(['uuid' => (string) Str::uuid(), 'task_id' => $task->id, 'user_id' => $user->id, 'status' => $status]);
         }
     }
 
-    public function test_evaluate_thresholds(): void
+    public function test_levels_follow_admin_set_task_thresholds(): void
     {
         $svc = new ContributorTierService();
+        // Defaults: explorer 10, trusted 50, pro 200, elite 500 approved tasks.
+        $this->assertSame('starter', $svc->evaluate(9));
+        $this->assertSame('explorer', $svc->evaluate(10));
+        $this->assertSame('trusted', $svc->evaluate(50));
 
-        $this->assertSame('starter', $svc->evaluate(0, 100.0));
-        $this->assertSame('explorer', $svc->evaluate(5, 60.0));
-        // Rate below threshold blocks promotion even with enough tasks.
-        $this->assertSame('starter', $svc->evaluate(30, 50.0));
-        $this->assertSame('trusted', $svc->evaluate(20, 75.0));
-        $this->assertSame('pro', $svc->evaluate(50, 85.0));
-        $this->assertSame('elite', $svc->evaluate(150, 90.0));
+        // Admin lowers the Explorer requirement to 3 tasks.
+        ContributorRankTier::where('level', 'explorer')->update(['required_tasks' => 3]);
+        $this->assertSame('explorer', $svc->evaluate(3));
     }
 
-    public function test_recalculate_promotes_from_real_history(): void
+    public function test_completed_tasks_move_a_contributor_up_and_reversals_back_down(): void
     {
-        $user = $this->makeContributor('tier1@example.com');
-        $this->addSubmissions($user, 25, 5); // 83.3% approval
+        ContributorRankTier::where('level', 'explorer')->update(['required_tasks' => 3]);
+        ContributorRankTier::where('level', 'trusted')->update(['required_tasks' => 6]);
+        $user = $this->makeUser('contributor');
 
-        $tier = (new ContributorTierService())->recalculateFor($user);
+        // Rejections don't hold anyone back — only completed tasks count.
+        $this->addSubmissions($user, 4, 10);
+        $this->assertSame('explorer', (new ContributorTierService())->recalculateFor($user->fresh()));
+        $profile = $user->profile()->first();
+        $this->assertSame('explorer', $profile->contributor_level);
+        $this->assertSame(4, (int) $profile->completed_tasks_count);
 
-        $this->assertSame('trusted', $tier);
-        $profile = $user->profile->fresh();
-        $this->assertSame('trusted', $profile->contributor_level);
-        $this->assertSame(25, (int) $profile->completed_tasks_count);
-        $this->assertEqualsWithDelta(83.33, (float) $profile->approval_rate, 0.01);
+        $this->addSubmissions($user, 2);
+        $this->assertSame('trusted', (new ContributorTierService())->recalculateFor($user->fresh()));
+
+        // An approval is reversed: back below the Trusted requirement.
+        TaskSubmission::where('user_id', $user->id)->where('status', 'approved')->limit(1)->update(['status' => 'rejected']);
+        $this->assertSame('explorer', (new ContributorTierService())->recalculateFor($user->fresh()));
     }
 
-    public function test_recalculate_demotes_when_rate_drops(): void
+    public function test_staff_can_set_and_lock_a_level(): void
     {
-        $user = $this->makeContributor('tier2@example.com');
-        $this->addSubmissions($user, 60, 0);
+        $admin = $this->makeUser('admin');
+        $contributor = $this->makeUser('contributor');
+        $this->addSubmissions($contributor, 12); // explorer by tasks
 
-        $this->assertSame('pro', (new ContributorTierService())->recalculateFor($user));
+        Sanctum::actingAs($admin);
+        $this->patchJson("/api/v1/admin/users/{$contributor->id}/level", ['level' => 'pro', 'locked' => true])
+            ->assertOk()->assertJsonPath('data.level', 'pro');
 
-        // A wave of rejections drops the rate below the pro bar.
-        $this->addSubmissions($user, 0, 30); // 66.7% approval
+        // Locked: completing tasks does not change it.
+        $this->assertSame('pro', (new ContributorTierService())->recalculateFor($contributor->fresh()));
 
-        $this->assertSame('explorer', (new ContributorTierService())->recalculateFor($user));
-        $this->assertSame('explorer', $user->profile->fresh()->contributor_level);
+        // Unlocked: back to what the completed tasks earn.
+        $this->patchJson("/api/v1/admin/users/{$contributor->id}/level", ['level' => 'pro', 'locked' => false])
+            ->assertOk()->assertJsonPath('data.level', 'explorer');
+
+        // Levels are for contributors only.
+        $business = $this->makeUser('business');
+        $this->patchJson("/api/v1/admin/users/{$business->id}/level", ['level' => 'pro', 'locked' => true])->assertStatus(422);
     }
 
     public function test_no_profile_does_not_crash(): void
     {
-        $user = User::create([
-            'name' => 'No profile',
-            'email' => 'noprofile@example.com',
-            'password' => Hash::make('V3r1fy!Strong'),
-            'role' => 'contributor',
-            'status' => 'active',
+        $user = User::forceCreate([
+            'name' => 'No profile', 'email' => 'noprofile@example.com', 'password' => Hash::make('V3r1fy!Strong'),
+            'role' => 'contributor', 'status' => 'active',
         ]);
 
         $this->assertSame('starter', (new ContributorTierService())->recalculateFor($user));
