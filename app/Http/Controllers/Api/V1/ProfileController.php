@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\CountryChangeRequest;
 use App\Models\Profile;
 use App\Models\User;
 use App\Rules\PhoneCountryCode;
@@ -157,6 +158,8 @@ class ProfileController extends Controller
             'city' => ['sometimes', 'nullable', 'string', 'max:120'],
             'bio' => ['sometimes', 'nullable', 'string', 'max:1000'],
             'preferred_payout_method' => ['sometimes', 'nullable', 'string', 'in:paypal,wise,bank,usdt'],
+            // Optional note for staff when the residence country changes.
+            'country_change_reason' => ['sometimes', 'nullable', 'string', 'max:500'],
         ], [
             'phone_number.regex' => 'The phone number must contain 4-15 digits only.',
             'country_code.size' => 'Select a valid country.',
@@ -213,57 +216,90 @@ class ProfileController extends Controller
         if ($phone !== null) {
             $profileData['phone'] = $phone;
         }
+        $countryRequest = null;
         if ($profileData !== []) {
             $profile = Profile::firstOrCreate(['user_id' => $user->id], ['country_code' => 'GE', 'language' => 'en']);
 
-            // COUNTRY CHANGE → KYC RESET: if the residence country actually
-            // changed, the old KYC is no longer valid. Reset to unverified,
-            // stamp the KYC country, and lock tasks until new-country KYC
-            // is approved. Old documents are kept for audit.
-            $countryChanged = isset($profileData['country_code'])
-                && strtoupper($profileData['country_code']) !== strtoupper($profile->country_code ?? '');
-            if ($countryChanged) {
-                $oldCountry = $profile->country_code;
-                $newCountry = strtoupper($profileData['country_code']);
-                $profile->kyc_status = 'unverified';
-                $profile->kyc_verified_at = null;
-                $profile->kyc_reviewed_by = null;
-                $profile->kyc_country_code = $newCountry;
-                $profile->save();
+            // COUNTRY CHANGE → STAFF APPROVAL: a client cannot move their
+            // residence country directly. The change becomes a pending
+            // request; on approval the country switches and KYC must be
+            // redone for the new country (see CountryChangeController).
+            // Staff accounts are not KYC-gated and change it directly.
+            $newCountry = $profileData['country_code'] ?? null;
+            $currentCountry = strtoupper($profile->country_code ?? '');
+            if ($newCountry === null || $newCountry === $currentCountry) {
+                unset($profileData['country_code']);
+            } elseif (!in_array($user->role, ['moderator', 'admin', 'superadmin'], true)) {
+                unset($profileData['country_code']);
 
-                \App\Models\AuditLog::create([
-                    'actor_id' => $user->id,
-                    'actor_role' => $user->role,
-                    'action' => 'profile.country_changed',
-                    'target_type' => 'user',
-                    'target_id' => $user->id,
-                    'description' => "User changed residence country from {$oldCountry} to {$newCountry}. KYC reset — tasks locked until new-country KYC approved.",
-                    'ip_address' => $request->ip(),
+                $pending = CountryChangeRequest::where('user_id', $user->id)->where('status', 'pending')->first();
+                if ($pending && $pending->to_country !== $newCountry) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "You already have a country change to {$pending->to_country} waiting for review. Cancel it first to request a different country.",
+                        'code' => 'country_change_pending',
+                    ], 422);
+                }
+
+                $countryRequest = $pending ?? CountryChangeRequest::create([
+                    'user_id' => $user->id,
+                    'from_country' => $currentCountry ?: null,
+                    'to_country' => $newCountry,
+                    'reason' => $validated['country_change_reason'] ?? null,
                 ]);
 
-                $profile->update($profileData);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Profile updated.',
-                    'data' => [
-                        'user' => $user->fresh()->load(['profile', 'wallet', 'business']),
-                        'kyc_reset' => true,
-                        'kyc_message' => 'Your country changed. You must complete KYC again with documents from your new country before you can do tasks.',
-                    ],
-                ]);
+                if ($countryRequest->wasRecentlyCreated) {
+                    AuditLogger::log($user, 'profile.country_change_requested', User::class, $user->id, [],
+                        ['country_code' => $currentCountry ?: null], ['requested_country' => $newCountry]);
+                }
             }
 
-            $profile->update($profileData);
+            if ($profileData !== []) {
+                $profile->update($profileData);
+            }
         }
 
         $onlyPhone = array_diff(array_keys($validated), ['phone', 'phone_country_code', 'phone_number']) === [];
+        $message = $onlyPhone ? 'Phone number saved.' : 'Profile updated.';
+        if ($countryRequest) {
+            $message = "Your country change to {$countryRequest->to_country} was sent for admin approval. "
+                . 'Once approved you will need to complete KYC with documents from your new country before doing tasks.';
+        }
 
         return response()->json([
             'success' => true,
-            'message' => $onlyPhone ? 'Phone number saved.' : 'Profile updated.',
-            'data' => ['user' => $user->fresh()->load(['profile', 'wallet', 'business'])],
+            'message' => $message,
+            'data' => [
+                'user' => $user->fresh()->load(['profile', 'wallet', 'business']),
+                'country_change_request' => $countryRequest,
+            ],
         ]);
+    }
+
+    /**
+     * GET /api/v1/profile/country-change — the caller's latest request
+     * (pending, or the most recent decision), or null.
+     */
+    public function countryChange(Request $request): JsonResponse
+    {
+        $latest = CountryChangeRequest::where('user_id', $request->user()->id)->latest('id')->first();
+
+        return response()->json(['success' => true, 'data' => $latest]);
+    }
+
+    /**
+     * DELETE /api/v1/profile/country-change — withdraw a pending request.
+     */
+    public function cancelCountryChange(Request $request): JsonResponse
+    {
+        $pending = CountryChangeRequest::where('user_id', $request->user()->id)->where('status', 'pending')->first();
+        if (!$pending) {
+            return response()->json(['success' => false, 'message' => 'You have no pending country change.'], 404);
+        }
+
+        $pending->forceFill(['status' => 'cancelled'])->save();
+
+        return response()->json(['success' => true, 'message' => 'Country change request cancelled.', 'data' => $pending]);
     }
 
     /**

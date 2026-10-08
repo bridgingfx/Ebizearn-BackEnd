@@ -65,7 +65,9 @@ class SupportKycProfileTest extends TestCase
         $res->assertOk()
             ->assertJsonPath('data.user.name', 'Yuvaraj R')
             ->assertJsonPath('data.user.phone', '+971501234567')
-            ->assertJsonPath('data.user.profile.country_code', 'AE')
+            // A residence-country change is sent for staff approval
+            // (CountryChangeTest), so it is a request — not applied yet.
+            ->assertJsonPath('data.country_change_request.to_country', 'AE')
             ->assertJsonPath('data.user.profile.city', 'Dubai')
             ->assertJsonPath('data.user.profile.bio', 'Instagram creator.');
     }

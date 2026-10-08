@@ -29,6 +29,8 @@ use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\SocialChannelController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
+use App\Http\Controllers\Api\V1\StaffCountryChangeController;
+use App\Http\Controllers\Api\V1\RankTierController;
 use App\Http\Controllers\Api\V1\KycProviderController;
 use App\Http\Controllers\Api\V1\StripeWebhookController;
 use App\Http\Controllers\Api\V1\SocialPlatformController;
@@ -117,6 +119,9 @@ Route::prefix('v1')->group(function () {
         Route::put('/profile/password', [ProfileController::class, 'updatePassword'])->middleware('throttle:5,1');
         Route::post('/profile/avatar', [ProfileController::class, 'uploadAvatar']);
         Route::delete('/profile/avatar', [ProfileController::class, 'removeAvatar']);
+        // Residence-country change: requested via PUT /profile, approved by staff.
+        Route::get('/profile/country-change', [ProfileController::class, 'countryChange']);
+        Route::delete('/profile/country-change', [ProfileController::class, 'cancelCountryChange']);
         // KYC: submit identity documents (private disk, reviewed via /staff/kyc).
         Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
             ->middleware(['role:contributor,business', 'permission:submit_kyc', 'throttle:10,1']);
@@ -371,6 +376,13 @@ Route::prefix('v1')->group(function () {
             Route::patch('/tickets/{uuid}', [SupportTicketController::class, 'staffUpdate']);
             Route::get('/tickets/{uuid}/messages/{messageId}/attachments/{index}', [SupportTicketController::class, 'staffAttachment'])
                 ->whereNumber(['messageId', 'index']);
+        });
+
+        // Residence-country change requests (review_kyc): approve resets KYC
+        // for the new country.
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:review_kyc'])->prefix('staff/country-changes')->group(function () {
+            Route::get('/', [StaffCountryChangeController::class, 'index']);
+            Route::post('/{id}/decision', [StaffCountryChangeController::class, 'decision'])->whereNumber('id');
         });
 
         // KYC review queue (review_kyc).
