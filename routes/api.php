@@ -273,6 +273,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/', [AiSettingsController::class, 'show']);
             Route::put('/', [AiSettingsController::class, 'update']);
             Route::post('/test', [AiSettingsController::class, 'test'])->middleware('throttle:10,1');
+            Route::post('/try', [AiSettingsController::class, 'tryGenerate'])->middleware('throttle:10,1');
             Route::delete('/key', [AiSettingsController::class, 'removeKey']);
         });
 

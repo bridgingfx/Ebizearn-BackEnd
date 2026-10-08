@@ -134,4 +134,50 @@ class AiSettingsTest extends TestCase
         $this->postJson('/api/v1/admin/ai-settings/test')->assertStatus(422)
             ->assertJsonPath('message', 'Connection failed: API key not valid.');
     }
+
+    private function openAiChat(string $text): array
+    {
+        return ['choices' => [['message' => ['content' => $text]]]];
+    }
+
+    public function test_business_generate_with_openai_saved_in_settings(): void
+    {
+        Sanctum::actingAs($this->makeUser('superadmin'));
+        $this->putJson('/api/v1/admin/ai-settings', ['provider' => 'openai', 'enabled' => true, 'api_key' => 'sk-test-1234567890'])->assertOk();
+
+        Http::fake([
+            'api.openai.com/v1/moderations' => Http::response(['results' => [['flagged' => false, 'categories' => []]]]),
+            'api.openai.com/v1/chat/completions' => Http::response($this->openAiChat('Fresh coffee every morning at Bean House! #coffee')),
+        ]);
+
+        $owner = $this->makeUser('business');
+        \App\Models\Business::forceCreate(['owner_id' => $owner->id, 'company_name' => 'Bean House', 'status' => 'active']);
+        $this->app['auth']->forgetGuards();
+        Sanctum::actingAs($owner);
+
+        $this->postJson('/api/v1/business/campaigns/generate-content', ['platform' => 'Instagram', 'brief' => 'Promote our new coffee shop'])
+            ->assertOk()
+            ->assertJsonPath('content', 'Fresh coffee every morning at Bean House! #coffee')
+            ->assertJsonMissingPath('detail');
+
+        // Too short a description gets a clear message.
+        $this->postJson('/api/v1/business/campaigns/generate-content', ['platform' => 'Instagram', 'brief' => 'coffee'])
+            ->assertStatus(422)
+            ->assertJsonPath('errors.brief.0', fn ($m) => str_contains($m, 'at least 10 characters'));
+    }
+
+    public function test_try_a_sample_post_shows_the_technical_reason(): void
+    {
+        Sanctum::actingAs($this->makeUser('superadmin'));
+        $this->putJson('/api/v1/admin/ai-settings', ['provider' => 'openai', 'enabled' => true, 'api_key' => 'sk-test-1234567890'])->assertOk();
+
+        Http::fake([
+            'api.openai.com/v1/moderations' => Http::response(['results' => [['flagged' => false, 'categories' => []]]]),
+            'api.openai.com/v1/chat/completions' => Http::response(['error' => ['message' => 'You exceeded your current quota']], 429),
+        ]);
+
+        $this->postJson('/api/v1/admin/ai-settings/try', ['brief' => 'Promote our new coffee shop'])
+            ->assertStatus(422)
+            ->assertJsonPath('data.detail', 'AI provider error: You exceeded your current quota');
+    }
 }

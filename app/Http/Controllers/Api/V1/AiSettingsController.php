@@ -89,6 +89,34 @@ class AiSettingsController extends Controller
         ]);
     }
 
+    /**
+     * POST /admin/ai-settings/try { brief, platform? } — runs exactly what
+     * "Generate with AI" runs and returns the technical reason on failure.
+     */
+    public function tryGenerate(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'brief' => 'required|string|min:10|max:500',
+            'platform' => 'nullable|string|max:64',
+        ]);
+
+        $started = microtime(true);
+        $result = app(\App\Services\AI\ContentGeneratorService::class)->generate(($data['platform'] ?? null) ?: 'instagram', $data['brief'], 'Sample Brand');
+        $ms = (int) round((microtime(true) - $started) * 1000);
+
+        return response()->json([
+            'success' => $result['success'],
+            'message' => $result['success'] ? "Generated in {$ms} ms." : $result['message'],
+            'data' => [
+                'content' => $result['content'],
+                'detail' => $result['detail'] ?? null,
+                'provider' => $this->settings->provider(),
+                'model' => $this->settings->model(),
+                'ms' => $ms,
+            ],
+        ], $result['success'] ? 200 : 422);
+    }
+
     /** DELETE /admin/ai-settings/key */
     public function removeKey(Request $request): JsonResponse
     {

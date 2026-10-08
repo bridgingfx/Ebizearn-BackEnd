@@ -40,17 +40,21 @@ class BusinessCampaignController extends Controller
     public function generateContent(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'platform' => 'required|string|max:64',
+            'platform' => 'nullable|string|max:64',
             'brief' => 'required|string|min:10|max:500',
+        ], [
+            'brief.required' => 'Describe what the post is for first.',
+            'brief.min' => 'Describe the post in a little more detail (at least 10 characters), e.g. "Promote our new coffee shop in Dubai Marina".',
         ]);
 
         $business = $request->user()->business;
         $generator = new \App\Services\AI\ContentGeneratorService();
         $result = $generator->generate(
-            $data['platform'],
+            ($data['platform'] ?? null) ?: 'default',
             $data['brief'],
             $business?->company_name
         );
+        unset($result['detail']); // technical reason stays in the server log
 
         return response()->json($result, $result['success'] ? 200 : 422);
     }

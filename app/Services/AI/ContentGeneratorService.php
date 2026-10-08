@@ -67,7 +67,7 @@ TXT;
         // 1. The brief itself must be clean before the AI sees it.
         $briefCheck = $this->safety->check(trim($brief . ' ' . $companyName), $moderate);
         if (!$briefCheck['ok']) {
-            return $this->fail('Please rewrite your description. ' . $briefCheck['reason']);
+            return $this->fail('Please rewrite your description. ' . $briefCheck['reason'], 'Description failed the safety check: ' . $briefCheck['reason']);
         }
 
         $platformKey = strtolower($platform);
@@ -91,17 +91,17 @@ TXT;
             $result = $this->ai->chat($system, $user, $temperature);
             if ($result['blocked']) {
                 // The AI provider's own safety filter refused it.
-                return $this->fail('This description cannot be turned into appropriate content. Please describe your product or service in a neutral, positive way.');
+                return $this->fail('This description cannot be turned into appropriate content. Please describe your product or service in a neutral, positive way.', 'The AI provider\'s safety filter blocked the request.');
             }
             if (!$result['ok']) {
                 return $this->fail(!empty($result['busy'])
                     ? 'The AI is busy right now — please try again in a minute.'
-                    : 'AI service unavailable. Please try again.');
+                    : 'AI service unavailable. Please try again.', 'AI provider error: ' . ($result['error'] ?? 'unknown'));
             }
             $raw = (string) $result['text'];
 
             if (str_contains($raw, self::REFUSAL)) {
-                return $this->fail('This description cannot be turned into appropriate content. Please describe your product or service in a neutral, positive way.');
+                return $this->fail('This description cannot be turned into appropriate content. Please describe your product or service in a neutral, positive way.', 'The AI refused the description as inappropriate.');
             }
 
             $content = $this->clean($raw);
@@ -118,7 +118,7 @@ TXT;
 
         return $this->fail($lastReason
             ? 'The AI could not produce suitable content for this description. Please rephrase it and try again.'
-            : 'AI returned empty content. Please try again.');
+            : 'AI returned empty content. Please try again.', $lastReason ? "Generated text failed the safety check twice: {$lastReason}" : 'The AI returned empty text twice.');
     }
 
     /**
@@ -182,8 +182,14 @@ TXT;
         return $text;
     }
 
-    private function fail(string $message): array
+    /**
+     * `detail` is the technical reason for Super Admin (AI settings → Try a
+     * sample post) and the server log — never sent to businesses.
+     */
+    private function fail(string $message, ?string $detail = null): array
     {
-        return ['success' => false, 'message' => $message, 'content' => null];
+        \Illuminate\Support\Facades\Log::warning('AI post generation failed', ['message' => $message, 'detail' => $detail]);
+
+        return ['success' => false, 'message' => $message, 'content' => null, 'detail' => $detail ?? $message];
     }
 }
