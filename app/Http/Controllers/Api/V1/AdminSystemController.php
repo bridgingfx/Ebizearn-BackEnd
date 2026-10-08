@@ -135,6 +135,7 @@ class AdminSystemController extends Controller
     {
         $logs = AuditLog::with('actor')
             ->latest('created_at')
+            ->latest('id') // same-second entries in the order they happened
             ->paginate(25);
 
         return response()->json([
@@ -155,32 +156,7 @@ class AdminSystemController extends Controller
      */
     private function withEntityNames(Collection $logs): Collection
     {
-        $idsByType = $logs->groupBy('entity_type')->map(fn ($rows) => $rows->pluck('entity_id')->unique()->all());
-
-        $names = [];
-        $lookups = [
-            User::class => fn ($ids) => User::withTrashed()->whereIn('id', $ids)->pluck('name', 'id'),
-            SupportTicket::class => fn ($ids) => collect($ids)->mapWithKeys(fn ($id) => [$id => 'TKT-' . str_pad((string) $id, 5, '0', STR_PAD_LEFT)]),
-            Campaign::class => fn ($ids) => Campaign::whereIn('id', $ids)->pluck('title', 'id'),
-            Role::class => fn ($ids) => Role::whereIn('id', $ids)->pluck('label', 'id'),
-        ];
-        foreach ($idsByType as $type => $ids) {
-            if (isset($lookups[$type])) {
-                try {
-                    $names[$type] = $lookups[$type]($ids);
-                } catch (\Throwable) {
-                    // A renamed column must never break the audit list.
-                }
-            }
-        }
-
-        return $logs->map(function (AuditLog $log) use ($names) {
-            $row = $log->toArray();
-            $row['entity_model'] = class_basename((string) $log->entity_type);
-            $row['entity_name'] = isset($names[$log->entity_type]) ? ($names[$log->entity_type][$log->entity_id] ?? null) : null;
-
-            return $row;
-        })->values();
+        return \App\Services\Audit\AuditPresenter::withEntityNames($logs);
     }
 
     /**
@@ -206,6 +182,7 @@ class AdminSystemController extends Controller
                     ->orWhere('actor_id', $user->id);
             })
             ->latest('created_at')
+            ->latest('id')
             ->limit(15)
             ->get();
 

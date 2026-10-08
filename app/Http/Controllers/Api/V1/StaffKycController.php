@@ -108,14 +108,22 @@ class StaffKycController extends Controller
         }
         $profile = $user->profile;
 
-        if (!$profile || $profile->kyc_status !== 'pending') {
+        // Any submission with documents can be decided — pending ones, and
+        // staff may also change an earlier decision (e.g. revoke an approval).
+        if (!$profile || empty($profile->getAttributes()['kyc_front_path'] ?? null)) {
             return response()->json([
                 'success' => false,
-                'message' => 'This KYC submission is not awaiting review.',
+                'message' => 'This user has not submitted KYC documents.',
             ], 422);
         }
 
         $approve = $request->input('decision') === 'approve';
+        if ($profile->kyc_status === ($approve ? 'verified' : 'rejected')) {
+            return response()->json([
+                'success' => false,
+                'message' => $approve ? 'This KYC is already approved.' : 'This KYC is already rejected.',
+            ], 422);
+        }
         $before = ['kyc_status' => $profile->kyc_status];
 
         // Direct assignment: KYC fields are intentionally NOT in $fillable

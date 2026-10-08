@@ -33,5 +33,9 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(\App\Models\Campaign::class, \App\Policies\CampaignPolicy::class);
         Gate::policy(\App\Models\Task::class, \App\Policies\TaskPolicy::class);
         Gate::policy(\App\Models\Wallet::class, \App\Policies\WalletPolicy::class);
+
+        // New sign-ups, tasks, campaigns, proofs, withdrawals and tickets go
+        // into the audit trail — the source of the staff notification feed.
+        \App\Services\Audit\ActivityRecorder::register();
     }
 }

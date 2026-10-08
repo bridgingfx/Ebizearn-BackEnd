@@ -31,6 +31,7 @@ use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\SocialChannelController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
+use App\Http\Controllers\Api\V1\StaffNotificationController;
 use App\Http\Controllers\Api\V1\StaffCountryChangeController;
 use App\Http\Controllers\Api\V1\RankTierController;
 use App\Http\Controllers\Api\V1\KycProviderController;
@@ -352,6 +353,13 @@ Route::prefix('v1')->group(function () {
             Route::get('/referrals/overview', [AdminReferralController::class, 'overview'])->middleware('permission:view_referrals');
             // Audit logs: their own page, and also shown inside Reports.
             Route::get('/audit-logs', [AdminSystemController::class, 'auditLogs'])->middleware('permission.any:view_audit_logs,view_reports');
+
+            // Notification bell: all platform activity (Admin / Super Admin).
+            Route::middleware('role:admin,superadmin')->prefix('notifications')->group(function () {
+                Route::get('/', [StaffNotificationController::class, 'index']);
+                Route::get('/unread-count', [StaffNotificationController::class, 'unread']);
+                Route::post('/seen', [StaffNotificationController::class, 'markSeen']);
+            });
             // Demo-request triage (public submissions, admin read only)
             Route::get('/demo-requests', [DemoRequestController::class, 'index'])->middleware('permission:view_demo_requests');
 

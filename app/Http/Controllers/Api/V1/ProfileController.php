@@ -382,7 +382,11 @@ class ProfileController extends Controller
         $this->deleteKycFiles($profile);
 
         $dir = 'kyc/' . $user->id;
-        $profile->update([
+        // forceFill: kyc_status / kyc_verified_at / kyc_reviewed_by are NOT
+        // mass-assignable (users must never self-verify), so update() silently
+        // dropped them and submissions stayed "unverified" — never reaching
+        // the staff review queue.
+        $profile->forceFill([
             'kyc_status' => 'pending',
             'kyc_document_type' => $request->input('document_type'),
             'kyc_front_path' => $request->file('document_front')->store($dir, 'local'),
@@ -392,7 +396,7 @@ class ProfileController extends Controller
             'kyc_verified_at' => null,
             'kyc_reviewed_by' => null,
             'kyc_rejection_reason' => null,
-        ]);
+        ])->save();
 
         AuditLogger::log($user, 'kyc.submitted', User::class, $user->id, [
             'document_type' => $request->input('document_type'),
