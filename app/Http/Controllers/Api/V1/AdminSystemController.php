@@ -184,7 +184,7 @@ class AdminSystemController extends Controller
      */
     public function showUser(Request $request, string $id): JsonResponse
     {
-        $user = User::with(['profile', 'wallet', 'business', 'referrer:id,name,email', 'managedBy:id,name,role'])->findOrFail($id);
+        $user = User::with(['profile', 'wallet', 'business', 'referrer:id,name,email', 'manager:id,name,role'])->findOrFail($id);
         if (!StaffScope::canManageAccount($request->user(), $user)) {
             return StaffScope::notFound();
         }
@@ -235,7 +235,7 @@ class AdminSystemController extends Controller
     public function users(Request $request): JsonResponse
     {
         $actor = $request->user();
-        $query = User::with(['profile', 'wallet', 'business', 'managedBy:id,name,role']);
+        $query = User::with(['profile', 'wallet', 'business', 'manager:id,name,role']);
 
         // Assigned-users scope (Super Admin assigns users to staff).
         StaffScope::apply($query, $actor, 'users.id');

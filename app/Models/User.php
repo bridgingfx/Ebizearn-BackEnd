@@ -113,7 +113,7 @@ class User extends Authenticatable
     }
 
     /** Staff account (admin / moderator) this user is assigned to. */
-    public function managedBy(): BelongsTo
+    public function manager(): BelongsTo
     {
         return $this->belongsTo(User::class, 'managed_by');
     }

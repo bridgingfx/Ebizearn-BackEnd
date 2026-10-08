@@ -74,7 +74,13 @@ class PermissionManagementTest extends TestCase
         Sanctum::actingAs($this->makeUser('superadmin'));
         $this->putJson('/api/v1/ops/roles/superadmin/permissions', ['permissions' => []])->assertStatus(422);
 
-        Sanctum::actingAs($this->makeUser('admin'));
+        // Admins reach Roles & Permissions only while they hold manage_roles.
+        $admin = $this->makeUser('admin');
+        $admin->syncPermissionOverrides([], ['manage_roles']);
+        Sanctum::actingAs($admin);
+        $this->getJson('/api/v1/ops/roles')->assertForbidden();
+
+        Sanctum::actingAs($this->makeUser('contributor'));
         $this->getJson('/api/v1/ops/roles')->assertForbidden();
     }
 
@@ -141,7 +147,7 @@ class PermissionManagementTest extends TestCase
     public function test_admin_area_gated_by_permission(): void
     {
         $admin = $this->makeUser('admin');
-        $admin->syncPermissionOverrides([], ['manage_users']);
+        $admin->syncPermissionOverrides([], ['manage_users', 'manage_businesses']);
         Sanctum::actingAs($admin);
 
         $this->getJson('/api/v1/admin/users')->assertForbidden();
