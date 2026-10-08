@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Campaign;
 use App\Models\Task;
+use App\Services\Staff\StaffScope;
 use App\Services\Tasks\TaskManagementService;
 use App\Services\TaskTypes\RewardBandViolationException;
 use Exception;
@@ -29,6 +30,7 @@ class AdminTaskController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = Task::with(['category', 'taskType', 'campaign.business']);
+        StaffScope::applyToTasks($query, $request->user());
 
         if ($request->filled('campaign_id')) {
             $query->where('campaign_id', $request->input('campaign_id'));
@@ -57,7 +59,7 @@ class AdminTaskController extends Controller
      */
     public function campaignOptions(): JsonResponse
     {
-        $campaigns = Campaign::with('business:id,company_name')
+        $campaigns = StaffScope::applyToCampaigns(Campaign::with('business:id,company_name'), request()->user())
             ->whereIn('status', ['active', 'paused', 'pending_review'])
             ->latest()
             ->limit(200)
@@ -83,6 +85,11 @@ class AdminTaskController extends Controller
             return response()->json(['success' => false, 'message' => 'Validation error', 'errors' => $validator->errors()], 422);
         }
 
+        $campaignBusiness = Campaign::whereKey($validator->validated()['campaign_id'] ?? null)->value('business_id');
+        if (!StaffScope::allowsBusiness($request->user(), $campaignBusiness ? (int) $campaignBusiness : null)) {
+            return StaffScope::notFound();
+        }
+
         try {
             $task = $this->tasks->createTask($validator->validated());
         } catch (RewardBandViolationException $e) {
@@ -101,6 +108,9 @@ class AdminTaskController extends Controller
     public function update(Request $request, string $id): JsonResponse
     {
         $task = Task::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        if (!$this->taskInScope($task)) {
+            return StaffScope::notFound();
+        }
 
         $validator = $this->taskValidator($request->all(), false);
 
@@ -122,6 +132,9 @@ class AdminTaskController extends Controller
     public function destroy(string $id): JsonResponse
     {
         $task = Task::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        if (!$this->taskInScope($task)) {
+            return StaffScope::notFound();
+        }
 
         try {
             $this->tasks->deleteTask($task);
@@ -130,6 +143,14 @@ class AdminTaskController extends Controller
         }
 
         return response()->json(['success' => true, 'message' => 'Task deleted.']);
+    }
+
+    /** Task belongs to a campaign of a business the staff member may manage. */
+    protected function taskInScope(Task $task): bool
+    {
+        $businessId = Campaign::whereKey($task->campaign_id)->value('business_id');
+
+        return StaffScope::allowsBusiness(request()->user(), $businessId ? (int) $businessId : null);
     }
 
     protected function taskValidator(array $input, bool $isCreate): \Illuminate\Contracts\Validation\Validator

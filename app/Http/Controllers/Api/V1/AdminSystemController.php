@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Business;
 use App\Models\Campaign;
 use App\Models\FeatureFlag;
+use App\Models\Permission;
 use App\Models\Profile;
 use App\Models\Role;
 use App\Models\SupportTicket;
@@ -15,6 +16,7 @@ use App\Models\User;
 use App\Models\Wallet;
 use App\Rules\StrongPassword;
 use App\Services\Audit\AuditLogger;
+use App\Services\Staff\StaffScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -180,9 +182,12 @@ class AdminSystemController extends Controller
      * KYC state, wallet, business, activity counts, recent withdrawals,
      * tickets, audit trail, and effective permissions.
      */
-    public function showUser(string $id): JsonResponse
+    public function showUser(Request $request, string $id): JsonResponse
     {
-        $user = User::with(['profile', 'wallet', 'business', 'referrer:id,name,email'])->findOrFail($id);
+        $user = User::with(['profile', 'wallet', 'business', 'referrer:id,name,email', 'managedBy:id,name,role'])->findOrFail($id);
+        if (!StaffScope::canManageAccount($request->user(), $user)) {
+            return StaffScope::notFound();
+        }
 
         $submissionCounts = $user->submissions()
             ->select('status', DB::raw('count(*) as total'))
@@ -229,10 +234,25 @@ class AdminSystemController extends Controller
      */
     public function users(Request $request): JsonResponse
     {
-        $query = User::with(['profile', 'wallet', 'business']);
+        $actor = $request->user();
+        $query = User::with(['profile', 'wallet', 'business', 'managedBy:id,name,role']);
+
+        // Assigned-users scope (Super Admin assigns users to staff).
+        StaffScope::apply($query, $actor, 'users.id');
+
+        // A Businesses-only admin sees business accounts only; the other
+        // sections that feed on this list see everyone in scope.
+        $seesAllRoles = collect([Permission::MANAGE_USERS, Permission::VIEW_WALLETS, Permission::ADJUST_WALLETS, Permission::MANAGE_ROLES])
+            ->contains(fn ($p) => $actor->hasPermission($p));
+        if (!$seesAllRoles) {
+            $query->where('role', 'business');
+        }
 
         if ($request->filled('role')) {
             $query->where('role', $request->input('role'));
+        }
+        if ($request->filled('managed_by')) {
+            $query->where('managed_by', $request->input('managed_by') === 'none' ? null : (int) $request->input('managed_by'));
         }
 
         if ($request->filled('search')) {
@@ -359,6 +379,9 @@ class AdminSystemController extends Controller
     public function updateUserStatus(Request $request, string $id): JsonResponse
     {
         $user = User::findOrFail($id);
+        if (!StaffScope::canManageAccount($request->user(), $user)) {
+            return StaffScope::notFound();
+        }
         $status = $request->input('status');
 
         if (!in_array($status, ['active', 'suspended', 'pending_verification'], true)) {
@@ -423,6 +446,9 @@ class AdminSystemController extends Controller
     {
         $user = User::with(['profile', 'business'])->findOrFail($id);
         $actor = $request->user();
+        if (!StaffScope::canManageAccount($actor, $user)) {
+            return StaffScope::notFound();
+        }
 
         if ((int) $user->id === (int) $actor->id) {
             return response()->json(['success' => false, 'message' => 'You cannot edit your own account here.'], 422);

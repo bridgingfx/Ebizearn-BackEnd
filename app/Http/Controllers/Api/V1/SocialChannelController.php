@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\SocialChannel;
 use App\Services\Audit\AuditLogger;
 use App\Services\Social\SocialChannelService;
+use App\Services\Staff\StaffScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -106,6 +107,7 @@ class SocialChannelController extends Controller
     {
         $status = $request->input('status', 'pending');
         $query = SocialChannel::query()->with('user:id,uuid,name,email,role,status');
+        StaffScope::apply($query, $request->user());
 
         if ($status !== 'all') {
             $query->where('status', $status);
@@ -128,7 +130,7 @@ class SocialChannelController extends Controller
                 'current_page' => $page->currentPage(),
                 'last_page' => $page->lastPage(),
                 'total' => $page->total(),
-                'pending' => SocialChannel::where('status', 'pending')->count(),
+                'pending' => StaffScope::apply(SocialChannel::where('status', 'pending'), $request->user())->count(),
             ],
         ]);
     }
@@ -145,6 +147,9 @@ class SocialChannelController extends Controller
         ]);
 
         $channel = SocialChannel::findOrFail($id);
+        if (!StaffScope::allowsUser($request->user(), $channel->user_id)) {
+            return StaffScope::notFound();
+        }
         abort_unless($channel->status === 'pending', 422, 'This channel is not awaiting review.');
 
         $approve = $data['decision'] === 'approve';

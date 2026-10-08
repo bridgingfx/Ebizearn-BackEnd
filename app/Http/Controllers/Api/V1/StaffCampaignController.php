@@ -8,6 +8,7 @@ use App\Models\Campaign;
 use App\Models\TaskSubmission;
 use App\Services\Audit\AuditLogger;
 use App\Services\Campaigns\CampaignCreationService;
+use App\Services\Staff\StaffScope;
 use App\Services\Campaigns\CampaignManagementService;
 use App\Services\Campaigns\InsufficientCampaignFundsException;
 use App\Services\Idempotency\IdempotencyService;
@@ -39,6 +40,7 @@ class StaffCampaignController extends Controller
         $query = Campaign::with(['business.owner', 'category'])
             ->withCount('tasks')
             ->latest();
+        StaffScope::applyToCampaigns($query, $request->user());
 
         if ($request->filled('status')) {
             $query->where('status', $request->input('status'));
@@ -67,6 +69,7 @@ class StaffCampaignController extends Controller
     {
         $businesses = Business::with(['owner:id,name,email,status', 'owner.wallet:id,user_id,available_balance_cents'])
             ->whereHas('owner', fn ($q) => $q->where('role', 'business')->where('status', 'active'))
+            ->when(StaffScope::userIds(request()->user()), fn ($q, $ids) => $q->whereIn('owner_id', $ids))
             ->orderBy('company_name')
             ->get()
             ->map(fn (Business $b) => [
@@ -86,6 +89,9 @@ class StaffCampaignController extends Controller
                 ->with(['business.owner', 'category', 'tasks.taskType'])
                 ->withCount('tasks')
                 ->firstOrFail();
+            if (!StaffScope::allowsBusiness(request()->user(), $campaign->business_id)) {
+                return StaffScope::notFound();
+            }
 
             $spent = (int) TaskSubmission::whereIn('task_id', $campaign->tasks()->pluck('id'))
                 ->where('status', 'approved')
@@ -142,6 +148,9 @@ class StaffCampaignController extends Controller
         }
 
         $business = Business::findOrFail($request->input('business_id'));
+        if (!StaffScope::allowsUser($request->user(), (int) $business->owner_id)) {
+            return StaffScope::notFound();
+        }
         $actor = $request->user();
 
         try {
@@ -206,6 +215,9 @@ class StaffCampaignController extends Controller
         }
 
         $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
+            return StaffScope::notFound();
+        }
         $target = $request->input('status');
 
         $allowed = [
@@ -271,6 +283,9 @@ class StaffCampaignController extends Controller
         }
 
         $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
+            return StaffScope::notFound();
+        }
         $before = $campaign->only(array_keys($validator->validated()));
 
         try {
@@ -297,6 +312,9 @@ class StaffCampaignController extends Controller
     public function destroy(Request $request, string $id): JsonResponse
     {
         $campaign = Campaign::where(fn ($q) => $q->where('id', $id)->orWhere('uuid', $id))->firstOrFail();
+        if (!StaffScope::allowsBusiness($request->user(), $campaign->business_id)) {
+            return StaffScope::notFound();
+        }
 
         try {
             $released = $this->campaigns->deleteSafely($campaign);

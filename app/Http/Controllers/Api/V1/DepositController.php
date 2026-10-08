@@ -8,6 +8,7 @@ use App\Models\DepositRequest;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Services\Audit\AuditLogger;
+use App\Services\Staff\StaffScope;
 use App\Services\Wallet\WalletLedgerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -182,6 +183,7 @@ class DepositController extends Controller
     {
         $status = $request->input('status', 'pending');
         $query = DepositRequest::with(['user:id,name,email,role', 'user.business:id,owner_id,company_name', 'reviewer:id,name']);
+        StaffScope::apply($query, $request->user());
         if ($status !== 'all') {
             $query->where('status', $status);
         }
@@ -200,8 +202,8 @@ class DepositController extends Controller
                 'current_page' => $page->currentPage(),
                 'last_page' => $page->lastPage(),
                 'total' => $page->total(),
-                'pending' => DepositRequest::where('status', 'pending')->count(),
-                'pending_amount_cents' => (int) DepositRequest::where('status', 'pending')->sum('amount_cents'),
+                'pending' => StaffScope::apply(DepositRequest::where('status', 'pending'), $request->user())->count(),
+                'pending_amount_cents' => (int) StaffScope::apply(DepositRequest::where('status', 'pending'), $request->user())->sum('amount_cents'),
             ],
         ]);
     }
@@ -210,6 +212,7 @@ class DepositController extends Controller
     public function proof(int $id): Response
     {
         $deposit = DepositRequest::findOrFail($id);
+        abort_unless(StaffScope::allowsUser(request()->user(), $deposit->user_id), 404, 'Not found.');
         $path = $deposit->getAttributes()['proof_path'] ?? null;
         abort_unless($path && Storage::disk('local')->exists($path), 404, 'No proof was uploaded.');
 
@@ -238,6 +241,7 @@ class DepositController extends Controller
 
         $deposit = DB::transaction(function () use ($data, $id, $request, $ledger) {
             $deposit = DepositRequest::where('id', $id)->lockForUpdate()->firstOrFail();
+            abort_unless(StaffScope::allowsUser($request->user(), $deposit->user_id), 404, 'Not found.');
             abort_unless($deposit->status === 'pending', 422, 'This deposit has already been ' . $deposit->status . '.');
 
             // Cap the override: at most ±20% of what was requested (min $1 swing).

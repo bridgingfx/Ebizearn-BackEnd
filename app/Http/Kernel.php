@@ -73,5 +73,6 @@ class Kernel extends HttpKernel
         // code (email_not_verified). Not Laravel's session-based `verified`.
         'email.verified' => \App\Http\Middleware\EnsureEmailVerified::class,
         'permission' => EnsurePermission::class,
+        'permission.any' => \App\Http\Middleware\EnsureAnyPermission::class,
     ];
 }

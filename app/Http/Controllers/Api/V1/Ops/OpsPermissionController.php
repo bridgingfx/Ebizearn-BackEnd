@@ -7,6 +7,7 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Services\Staff\StaffScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -100,11 +101,14 @@ class OpsPermissionController extends Controller
     }
 
     /** GET /ops/users/{id}/permissions */
-    public function user(string $id): JsonResponse
+    public function user(Request $request, string $id): JsonResponse
     {
         $user = User::findOrFail($id);
+        if (!StaffScope::allowsUser($request->user(), $user->id)) {
+            return StaffScope::notFound();
+        }
 
-        return response()->json(['success' => true, 'data' => $this->presentUser($user)]);
+        return response()->json(['success' => true, 'data' => $this->presentUser($user, $request->user())]);
     }
 
     /** PUT /ops/users/{id}/permissions  { grants: string[], denies: string[] } */
@@ -136,8 +140,28 @@ class OpsPermissionController extends Controller
         if (!$actor->isSuperAdmin() && in_array($user->role, ['admin', 'superadmin'], true)) {
             return response()->json(['success' => false, 'message' => 'Only Super Admin can change permissions of admin accounts.'], 403);
         }
+        // Assigned-users scope: a scoped admin only manages their own users.
+        if (!StaffScope::allowsUser($actor, $user->id)) {
+            return StaffScope::notFound();
+        }
 
         $data = $validator->validated();
+
+        // Delegation guard: an admin can only hand out what Super Admin gave
+        // them. Grants Super Admin already placed on the user may stay.
+        if (!$actor->isSuperAdmin()) {
+            $added = array_diff($data['grants'], $user->grantedPermissionNames());
+            $excess = array_values(array_diff($added, $actor->effectivePermissions()));
+            if ($excess !== []) {
+                $labels = array_map(fn ($p) => Permission::catalog()[$p] ?? $p, $excess);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You can only give permissions you have yourself. Not allowed: ' . implode(', ', $labels) . '.',
+                    'code' => 'permission_not_held',
+                ], 403);
+            }
+        }
         $before = ['grants' => $user->grantedPermissionNames(), 'denies' => $user->deniedPermissionNames()];
 
         $user->syncPermissionOverrides($data['grants'], $data['denies']);
@@ -168,8 +192,10 @@ class OpsPermissionController extends Controller
             ->all();
     }
 
-    private function presentUser(User $user): array
+    private function presentUser(User $user, ?User $actor = null): array
     {
+        $actor ??= request()->user();
+
         return [
             'user' => $user->only(['id', 'name', 'email', 'role']),
             'editable' => !$user->isSuperAdmin(),
@@ -178,6 +204,9 @@ class OpsPermissionController extends Controller
             'denies' => $user->deniedPermissionNames(),
             'effective' => $user->effectivePermissions(),
             'permissions' => $this->catalog(),
+            // What the signed-in staff member may newly Allow (delegation):
+            // Super Admin everything, an admin only what they hold.
+            'grantable' => $actor && !$actor->isSuperAdmin() ? $actor->effectivePermissions() : null,
         ];
     }
 }

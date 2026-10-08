@@ -8,6 +8,7 @@ use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use App\Services\Kyc\SumsubService;
+use App\Services\Staff\StaffScope;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -68,6 +69,9 @@ class KycProviderController extends Controller
         }
 
         $user = User::findOrFail($userId);
+        if (!StaffScope::allowsUser($request->user(), $user->id)) {
+            return StaffScope::notFound();
+        }
         $method = $request->input('method');
 
         if ($method === 'sumsub' && !$this->sumsub->isConfigured()) {
@@ -114,6 +118,9 @@ class KycProviderController extends Controller
     public function staffToken(Request $request, string $userId): JsonResponse
     {
         $user = User::findOrFail($userId);
+        if (!StaffScope::allowsUser($request->user(), $user->id)) {
+            return StaffScope::notFound();
+        }
 
         try {
             $token = $this->sumsub->accessToken($user);

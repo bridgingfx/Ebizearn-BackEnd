@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use App\Services\Staff\StaffScope;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
@@ -31,8 +32,9 @@ class OpsWalletController extends Controller
     {
         $search = trim((string) $request->input('search', ''));
 
-        $query = Wallet::with(['user:id,name,email,role', 'user.business:id,user_id,company_name'])
+        $query = Wallet::with(['user:id,name,email,role', 'user.business:id,owner_id,company_name'])
             ->orderByDesc('available_balance_cents');
+        StaffScope::apply($query, $request->user());
 
         if ($search !== '') {
             $query->whereHas('user', function ($q) use ($search) {
@@ -50,9 +52,12 @@ class OpsWalletController extends Controller
     }
 
     /** GET /admin/ops/wallets/{id} — wallet + recent ledger entries. */
-    public function show(int $id): JsonResponse
+    public function show(Request $request, int $id): JsonResponse
     {
-        $wallet = Wallet::with(['user:id,name,email,role', 'user.business:id,user_id,company_name'])->findOrFail($id);
+        $wallet = Wallet::with(['user:id,name,email,role', 'user.business:id,owner_id,company_name'])->findOrFail($id);
+        if (!StaffScope::allowsUser($request->user(), $wallet->user_id)) {
+            return StaffScope::notFound();
+        }
 
         $transactions = WalletTransaction::where('wallet_id', $wallet->id)
             ->latest('id')
@@ -76,21 +81,24 @@ class OpsWalletController extends Controller
     {
         $data = $request->validate([
             'amount' => 'required|numeric|min:1|max:1000000',
-            'description' => 'nullable|string|max:500',
+            'description' => 'required|string|min:3|max:500',
         ]);
 
         $wallet = Wallet::findOrFail($id);
+        if (!StaffScope::allowsUser($request->user(), $wallet->user_id)) {
+            return StaffScope::notFound();
+        }
         $cents = (int) round(((float) $data['amount']) * 100);
 
         try {
             $tx = $ledger->credit(
                 $wallet,
                 $cents,
-                'manual_credit',
-                $data['description'] ?: 'Manual credit by Super Admin',
+                'admin_adjustment', // only ledger type for manual changes (enum)
+                $data['description'],
                 'user',
                 $request->user()->id,
-                ['granted_by' => $request->user()->id, 'granted_by_email' => $request->user()->email],
+                ['direction' => 'credit', 'granted_by' => $request->user()->id, 'granted_by_email' => $request->user()->email],
                 'manual-credit:' . $wallet->id . ':' . time() . ':' . $request->user()->id,
             );
         } catch (Exception $e) {
@@ -118,21 +126,24 @@ class OpsWalletController extends Controller
     {
         $data = $request->validate([
             'amount' => 'required|numeric|min:1|max:1000000',
-            'description' => 'nullable|string|max:500',
+            'description' => 'required|string|min:3|max:500',
         ]);
 
         $wallet = Wallet::findOrFail($id);
+        if (!StaffScope::allowsUser($request->user(), $wallet->user_id)) {
+            return StaffScope::notFound();
+        }
         $cents = (int) round(((float) $data['amount']) * 100);
 
         try {
             $tx = $ledger->debit(
                 $wallet,
                 $cents,
-                'manual_debit',
-                $data['description'] ?: 'Manual debit by Super Admin',
+                'admin_adjustment',
+                $data['description'],
                 'user',
                 $request->user()->id,
-                ['debited_by' => $request->user()->id],
+                ['direction' => 'debit', 'debited_by' => $request->user()->id, 'debited_by_email' => $request->user()->email],
             );
         } catch (Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);

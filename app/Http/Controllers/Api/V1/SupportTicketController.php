@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\SupportMessage;
 use App\Models\SupportTicket;
 use App\Services\Audit\AuditLogger;
+use App\Services\Staff\StaffScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -165,6 +166,7 @@ class SupportTicketController extends Controller
         $query = SupportTicket::query()
             ->with(['user:id,name,email,role', 'assignedAgent:id,name', 'firstMessage'])
             ->withCount('messages');
+        StaffScope::apply($query, $request->user());
 
         $status = $request->input('status', 'all');
         if ($status === 'active') {
@@ -188,7 +190,8 @@ class SupportTicketController extends Controller
 
         $page = $query->latest('updated_at')->paginate(25);
 
-        $counts = SupportTicket::select('status', DB::raw('count(*) as total'))->groupBy('status')->pluck('total', 'status');
+        $counts = StaffScope::apply(SupportTicket::select('status', DB::raw('count(*) as total')), $request->user())
+            ->groupBy('status')->pluck('total', 'status');
 
         return response()->json([
             'success' => true,
@@ -210,7 +213,7 @@ class SupportTicketController extends Controller
     /** GET /staff/support/tickets/{uuid} */
     public function staffShow(string $uuid): JsonResponse
     {
-        $ticket = SupportTicket::where('uuid', $uuid)->firstOrFail();
+        $ticket = $this->staffTicket($uuid);
 
         return response()->json([
             'success' => true,
@@ -221,7 +224,7 @@ class SupportTicketController extends Controller
     /** POST /staff/support/tickets/{uuid}/messages  { message, internal? } */
     public function staffReply(Request $request, string $uuid): JsonResponse
     {
-        $ticket = SupportTicket::where('uuid', $uuid)->firstOrFail();
+        $ticket = $this->staffTicket($uuid);
 
         $validator = Validator::make(
             $request->all(),
@@ -260,7 +263,7 @@ class SupportTicketController extends Controller
     /** PATCH /staff/support/tickets/{uuid}  { status?, priority? } */
     public function staffUpdate(Request $request, string $uuid): JsonResponse
     {
-        $ticket = SupportTicket::where('uuid', $uuid)->firstOrFail();
+        $ticket = $this->staffTicket($uuid);
 
         $validator = Validator::make($request->all(), [
             'status' => 'sometimes|in:' . implode(',', self::STATUSES),
@@ -309,10 +312,19 @@ class SupportTicketController extends Controller
     /** GET /staff/support/tickets/{uuid}/messages/{messageId}/attachments/{index} */
     public function staffAttachment(string $uuid, string $messageId, string $index): Response
     {
-        $ticket = SupportTicket::where('uuid', $uuid)->firstOrFail();
+        $ticket = $this->staffTicket($uuid);
         $message = SupportMessage::where('ticket_id', $ticket->id)->findOrFail($messageId);
 
         return $this->streamAttachment($message, (int) $index);
+    }
+
+    /** A ticket the signed-in staff member may handle (assigned-users scope). */
+    private function staffTicket(string $uuid): SupportTicket
+    {
+        $ticket = SupportTicket::where('uuid', $uuid)->firstOrFail();
+        abort_unless(StaffScope::allowsUser(request()->user(), $ticket->user_id), 404, 'Not found.');
+
+        return $ticket;
     }
 
     private function streamAttachment(SupportMessage $message, int $index): Response

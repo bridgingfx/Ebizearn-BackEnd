@@ -298,16 +298,19 @@ Route::prefix('v1')->group(function () {
         // so Super Admin can narrow what an admin account may do.
         Route::middleware('role:admin,superadmin')->prefix('admin')->group(function () {
             Route::get('/dashboard', [AdminVerificationController::class, 'dashboard']);
-            Route::get('/health', [AdminSystemController::class, 'health']);
-            Route::get('/traffic', [TrafficAnalyticsController::class, 'overview']);
-            Route::get('/traffic/sessions/{sessionId}', [TrafficAnalyticsController::class, 'sessionDetail']);
+            // One permission per sidebar section (Roles & Permissions).
+            Route::get('/health', [AdminSystemController::class, 'health'])->middleware('permission:view_system_health');
+            Route::middleware('permission:view_traffic')->group(function () {
+                Route::get('/traffic', [TrafficAnalyticsController::class, 'overview']);
+                Route::get('/traffic/sessions/{sessionId}', [TrafficAnalyticsController::class, 'sessionDetail']);
+            });
 
             Route::middleware('permission:review_submissions')->group(function () {
                 Route::get('/verification-queue', [AdminVerificationController::class, 'verificationQueue']);
                 Route::get('/submissions/{id}', [AdminVerificationController::class, 'submissionDetail']);
                 Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
-                Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts']);
             });
+            Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts'])->middleware('permission:view_fraud');
 
             Route::middleware('permission:process_payouts')->group(function () {
                 Route::get('/payouts', [AdminVerificationController::class, 'payouts']);
@@ -315,22 +318,25 @@ Route::prefix('v1')->group(function () {
                 // Record the on-chain tx hash after a USDT payout is sent
                 // manually from the company wallet.
                 Route::post('/payouts/{id}/tx-hash', [AdminVerificationController::class, 'recordTxHash']);
-                // Business deposits: confirm the money arrived, then credit the wallet.
+            });
+
+            // Business deposits: confirm the money arrived, then credit the wallet.
+            Route::middleware('permission:process_deposits')->group(function () {
                 Route::get('/deposits', [DepositController::class, 'staffIndex']);
                 Route::get('/deposits/{id}/proof', [DepositController::class, 'proof'])->whereNumber('id');
                 Route::post('/deposits/{id}/decision', [DepositController::class, 'decision'])->whereNumber('id');
             });
 
-            Route::middleware('permission:view_reports')->group(function () {
-                Route::get('/referrals/overview', [AdminReferralController::class, 'overview']); // Phase 11: read-only referral overview
-                Route::get('/audit-logs', [AdminSystemController::class, 'auditLogs']);
-                // Demo-request triage (public submissions, admin read only)
-                Route::get('/demo-requests', [DemoRequestController::class, 'index']);
-            });
+            Route::get('/referrals/overview', [AdminReferralController::class, 'overview'])->middleware('permission:view_referrals');
+            // Audit logs: their own page, and also shown inside Reports.
+            Route::get('/audit-logs', [AdminSystemController::class, 'auditLogs'])->middleware('permission.any:view_audit_logs,view_reports');
+            // Demo-request triage (public submissions, admin read only)
+            Route::get('/demo-requests', [DemoRequestController::class, 'index'])->middleware('permission:view_demo_requests');
 
-            // Referral commissions: any admin may view; changing L1/L2/L3 needs
+            // Referral commissions: viewing needs the Referrals page (or the
+            // right to change them); changing L1/L2/L3 needs
             // manage_referral_rules (Super Admin, or an admin they grant it to).
-            Route::get('/referral-rules', [AdminReferralController::class, 'rules']);
+            Route::get('/referral-rules', [AdminReferralController::class, 'rules'])->middleware('permission.any:view_referrals,manage_referral_rules');
             Route::patch('/referral-rules', [AdminReferralController::class, 'updateRules'])
                 ->middleware('permission:manage_referral_rules');
 
@@ -345,8 +351,13 @@ Route::prefix('v1')->group(function () {
             Route::post('/businesses', [AdminSystemController::class, 'createBusinessUser'])
                 ->middleware(['permission:create_business_users', 'throttle:30,1']);
 
-            Route::middleware('permission:manage_users')->group(function () {
-                Route::get('/users', [AdminSystemController::class, 'users']);
+            // The user list feeds Users & KYC, Businesses and Wallets; the
+            // controller narrows it to businesses for a Businesses-only admin.
+            Route::get('/users', [AdminSystemController::class, 'users'])
+                ->middleware('permission.any:manage_users,manage_businesses,view_wallets');
+            // Business accounts can be managed from the Businesses page;
+            // everyone else needs manage_users (enforced per target user).
+            Route::middleware('permission.any:manage_users,manage_businesses')->group(function () {
                 Route::get('/users/{id}', [AdminSystemController::class, 'showUser'])->whereNumber('id');
                 Route::patch('/users/{id}', [AdminSystemController::class, 'updateUser'])->whereNumber('id');
                 Route::post('/users/{id}/impersonate', [AdminSystemController::class, 'impersonate'])->whereNumber('id');
@@ -401,7 +412,7 @@ Route::prefix('v1')->group(function () {
         });
 
         // Social channel review queue (same reviewers as KYC).
-        Route::middleware(['role:moderator,admin,superadmin', 'permission:review_kyc'])->prefix('staff/social-channels')->group(function () {
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:review_social_channels'])->prefix('staff/social-channels')->group(function () {
             Route::get('/', [SocialChannelController::class, 'staffIndex']);
             Route::post('/{id}/decision', [SocialChannelController::class, 'decision'])->whereNumber('id');
         });
@@ -460,22 +471,19 @@ Route::prefix('v1')->group(function () {
             // only via `php artisan superadmin:create`
             Route::get('/admins', [OpsAdminController::class, 'index']);
             Route::post('/admins', [OpsAdminController::class, 'store'])->middleware('throttle:15,1');
+            // Assign contributors / businesses / moderators to a staff
+            // account; it then only sees and manages those users.
+            Route::get('/staff/{id}/assignments', [\App\Http\Controllers\Api\V1\Ops\OpsAssignmentController::class, 'show'])->whereNumber('id');
+            Route::put('/staff/{id}/assignments', [\App\Http\Controllers\Api\V1\Ops\OpsAssignmentController::class, 'update'])->whereNumber('id');
             Route::patch('/admins/{id}/permissions', [OpsAdminController::class, 'updatePermissions']);
             Route::get('/permissions', [OpsAdminController::class, 'permissions']);
 
             // Permission management for every role + per-user overrides.
             // Shared: superadmin (full) and admin with the manage_roles
             // permission (guarded — cannot touch the admin role or admins).
-            Route::middleware(['role:admin,superadmin', 'permission:manage_roles'])->group(function () {
-                Route::get('/roles', [OpsPermissionController::class, 'roles']);
-                Route::put('/roles/{name}/permissions', [OpsPermissionController::class, 'updateRole']);
-                Route::get('/users/{id}/permissions', [OpsPermissionController::class, 'user'])->whereNumber('id');
-                Route::put('/users/{id}/permissions', [OpsPermissionController::class, 'updateUser'])->whereNumber('id');
-                // Departments: everyone with manage_roles can list; only
-                // superadmin creates/updates/deletes.
-                Route::get('/departments', [OpsDepartmentController::class, 'index']);
-                Route::get('/departments/manage', [OpsDepartmentController::class, 'manage']);
-            });
+            // (The manage_roles routes shared with admins live in the
+            // admin+superadmin ops group below — nesting them here made the
+            // outer role:superadmin block every admin.)
             Route::middleware('role:superadmin')->group(function () {
                 Route::post('/departments', [OpsDepartmentController::class, 'store']);
                 Route::patch('/departments/{id}', [OpsDepartmentController::class, 'update'])->whereNumber('id');
@@ -514,15 +522,37 @@ Route::prefix('v1')->group(function () {
             Route::post('/platforms', [OpsSocialPlatformController::class, 'store']);
             Route::patch('/platforms/{id}', [OpsSocialPlatformController::class, 'update'])->whereNumber('id');
             Route::delete('/platforms/{id}', [OpsSocialPlatformController::class, 'destroy'])->whereNumber('id');
-            // Wallets: dedicated RESTful APIs — directory, ledger inspection,
-            // manual credits ("virtual tokens") and corrective debits.
-            Route::get('/wallets', [OpsWalletController::class, 'index']);
-            Route::get('/wallets/{id}', [OpsWalletController::class, 'show'])->whereNumber('id');
-            Route::post('/wallets/{id}/credit', [OpsWalletController::class, 'credit'])->whereNumber('id');
-            Route::post('/wallets/{id}/debit', [OpsWalletController::class, 'debit'])->whereNumber('id');
-
             // Audit log (append-only; read only)
             Route::get('/audit-logs', [OpsSettingsController::class, 'auditLogs']);
+        });
+
+        // Wallets: directory, ledger inspection, manual credits ("virtual
+        // tokens") and corrective debits. Super Admin grants view_wallets /
+        // adjust_wallets to the admins who may use them.
+        Route::middleware(['role:admin,superadmin', 'throttle:ops'])->prefix('ops')->group(function () {
+            // Permission management for every role + per-user overrides.
+            // Shared: superadmin (full) and admin with the manage_roles
+            // permission (guarded — cannot touch the admin role or admins,
+            // can only grant what they hold, only their assigned users).
+            Route::middleware('permission:manage_roles')->group(function () {
+                Route::get('/roles', [OpsPermissionController::class, 'roles']);
+                Route::put('/roles/{name}/permissions', [OpsPermissionController::class, 'updateRole']);
+                Route::get('/users/{id}/permissions', [OpsPermissionController::class, 'user'])->whereNumber('id');
+                Route::put('/users/{id}/permissions', [OpsPermissionController::class, 'updateUser'])->whereNumber('id');
+                // Departments: everyone with manage_roles can list; only
+                // superadmin creates/updates/deletes.
+                Route::get('/departments', [OpsDepartmentController::class, 'index']);
+                Route::get('/departments/manage', [OpsDepartmentController::class, 'manage']);
+            });
+
+            Route::middleware('permission.any:view_wallets,adjust_wallets')->group(function () {
+                Route::get('/wallets', [OpsWalletController::class, 'index']);
+                Route::get('/wallets/{id}', [OpsWalletController::class, 'show'])->whereNumber('id');
+            });
+            Route::middleware('permission:adjust_wallets')->group(function () {
+                Route::post('/wallets/{id}/credit', [OpsWalletController::class, 'credit'])->whereNumber('id');
+                Route::post('/wallets/{id}/debit', [OpsWalletController::class, 'debit'])->whereNumber('id');
+            });
         });
     });
 });

@@ -7,6 +7,7 @@ use App\Models\CountryChangeRequest;
 use App\Models\Profile;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Services\Staff\StaffScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +30,7 @@ class StaffCountryChangeController extends Controller
 
         $query = CountryChangeRequest::with(['user:id,name,email,role', 'user.profile:id,user_id,kyc_status,country_code', 'reviewer:id,name'])
             ->latest('id');
+        StaffScope::apply($query, $request->user());
         if ($status !== 'all') {
             $query->where('status', $status);
         }
@@ -42,7 +44,7 @@ class StaffCountryChangeController extends Controller
                 'current_page' => $page->currentPage(),
                 'last_page' => $page->lastPage(),
                 'total' => $page->total(),
-                'pending_count' => CountryChangeRequest::where('status', 'pending')->count(),
+                'pending_count' => StaffScope::apply(CountryChangeRequest::where('status', 'pending'), $request->user())->count(),
             ],
         ]);
     }
@@ -62,6 +64,9 @@ class StaffCountryChangeController extends Controller
 
         $approve = $request->input('decision') === 'approve';
         $actor = $request->user();
+        if (!StaffScope::allowsUser($actor, (int) CountryChangeRequest::whereKey($id)->value('user_id'))) {
+            return StaffScope::notFound();
+        }
 
         $result = DB::transaction(function () use ($id, $approve, $actor, $request) {
             $change = CountryChangeRequest::lockForUpdate()->findOrFail($id);

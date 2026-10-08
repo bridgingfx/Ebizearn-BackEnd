@@ -112,6 +112,18 @@ class User extends Authenticatable
         return $this->belongsTo(User::class, 'referrer_id');
     }
 
+    /** Staff account (admin / moderator) this user is assigned to. */
+    public function managedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'managed_by');
+    }
+
+    /** Users Super Admin assigned to this staff account (see StaffScope). */
+    public function assignedUsers(): HasMany
+    {
+        return $this->hasMany(User::class, 'managed_by');
+    }
+
     public function withdrawalRequests(): HasMany
     {
         return $this->hasMany(WithdrawalRequest::class);

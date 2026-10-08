@@ -42,6 +42,23 @@ class Permission extends Model
     /** Create / edit / delete Task Library templates. Super Admin only by default. */
     public const MANAGE_TASK_LIBRARY = 'manage_task_library';
 
+    // One permission per admin sidebar section (split out of the shared
+    // view_reports / manage_users / process_payouts / review_kyc /
+    // review_submissions grants so Super Admin can switch each page).
+    public const MANAGE_BUSINESSES = 'manage_businesses';
+    public const REVIEW_SOCIAL_CHANNELS = 'review_social_channels';
+    public const PROCESS_DEPOSITS = 'process_deposits';
+    public const VIEW_FRAUD = 'view_fraud';
+    public const VIEW_REFERRALS = 'view_referrals';
+    public const VIEW_DEMO_REQUESTS = 'view_demo_requests';
+    public const VIEW_ANALYTICS = 'view_analytics';
+    public const VIEW_TRAFFIC = 'view_traffic';
+    public const VIEW_SYSTEM_HEALTH = 'view_system_health';
+    public const VIEW_AUDIT_LOGS = 'view_audit_logs';
+    public const VIEW_WALLETS = 'view_wallets';
+    /** Manually credit / debit a wallet (audit-logged, reason required). */
+    public const ADJUST_WALLETS = 'adjust_wallets';
+
     // Contributor capabilities
     public const PERFORM_TASKS = 'perform_tasks';
     public const REQUEST_WITHDRAWALS = 'request_withdrawals';
@@ -91,6 +108,18 @@ class Permission extends Model
             self::DELETE_CAMPAIGNS => ['Delete campaigns (no contributor activity only)', 'staff'],
             self::MANAGE_TASK_LIBRARY => ['Create / edit / delete Task Library templates', 'staff'],
             self::MANAGE_ROLES => ['Manage roles, departments & permissions', 'staff'],
+            self::MANAGE_BUSINESSES => ['Businesses page (view, suspend, log in as)', 'staff'],
+            self::REVIEW_SOCIAL_CHANNELS => ['Social Channels page (verify linked accounts)', 'staff'],
+            self::PROCESS_DEPOSITS => ['Deposits page (approve / reject deposits)', 'staff'],
+            self::VIEW_FRAUD => ['Fraud & Risk page', 'staff'],
+            self::VIEW_REFERRALS => ['Referrals page', 'staff'],
+            self::VIEW_DEMO_REQUESTS => ['Demo Requests page', 'staff'],
+            self::VIEW_ANALYTICS => ['Analytics page', 'staff'],
+            self::VIEW_TRAFFIC => ['Website Traffic page', 'staff'],
+            self::VIEW_SYSTEM_HEALTH => ['System Health page', 'staff'],
+            self::VIEW_AUDIT_LOGS => ['Audit Logs page', 'staff'],
+            self::VIEW_WALLETS => ['Wallets page (view balances and ledgers)', 'staff'],
+            self::ADJUST_WALLETS => ['Add / remove wallet money (manual credit / debit)', 'staff'],
 
             self::PERFORM_TASKS => ['Start and submit tasks', 'contributor'],
             self::REQUEST_WITHDRAWALS => ['Request wallet withdrawals', 'contributor'],
@@ -127,6 +156,7 @@ class Permission extends Model
                 self::REVIEW_SUBMISSIONS, self::REVIEW_KYC, self::HANDLE_DISPUTES,
                 self::MANAGE_TASK_TEMPLATES, self::CREATE_TASKS, self::EDIT_TASKS, self::DELETE_TASKS,
                 self::MANAGE_CAMPAIGNS, self::POST_CAMPAIGNS,
+                self::REVIEW_SOCIAL_CHANNELS, self::VIEW_FRAUD,
             ],
             'admin' => [
                 self::REVIEW_SUBMISSIONS, self::REVIEW_KYC, self::HANDLE_DISPUTES, self::MANAGE_USERS,
@@ -135,6 +165,9 @@ class Permission extends Model
                 self::MANAGE_TASK_TEMPLATES, self::CREATE_TASKS, self::EDIT_TASKS, self::DELETE_TASKS,
                 self::PROCESS_PAYOUTS, self::VIEW_REPORTS, self::MANAGE_SETTINGS, self::VIEW_TASK_LIBRARY,
                 self::MANAGE_ROLES,
+                self::MANAGE_BUSINESSES, self::REVIEW_SOCIAL_CHANNELS, self::PROCESS_DEPOSITS, self::VIEW_FRAUD,
+                self::VIEW_REFERRALS, self::VIEW_DEMO_REQUESTS, self::VIEW_ANALYTICS, self::VIEW_TRAFFIC,
+                self::VIEW_SYSTEM_HEALTH, self::VIEW_AUDIT_LOGS,
             ],
             'contributor' => [
                 self::PERFORM_TASKS, self::REQUEST_WITHDRAWALS, self::USE_REFERRALS,

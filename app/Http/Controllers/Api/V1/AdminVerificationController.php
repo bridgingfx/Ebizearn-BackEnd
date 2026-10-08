@@ -11,6 +11,7 @@ use App\Models\TaskSubmission;
 use App\Models\User;
 use App\Models\WithdrawalRequest;
 use App\Services\Verification\VerificationService;
+use App\Services\Staff\StaffScope;
 use App\Services\Idempotency\IdempotencyConflictException;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
@@ -131,6 +132,7 @@ class AdminVerificationController extends Controller
     public function verificationQueue(Request $request): JsonResponse
     {
         $query = TaskSubmission::with(['task.category', 'task.campaign.business', 'user.profile', 'aiResult', 'files', 'businessReviewer:id,name', 'reviewer:id,name']);
+        StaffScope::apply($query, $request->user());
 
         $status = $request->input('status', 'under_review');
         if ($status !== 'all') {
@@ -180,6 +182,9 @@ class AdminVerificationController extends Controller
         ->where('id', $id)
         ->orWhere('uuid', $id)
         ->firstOrFail();
+        if (!StaffScope::allowsUser(request()->user(), $submission->user_id)) {
+            return StaffScope::notFound();
+        }
 
         return response()->json([
             'success' => true,
@@ -221,6 +226,9 @@ class AdminVerificationController extends Controller
         }
 
         $submission = TaskSubmission::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        if (!StaffScope::allowsUser($request->user(), $submission->user_id)) {
+            return StaffScope::notFound();
+        }
         $previousStatus = $submission->status;
 
         try {
@@ -270,7 +278,7 @@ class AdminVerificationController extends Controller
      */
     public function fraudAlerts(Request $request): JsonResponse
     {
-        $alerts = FraudEvent::with(['user.profile', 'submission.task'])
+        $alerts = StaffScope::apply(FraudEvent::with(['user.profile', 'submission.task']), $request->user())
             ->latest()
             ->paginate(20);
 
@@ -291,6 +299,7 @@ class AdminVerificationController extends Controller
     public function payouts(Request $request): JsonResponse
     {
         $query = WithdrawalRequest::with(['user.profile', 'wallet']);
+        StaffScope::apply($query, $request->user());
 
         if ($request->filled('status')) {
             $query->where('status', $request->input('status'));
@@ -337,6 +346,9 @@ class AdminVerificationController extends Controller
         }
 
         $withdrawal = WithdrawalRequest::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        if (!StaffScope::allowsUser($request->user(), $withdrawal->user_id)) {
+            return StaffScope::notFound();
+        }
         $idempotencyKey = $request->header('Idempotency-Key') ?: $request->input('idempotency_key');
 
         try {
@@ -393,6 +405,9 @@ class AdminVerificationController extends Controller
         }
 
         $withdrawal = WithdrawalRequest::where('id', $id)->orWhere('uuid', $id)->firstOrFail();
+        if (!StaffScope::allowsUser($request->user(), $withdrawal->user_id)) {
+            return StaffScope::notFound();
+        }
 
         if ($withdrawal->payout_method !== 'usdt') {
             return response()->json([

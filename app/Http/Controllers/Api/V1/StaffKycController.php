@@ -7,6 +7,7 @@ use App\Models\Profile;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use App\Services\Email\EmailService;
+use App\Services\Staff\StaffScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -35,6 +36,7 @@ class StaffKycController extends Controller
         $query = Profile::query()
             ->with(['user:id,uuid,name,email,role,status,created_at'])
             ->whereNotNull('kyc_submitted_at');
+        StaffScope::apply($query, $request->user());
 
         if ($status !== 'all') {
             $query->where('kyc_status', $status);
@@ -54,7 +56,7 @@ class StaffKycController extends Controller
                 'current_page' => $page->currentPage(),
                 'last_page' => $page->lastPage(),
                 'total' => $page->total(),
-                'pending' => Profile::where('kyc_status', 'pending')->count(),
+                'pending' => StaffScope::apply(Profile::where('kyc_status', 'pending'), $request->user())->count(),
             ],
         ]);
     }
@@ -65,6 +67,9 @@ class StaffKycController extends Controller
     public function document(string $userId, string $side): Response
     {
         $column = self::SIDES[$side] ?? null;
+        if (!StaffScope::allowsUser(request()->user(), (int) $userId)) {
+            return response()->json(['success' => false, 'message' => 'Document not found.'], 404);
+        }
         $profile = Profile::where('user_id', $userId)->first();
         $path = $column && $profile ? ($profile->getAttributes()[$column] ?? null) : null;
 
@@ -98,6 +103,9 @@ class StaffKycController extends Controller
         }
 
         $user = User::with('profile')->findOrFail($userId);
+        if (!StaffScope::allowsUser($request->user(), $user->id)) {
+            return StaffScope::notFound();
+        }
         $profile = $user->profile;
 
         if (!$profile || $profile->kyc_status !== 'pending') {
