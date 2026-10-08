@@ -17,3 +17,6 @@ yarn-error.log
 /.fleet
 /.idea
 /.vscode
+
+# PHP error log written on the cPanel server; untracked files block cPanel deploys
+error_log
