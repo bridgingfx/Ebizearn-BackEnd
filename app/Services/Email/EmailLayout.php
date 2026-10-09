@@ -53,7 +53,8 @@ class EmailLayout
      *   greeting?: string, paragraphs?: string[], details?: array<int, array{0: string, 1: string}>,
      *   code?: string, button?: array{0: string, 1: string}, note?: string,
      *   logo_url?: string, app_url?: string, help_url?: string, terms_url?: string, privacy_url?: string,
-     *   year?: string, app_name?: string, support_email?: string
+     *   year?: string, app_name?: string, support_email?: string,
+     *   logo_align?: 'left'|'center', unsubscribe_url?: string
      * } $o
      */
     public static function render(array $o): string
@@ -64,6 +65,7 @@ class EmailLayout
         $appName = $v('app_name', 'app_name');
         $support = $v('support_email', 'support_email');
         [$badgeBg, $badgeFg] = self::TONES[$o['tone'] ?? 'brand'] ?? self::TONES['brand'];
+        $centerLogo = ($o['logo_align'] ?? 'left') === 'center';
         $f = self::FONT;
 
         $preheader = isset($o['preheader'])
@@ -130,8 +132,8 @@ class EmailLayout
             . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px">'
 
             // Header: logo
-            . '<tr><td bgcolor="#FFFFFF" style="background:#FFFFFF;border-radius:20px 20px 0 0;padding:22px 32px;border-bottom:3px solid ' . self::BLUE . '">'
-            . '<a href="' . $appUrl . '" target="_blank" style="text-decoration:none"><img src="' . $logo . '" width="150" alt="' . $appName . '" style="display:block;width:150px;max-width:150px;height:auto;border:0"></a>'
+            . '<tr><td' . ($centerLogo ? ' align="center"' : '') . ' bgcolor="#FFFFFF" style="background:#FFFFFF;border-radius:20px 20px 0 0;padding:22px 32px;border-bottom:3px solid ' . self::BLUE . ($centerLogo ? ';text-align:center' : '') . '">'
+            . '<a href="' . $appUrl . '" target="_blank" style="text-decoration:none' . ($centerLogo ? ';display:inline-block' : '') . '"><img src="' . $logo . '" width="150" alt="' . $appName . '" style="display:block;width:150px;max-width:150px;height:auto;border:0' . ($centerLogo ? ';margin:0 auto' : '') . '"></a>'
             . '</td></tr>'
 
             // Hero

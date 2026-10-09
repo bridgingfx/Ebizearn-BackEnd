@@ -38,6 +38,9 @@ class AppServiceProvider extends ServiceProvider
         // into the audit trail — the source of the staff notification feed.
         \App\Services\Audit\ActivityRecorder::register();
 
+        // Email every eligible contributor when a task goes live.
+        \App\Services\Tasks\NewTaskAnnouncer::register();
+
         // Look a record up by numeric id OR uuid. Never "id = ? OR uuid = ?"
         // with the same value: MySQL casts a uuid like "6c199a0f-…" to the
         // number 6 when comparing with the integer id, so it matched record

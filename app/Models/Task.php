@@ -18,7 +18,7 @@ class Task extends Model
      * The public task browse/detail endpoints are unauthenticated, so
      * fraud_rules_json must not leak (contributors could game the rules).
      */
-    protected $hidden = ['fraud_rules_json'];
+    protected $hidden = ['fraud_rules_json', 'announce_status', 'announce_cursor', 'announced_at'];
 
     protected $fillable = [
         'uuid',

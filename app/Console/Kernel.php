@@ -22,6 +22,9 @@ class Kernel extends ConsoleKernel
 
         // Social robo: re-check every OAuth-connected social channel daily.
         $schedule->command('robo:verify-social-channels')->daily();
+
+        // "New task available" emails: finish any batch still pending.
+        $schedule->command('tasks:announce-new')->everyMinute()->withoutOverlapping();
     }
 
     /**

@@ -147,6 +147,33 @@ class EmailTemplateDefaults
                 'button' => ['Browse other tasks', '{{login_url}}'],
                 'note' => 'Tip: read each task’s requirements carefully and make sure your screenshot shows everything asked for.',
             ]),
+            // Sent to every eligible contributor when a task goes live (NewTaskAnnouncer).
+            self::make('new_task_available', 'New Task Available', 'New task on {{app_name}}: {{task_title}}', [
+                'task_title', 'task_description', 'task_reward', 'task_platform', 'brand_name', 'task_minutes', 'task_slots', 'task_url', 'unsubscribe_url',
+            ], [
+                'logo_align' => 'center',
+                'tone' => 'success',
+                'preheader' => '{{brand_name}} just posted a new task — earn {{task_reward}}.',
+                'eyebrow' => 'New task available',
+                'title' => 'Welcome back, {{user_name}} — a new task is waiting',
+                'subtitle' => 'Earn {{task_reward}} by completing “{{task_title}}”.',
+                'greeting' => 'Hi {{user_name}},',
+                'paragraphs' => [
+                    'A new verified task was just published on {{app_name}}. Slots are limited, so grab it before they fill up.',
+                    '{{task_description}}',
+                ],
+                'details' => [
+                    ['Task', '{{task_title}}'],
+                    ['Brand', '{{brand_name}}'],
+                    ['Platform', '{{task_platform}}'],
+                    ['Reward', '{{task_reward}}'],
+                    ['Estimated time', '{{task_minutes}} min'],
+                    ['Open slots', '{{task_slots}}'],
+                ],
+                'button' => ['Open task', '{{task_url}}'],
+                'note' => 'Rewards are paid once your proof is approved. We never ask you for fees or deposits.',
+                'unsubscribe_url' => '{{unsubscribe_url}}',
+            ]),
         ];
     }
 
