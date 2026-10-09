@@ -350,6 +350,24 @@ class AdminVerificationController extends Controller
         }
         $idempotencyKey = $request->header('Idempotency-Key') ?: $request->input('idempotency_key');
 
+        // A request is decided once: approved (processing/paid) or rejected
+        // (refunded). A second click must not report a refund that never
+        // happened, nor approve a refunded request. (A retry carrying an
+        // Idempotency-Key replays its stored result in the service instead.)
+        if ($withdrawal->status !== 'requested' && !$idempotencyKey) {
+            $label = match ($withdrawal->status) {
+                'processing', 'paid' => 'already approved',
+                'rejected' => 'already rejected and refunded',
+                default => 'already ' . $withdrawal->status,
+            };
+
+            return response()->json([
+                'success' => false,
+                'message' => "This withdrawal was {$label}.",
+                'data' => $withdrawal->load(['user.profile', 'wallet']),
+            ], 409);
+        }
+
         try {
             if ($request->input('action') === 'approve') {
                 $processed = $this->walletService->approveWithdrawal(
@@ -367,7 +385,7 @@ class AdminVerificationController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => $msg,
-                'data' => $processed,
+                'data' => $processed->load(['user.profile', 'wallet']),
             ]);
         } catch (IdempotencyConflictException $e) {
             // Same key replayed concurrently or with different parameters:

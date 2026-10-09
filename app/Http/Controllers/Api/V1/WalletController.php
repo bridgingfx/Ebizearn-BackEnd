@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
+use App\Models\WithdrawalRequest;
 use App\Models\WithdrawalRule;
 use App\Rules\UsdtAddress;
 use App\Services\Idempotency\IdempotencyConflictException;
@@ -79,6 +80,20 @@ class WalletController extends Controller
         // unique (several rows can share a timestamp), so ordering by id
         // keeps pagination stable and matches the ledger's own ordering.
         $transactions = $query->latest('id')->paginate(20);
+
+        // Withdrawal rows carry their request's live status so the history
+        // shows requested → approved / rejected (refunded).
+        $withdrawalIds = collect($transactions->items())
+            ->filter(fn ($t) => $t->reference_type === WithdrawalRequest::class)
+            ->pluck('reference_id')->unique()->all();
+        $statuses = $withdrawalIds
+            ? WithdrawalRequest::whereIn('id', $withdrawalIds)->pluck('status', 'id')
+            : collect();
+        foreach ($transactions->items() as $t) {
+            if ($t->reference_type === WithdrawalRequest::class) {
+                $t->setAttribute('withdrawal_status', $statuses[$t->reference_id] ?? null);
+            }
+        }
 
         return response()->json([
             'success' => true,
