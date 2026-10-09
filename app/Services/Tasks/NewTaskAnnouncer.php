@@ -2,15 +2,18 @@
 
 namespace App\Services\Tasks;
 
+use App\Models\BusinessTaskAlert;
 use App\Models\Campaign;
 use App\Models\EmailTemplate;
 use App\Models\Task;
 use App\Models\User;
+use App\Notifications\NewTaskFromBusiness;
 use App\Services\Email\EmailService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Throwable;
@@ -115,7 +118,10 @@ class NewTaskAnnouncer
 
         $template = EmailTemplate::where('event_key', self::EVENT_KEY)->first();
         if (!$template || !$template->is_enabled) {
-            // Email switched off in Super Admin: close the queue so it doesn't pile up.
+            // Email switched off in Super Admin: bell alerts still go out, then
+            // the queue is closed so it doesn't pile up.
+            Task::with('campaign.business')->where('announce_status', 'pending')->where('announce_cursor', 0)
+                ->get()->each(fn (Task $t) => $this->notifyBellSubscribers($t));
             Task::whereIn('announce_status', ['pending', 'sending'])->update(['announce_status' => 'skipped']);
             return 0;
         }
@@ -166,6 +172,11 @@ class NewTaskAnnouncer
                 return [null, collect()];
             }
 
+            // First batch: in-app alert for everyone who turned on this business's bell.
+            if ($task->announce_status === 'pending' && (int) $task->announce_cursor === 0) {
+                $this->notifyBellSubscribers($task);
+            }
+
             $users = $this->audience($task->campaign)
                 ->where('users.id', '>', (int) $task->announce_cursor)
                 ->orderBy('users.id')
@@ -181,6 +192,25 @@ class NewTaskAnnouncer
 
             return [$task, $users];
         });
+    }
+
+    /** Bell on: an in-app notification. Bell off (or never turned on): nothing. */
+    private function notifyBellSubscribers(Task $task): void
+    {
+        $campaign = $task->campaign;
+        if (!$campaign) {
+            return;
+        }
+
+        $subscribers = User::query()
+            ->whereIn('id', BusinessTaskAlert::where('business_id', $campaign->business_id)->select('user_id'))
+            ->where('status', 'active')
+            ->get();
+
+        if ($subscribers->isNotEmpty()) {
+            $name = (string) ($task->company_name ?: $campaign->company_name ?: $campaign->business?->company_name ?: 'A business you follow');
+            Notification::send($subscribers, new NewTaskFromBusiness($task, $name));
+        }
     }
 
     /**

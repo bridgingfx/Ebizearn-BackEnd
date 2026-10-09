@@ -31,6 +31,8 @@ use App\Http\Controllers\Api\V1\OtpController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\SocialChannelController;
+use App\Http\Controllers\Api\V1\BusinessFollowController;
+use App\Http\Controllers\Api\V1\UserNotificationController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
 use App\Http\Controllers\Api\V1\StaffNotificationController;
@@ -153,6 +155,21 @@ Route::prefix('v1')->group(function () {
                 ->whereNumber(['messageId', 'index']);
         });
 
+        // Business profile on the task page: real counts + follow + bell.
+        Route::get('/businesses/{id}/profile', [BusinessFollowController::class, 'show']);
+        Route::middleware('role:contributor')->prefix('businesses/{id}')->group(function () {
+            Route::post('/follow', [BusinessFollowController::class, 'follow'])->middleware('throttle:30,1');
+            Route::delete('/follow', [BusinessFollowController::class, 'unfollow'])->middleware('throttle:30,1');
+            Route::post('/alerts', [BusinessFollowController::class, 'alerts'])->middleware('throttle:30,1');
+        });
+
+        // In-app notifications (new follower, follow back, new task alerts).
+        Route::middleware('role:contributor,business')->prefix('notifications')->group(function () {
+            Route::get('/', [UserNotificationController::class, 'index']);
+            Route::get('/unread-count', [UserNotificationController::class, 'unread']);
+            Route::post('/read', [UserNotificationController::class, 'markRead']);
+        });
+
         // Contributor Endpoints
         Route::middleware('role:contributor')->prefix('contributor')->group(function () {
             // Round 2: dashboard data is gated on email verification.
@@ -259,6 +276,18 @@ Route::prefix('v1')->group(function () {
                 Route::patch('/{id}/status', [BusinessTeamController::class, 'updateStatus'])->whereNumber('id');
                 Route::delete('/{id}', [BusinessTeamController::class, 'destroy'])->whereNumber('id');
             });
+
+            // Business profile: followers / following, follow back.
+            Route::get('/profile', [BusinessFollowController::class, 'own']);
+            Route::get('/{type}', [BusinessFollowController::class, 'ownPeople'])->whereIn('type', ['followers', 'following']);
+            Route::post('/following/{userId}', [BusinessFollowController::class, 'followBack'])->whereNumber('userId')->middleware('throttle:60,1');
+            Route::delete('/following/{userId}', [BusinessFollowController::class, 'unfollowUser'])->whereNumber('userId');
+
+            // Social channels: linked, then checked by staff (Social Channels queue).
+            Route::get('/social-channels', [SocialChannelController::class, 'index']);
+            Route::post('/social-channels', [SocialChannelController::class, 'store'])->middleware('throttle:20,1');
+            Route::post('/social-channels/{id}/submit', [SocialChannelController::class, 'submit'])->whereNumber('id')->middleware('throttle:20,1');
+            Route::delete('/social-channels/{id}', [SocialChannelController::class, 'destroy'])->whereNumber('id');
         });
 
         // Super Admin only: which deposit methods businesses can use, and their details.
@@ -414,6 +443,8 @@ Route::prefix('v1')->group(function () {
                 Route::patch('/users/{id}/status', [AdminSystemController::class, 'updateUserStatus']);
                 // Contributor level: set by hand and lock, or follow completed tasks.
                 Route::patch('/users/{id}/level', [AdminSystemController::class, 'updateContributorLevel'])->whereNumber('id');
+                // Followers / following lists (popup on the user page).
+                Route::get('/users/{id}/follows', [BusinessFollowController::class, 'staffPeople'])->whereNumber('id');
             });
         });
 
@@ -446,6 +477,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/', [StaffCountryChangeController::class, 'index']);
             Route::post('/{id}/decision', [StaffCountryChangeController::class, 'decision'])->whereNumber('id');
         });
+
+        // Manual KYC approval from the user page (manual_kyc_approve).
+        Route::post('/staff/kyc/{userId}/manual-approve', [StaffKycController::class, 'manualApprove'])
+            ->whereNumber('userId')
+            ->middleware(['role:moderator,admin,superadmin', 'permission:manual_kyc_approve', 'throttle:30,1']);
 
         // KYC review queue (review_kyc).
         Route::middleware(['role:moderator,admin,superadmin', 'permission:review_kyc'])->prefix('staff/kyc')->group(function () {

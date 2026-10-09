@@ -83,6 +83,57 @@ class StaffKycController extends Controller
     }
 
     /**
+     * POST /staff/kyc/{userId}/manual-approve { note }
+     * Approve KYC from the user page without documents (verified another
+     * way — video call, in person…). Needs manual_kyc_approve; the note is
+     * kept in the audit log.
+     */
+    public function manualApprove(Request $request, string $userId, EmailService $emails): JsonResponse
+    {
+        $data = $request->validate([
+            'note' => 'required|string|min:5|max:500',
+        ], [
+            'note.required' => 'Say how this identity was verified (kept in the audit log).',
+        ]);
+
+        $user = User::with('profile')->findOrFail($userId);
+        if (!StaffScope::allowsUser($request->user(), $user->id)) {
+            return StaffScope::notFound();
+        }
+        abort_unless(in_array($user->role, ['contributor', 'business'], true), 422, 'KYC applies to contributor and business accounts only.');
+
+        $profile = $user->profile ?? $user->profile()->create([]);
+        abort_if($profile->kyc_status === 'verified', 422, 'This KYC is already approved.');
+
+        $before = ['kyc_status' => $profile->kyc_status];
+        // Direct assignment: KYC fields are intentionally not mass-assignable.
+        $profile->kyc_status = 'verified';
+        $profile->kyc_verified_at = now();
+        $profile->kyc_reviewed_by = $request->user()->id;
+        $profile->kyc_rejection_reason = null;
+        $profile->kyc_country_code = strtoupper($profile->country_code ?? '');
+        $profile->save();
+
+        AuditLogger::log(
+            $request->user(),
+            'kyc.approved_manually',
+            User::class,
+            $user->id,
+            ['note' => $data['note']],
+            $before,
+            ['kyc_status' => 'verified']
+        );
+
+        $emails->sendEvent('kyc_approved', $user->email, ['user_name' => $user->name, 'reason' => '']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'KYC approved manually.',
+            'data' => $profile->fresh(),
+        ]);
+    }
+
+    /**
      * POST /staff/kyc/{userId}/decision  { decision: approve|reject, reason? }
      */
     public function decision(Request $request, string $userId, EmailService $emails): JsonResponse

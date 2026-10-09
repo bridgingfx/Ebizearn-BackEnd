@@ -196,6 +196,14 @@ class AdminSystemController extends Controller
                     'referrals' => $user->referrals()->count(),
                     'tickets_open' => $user->supportTickets()->whereIn('status', ['open', 'in_progress'])->count(),
                 ],
+                // Followers / following (and tasks posted, for a business) — lists via /admin/users/{id}/follows.
+                'social' => [
+                    'posts' => $user->business
+                        ? \App\Models\Task::whereHas('campaign', fn ($q) => $q->where('business_id', $user->business->id))->count()
+                        : null,
+                    'followers' => \App\Models\UserFollow::where('following_id', $user->id)->count(),
+                    'following' => \App\Models\UserFollow::where('follower_id', $user->id)->count(),
+                ],
                 'withdrawals' => $user->withdrawalRequests()->latest()->limit(10)
                     ->get(['id', 'amount_cents', 'currency', 'payout_method', 'status', 'created_at', 'processed_at']),
                 'tickets' => $user->supportTickets()->latest('updated_at')->limit(10)

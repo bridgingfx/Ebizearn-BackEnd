@@ -30,6 +30,8 @@ class Permission extends Model
     public const CREATE_BUSINESS_USERS = 'create_business_users';
     public const VIEW_REPORTS = 'view_reports';
     public const REVIEW_KYC = 'review_kyc';
+    /** Approve a user's KYC from their user page without documents. Super Admin only by default. */
+    public const MANUAL_KYC_APPROVE = 'manual_kyc_approve';
     public const PROCESS_PAYOUTS = 'process_payouts';
     /** Edit referral commissions (L1/L2/L3). Super Admin only by default. */
     public const MANAGE_REFERRAL_RULES = 'manage_referral_rules';
@@ -107,6 +109,7 @@ class Permission extends Model
         return [
             self::REVIEW_SUBMISSIONS => ['Review task submissions (approve / reject)', 'staff'],
             self::REVIEW_KYC => ['Review KYC identity documents', 'staff'],
+            self::MANUAL_KYC_APPROVE => ['Approve KYC manually from the user page (no documents)', 'staff'],
             self::HANDLE_DISPUTES => ['Handle support tickets and disputes', 'staff'],
             self::MANAGE_USERS => ['Manage users (view, suspend, reactivate)', 'staff'],
             self::CREATE_BUSINESS_USERS => ['Create business user accounts', 'staff'],
