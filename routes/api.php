@@ -54,6 +54,8 @@ Route::prefix('v1')->group(function () {
     Route::post('/track/page-view', [TrafficAnalyticsController::class, 'track'])->middleware('throttle:120,1');
     // Which social sign-in buttons the login / register pages show.
     Route::get('/config/auth-providers', [AuthProviderSettingsController::class, 'publicConfig']);
+    // Which "Connect with …" buttons the Connected Social Accounts tab shows.
+    Route::get('/config/social-connect', [SocialConnectController::class, 'publicConfig']);
     Route::get('/task-categories', [ConfigController::class, 'categories']);
 
     // Phase 4 (public): task-type catalog with proof contracts and
@@ -157,11 +159,14 @@ Route::prefix('v1')->group(function () {
             Route::get('/dashboard', [TaskController::class, 'contributorDashboard'])->middleware('email.verified');
             Route::get('/my-tasks', [TaskController::class, 'myTasks']);
 
-            // Social channels, verified with a bio code by staff.
+            // Social channels: manual bio-code flow…
             Route::get('/social-channels', [SocialChannelController::class, 'index']);
             Route::post('/social-channels', [SocialChannelController::class, 'store'])->middleware('throttle:20,1');
             Route::post('/social-channels/{id}/submit', [SocialChannelController::class, 'submit'])->whereNumber('id')->middleware('throttle:20,1');
             Route::delete('/social-channels/{id}', [SocialChannelController::class, 'destroy'])->whereNumber('id');
+            // …and "Connect with …" OAuth (the robo verifies these automatically).
+            Route::get('/social-connect/{platform}/redirect', [SocialConnectController::class, 'redirect'])
+                ->whereIn('platform', ['tiktok', 'x', 'facebook', 'google'])->middleware('throttle:20,1');
 
             // Phase 8: affiliate endpoints (real ledger-backed data only)
             Route::middleware('permission:use_referrals')->group(function () {
@@ -266,6 +271,12 @@ Route::prefix('v1')->group(function () {
         Route::middleware('role:superadmin')->prefix('admin/auth-providers')->group(function () {
             Route::get('/', [AuthProviderSettingsController::class, 'show']);
             Route::put('/', [AuthProviderSettingsController::class, 'update']);
+        });
+
+        // Super Admin only: "Connect with …" OAuth apps for social channels.
+        Route::middleware('role:superadmin')->prefix('admin/social-connect')->group(function () {
+            Route::get('/', [SocialConnectController::class, 'adminShow']);
+            Route::put('/', [SocialConnectController::class, 'adminUpdate']);
         });
 
         // Super Admin only: AI content generator (provider, encrypted API key, model).

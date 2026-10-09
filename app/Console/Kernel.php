@@ -19,6 +19,9 @@ class Kernel extends ConsoleKernel
 
         // Task-reward retention: matured pending holds become available.
         $schedule->command('retention:release')->daily();
+
+        // Social robo: re-check every OAuth-connected social channel daily.
+        $schedule->command('robo:verify-social-channels')->daily();
     }
 
     /**
