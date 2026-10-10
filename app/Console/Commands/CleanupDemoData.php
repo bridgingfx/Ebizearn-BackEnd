@@ -14,17 +14,26 @@ use Illuminate\Console\Command;
  *   php artisan cleanup:demo-data --force            # removes it
  *   php artisan cleanup:demo-data --include-marked --force
  *                                                    # also campaigns titled "test", "dummy"…
+ *   php artisan cleanup:demo-data --all-activity     # dry run of a full pre-launch reset
+ *   php artisan cleanup:demo-data --all-activity --force
+ *                                                    # clears EVERY campaign / task / payment;
+ *                                                    # keeps all accounts and configuration
  */
 class CleanupDemoData extends Command
 {
     protected $signature = 'cleanup:demo-data
         {--force : Actually delete (without it, nothing changes)}
-        {--include-marked : Also remove campaigns whose title / description says test, dummy, demo, sample…}';
+        {--include-marked : Also remove campaigns whose title / description says test, dummy, demo, sample…}
+        {--all-activity : Clear ALL campaigns, tasks, submissions and payments (keeps accounts + configuration)}';
 
     protected $description = 'Remove seeded demo / dummy task and payment data. Keeps all accounts and configuration.';
 
     public function handle(DemoDataCleaner $cleaner): int
     {
+        if ($this->option('all-activity')) {
+            return $this->allActivity($cleaner);
+        }
+
         $includeMarked = (bool) $this->option('include-marked');
         $plan = $cleaner->plan($includeMarked);
 
@@ -55,6 +64,26 @@ class CleanupDemoData extends Command
             $this->warn('These wallets still have real ledger rows — their balance was NOT changed; please check them:');
             $this->table(['Wallet', 'Owner'], collect($result['wallets_to_review'])->map(fn ($w) => [$w['id'], $w['email']])->all());
         }
+
+        return self::SUCCESS;
+    }
+
+    private function allActivity(DemoDataCleaner $cleaner): int
+    {
+        $counts = $cleaner->planAllActivity();
+        $this->line('');
+        $this->warn($this->option('force')
+            ? 'Clearing ALL task and payment activity…'
+            : 'DRY RUN — full reset. Nothing is changed. Add --force to delete.');
+        $this->table(['Will be cleared', 'Rows'], collect($counts)->map(fn ($n, $t) => [$t, $n])->values()->all());
+        $this->line('Kept: ' . \App\Models\User::count() . ' user accounts (login, profile, business, permissions), task categories, task types, templates, settings. All wallets → $0.');
+
+        if (!$this->option('force')) {
+            return self::SUCCESS;
+        }
+
+        $cleaner->allActivity();
+        $this->info('Done. Every campaign, task, submission and payment record was cleared; accounts and configuration kept.');
 
         return self::SUCCESS;
     }

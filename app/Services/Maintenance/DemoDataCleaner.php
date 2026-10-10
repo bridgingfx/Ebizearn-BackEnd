@@ -51,6 +51,123 @@ class DemoDataCleaner
     private const TEST_MARKERS = '/\b(test(ing)?|dummy|demo|sample|lorem|asdf|qwerty|fake)\b/i';
 
     /**
+     * Task & payment activity cleared by allActivity(), child → parent.
+     * Accounts and configuration are never in this list.
+     */
+    public const ACTIVITY_TABLES = [
+        'ai_verification_results',
+        'submission_files',
+        'post_verifications',
+        'fraud_events',
+        'task_submissions',
+        'task_assignments',
+        'campaign_media',
+        'tasks',
+        'referral_rewards',
+        'deposit_requests',
+        'withdrawal_requests',
+        'wallet_transactions',
+        'payment_logs',
+        'idempotency_keys',
+        'notifications',
+        'campaigns',
+    ];
+
+    /** Row counts allActivity() would clear. */
+    public function planAllActivity(): array
+    {
+        $counts = [];
+        foreach (self::ACTIVITY_TABLES as $table) {
+            if (Schema::hasTable($table)) {
+                $counts[$table] = DB::table($table)->count();
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * Fresh start before launch: clear EVERY campaign, task, submission and
+     * payment record. Kept: all user accounts (login, profile, business,
+     * permissions, team members, referral links, follows) and all
+     * configuration (task categories, task types, Task Library templates,
+     * settings, email templates…). Wallets are reset to $0 — with the ledger
+     * gone, any balance would be money without history. Irreversible.
+     */
+    public function allActivity(): array
+    {
+        $counts = $this->planAllActivity();
+        $files = [
+            'public' => array_merge($this->paths('submission_files', 'file_path'), $this->paths('campaigns', 'logo_path'), $this->paths('campaigns', 'content_image_path')),
+            'local' => $this->paths('deposit_requests', 'proof_path'),
+        ];
+
+        DB::transaction(function () use ($counts) {
+            foreach (self::ACTIVITY_TABLES as $table) {
+                if (isset($counts[$table])) {
+                    DB::table($table)->delete();
+                }
+            }
+
+            // Referral links stay; nothing has been earned through them any more.
+            if (Schema::hasTable('referrals')) {
+                DB::table('referrals')->update(['status' => 'pending', 'qualified_at' => null]);
+            }
+
+            DB::table('wallets')->update([
+                'available_balance_cents' => 0,
+                'pending_balance_cents' => 0,
+                'lifetime_earnings_cents' => 0,
+                'total_withdrawn_cents' => 0,
+                'updated_at' => now(),
+            ]);
+            if (Schema::hasColumn('profiles', 'fraud_score')) {
+                DB::table('profiles')->update(['fraud_score' => 0]);
+            }
+
+            DB::table('audit_logs')->insert([
+                'actor_id' => null,
+                'action' => 'maintenance.all_activity_cleared',
+                'entity_type' => 'maintenance',
+                'entity_id' => 0,
+                'after_state_json' => json_encode($counts),
+                'created_at' => now(),
+            ]);
+        });
+
+        $tiers = new ContributorTierService();
+        User::where('role', 'contributor')->each(fn (User $u) => $tiers->recalculateFor($u));
+
+        // Uploaded proofs, campaign images / videos / logos, deposit receipts.
+        foreach ($files as $disk => $paths) {
+            foreach ($paths as $path) {
+                try {
+                    \Illuminate\Support\Facades\Storage::disk($disk)->delete($path);
+                } catch (\Throwable) {
+                    // best effort — a missing file is fine
+                }
+            }
+        }
+        foreach (['public' => ['proofs', 'campaign-logos', 'campaign-content', 'campaign-media'], 'local' => ['deposits']] as $disk => $dirs) {
+            foreach ($dirs as $dir) {
+                try {
+                    \Illuminate\Support\Facades\Storage::disk($disk)->deleteDirectory($dir);
+                } catch (\Throwable) {
+                }
+            }
+        }
+
+        return $counts;
+    }
+
+    private function paths(string $table, string $column): array
+    {
+        return Schema::hasTable($table) && Schema::hasColumn($table, $column)
+            ? DB::table($table)->whereNotNull($column)->where($column, 'not like', 'http%')->pluck($column)->all()
+            : [];
+    }
+
+    /**
      * What would be removed / flagged. Nothing is changed.
      *
      * @return array{campaign_ids: int[], marked_campaign_ids: int[], tx_ids: int[], counts: array<string, int>, marked: array, wallets_to_review: array}

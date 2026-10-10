@@ -100,6 +100,31 @@ class DemoDataCleanupTest extends TestCase
         $this->assertNotNull($real->fresh());
     }
 
+    public function test_all_activity_clears_every_task_and_payment_but_keeps_accounts(): void
+    {
+        $real = $this->genuineCampaign('Follow our Instagram Page');
+        $users = User::count();
+        $businesses = DB::table('businesses')->count();
+        $categories = DB::table('task_categories')->count();
+        $templates = DB::table('task_templates')->count();
+
+        $this->artisan('cleanup:demo-data --all-activity')->assertSuccessful();
+        $this->assertNotNull($real->fresh(), 'dry run changes nothing');
+
+        $this->artisan('cleanup:demo-data --all-activity --force')->assertSuccessful();
+
+        foreach (['campaigns', 'tasks', 'task_assignments', 'task_submissions', 'wallet_transactions', 'withdrawal_requests', 'deposit_requests'] as $t) {
+            $this->assertSame(0, DB::table($t)->count(), $t);
+        }
+        $this->assertSame(0, (int) DB::table('wallets')->sum('available_balance_cents'));
+        $this->assertSame(0, (int) DB::table('wallets')->sum('pending_balance_cents'));
+        $this->assertSame($users, User::count());
+        $this->assertSame($businesses, DB::table('businesses')->count());
+        $this->assertSame($categories, DB::table('task_categories')->count());
+        $this->assertSame($templates, DB::table('task_templates')->count());
+        $this->assertNotNull(User::where('email', 'admin@ebizearn.com')->first());
+    }
+
     public function test_seeder_does_not_create_demo_data_outside_tests(): void
     {
         $this->artisan('cleanup:demo-data --force');
