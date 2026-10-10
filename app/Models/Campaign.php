@@ -145,4 +145,10 @@ class Campaign extends Model
     {
         return $this->hasMany(Task::class);
     }
+
+    /** Photos and videos for contributors (staff upload), in display order. */
+    public function media(): HasMany
+    {
+        return $this->hasMany(CampaignMedia::class)->orderBy('sort_order')->orderBy('id');
+    }
 }

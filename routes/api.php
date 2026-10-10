@@ -33,6 +33,9 @@ use App\Http\Controllers\Api\V1\ReferralController;
 use App\Http\Controllers\Api\V1\SocialChannelController;
 use App\Http\Controllers\Api\V1\BusinessFollowController;
 use App\Http\Controllers\Api\V1\UserNotificationController;
+use App\Http\Controllers\Api\V1\CampaignMediaController;
+use App\Http\Controllers\Api\V1\SocialConnectController;
+use App\Http\Controllers\Api\V1\TaskHistoryController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
 use App\Http\Controllers\Api\V1\StaffNotificationController;
@@ -536,9 +539,19 @@ Route::prefix('v1')->group(function () {
             Route::patch('/{id}/content', [StaffCampaignController::class, 'updateContent'])->middleware('permission:edit_campaigns');
             Route::post('/{id}/content-image', [CampaignContentImageController::class, 'staffUpload'])->middleware('permission:edit_campaigns');
             Route::delete('/{id}/content-image', [CampaignContentImageController::class, 'staffRemove'])->middleware('permission:edit_campaigns');
+            // Photos & videos for contributors (gallery on the task page).
+            Route::get('/{id}/media', [CampaignMediaController::class, 'index']);
+            Route::post('/{id}/media', [CampaignMediaController::class, 'store'])->middleware(['permission:edit_campaigns', 'throttle:30,1']);
+            Route::delete('/{id}/media/{mediaId}', [CampaignMediaController::class, 'destroy'])->whereNumber('mediaId')->middleware('permission:edit_campaigns');
             Route::post('/{id}/content/decision', [StaffCampaignController::class, 'contentDecision']);
             Route::patch('/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');
             Route::delete('/{id}', [StaffCampaignController::class, 'destroy'])->middleware('permission:delete_campaigns');
+        });
+
+        // Task History: who took which task, their proof and its status (view_task_history).
+        Route::middleware(['role:moderator,admin,superadmin', 'permission:view_task_history'])->prefix('staff/task-history')->group(function () {
+            Route::get('/', [TaskHistoryController::class, 'index']);
+            Route::get('/{id}', [TaskHistoryController::class, 'show'])->whereNumber('id');
         });
 
         // Task Library: staff read (visibility per template), and template

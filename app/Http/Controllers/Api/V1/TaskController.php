@@ -173,7 +173,7 @@ class TaskController extends Controller
         if (($viewer = request()->user('sanctum')) && ($lock = $this->kycLockResponse($viewer))) {
             return response()->json($lock, 403);
         }
-        $task = Task::with(['category', 'campaign.business'])
+        $task = Task::with(['category', 'campaign.business', 'campaign.media'])
             ->where('status', 'available')
             ->whereHas('campaign', fn ($q) => $q->where('status', 'active')->contentReady())
             ->where(function ($q) use ($id) {

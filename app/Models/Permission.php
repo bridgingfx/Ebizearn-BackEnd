@@ -14,6 +14,8 @@ class Permission extends Model
      * Canonical permission names assignable by Super Admin.
      */
     public const REVIEW_SUBMISSIONS = 'review_submissions';
+    /** Task History page: who took which task, their proof and its status. */
+    public const VIEW_TASK_HISTORY = 'view_task_history';
     /** Campaign access: list / view, pause / resume, approve. */
     public const MANAGE_CAMPAIGNS = 'manage_campaigns';
     public const MANAGE_USERS = 'manage_users';
@@ -108,6 +110,7 @@ class Permission extends Model
     {
         return [
             self::REVIEW_SUBMISSIONS => ['Review task submissions (approve / reject)', 'staff'],
+            self::VIEW_TASK_HISTORY => ['Task History page (who took which task, proof, status)', 'staff'],
             self::REVIEW_KYC => ['Review KYC identity documents', 'staff'],
             self::MANUAL_KYC_APPROVE => ['Approve KYC manually from the user page (no documents)', 'staff'],
             self::HANDLE_DISPUTES => ['Handle support tickets and disputes', 'staff'],
@@ -176,13 +179,13 @@ class Permission extends Model
     {
         return [
             'moderator' => [
-                self::REVIEW_SUBMISSIONS, self::REVIEW_KYC, self::HANDLE_DISPUTES,
+                self::REVIEW_SUBMISSIONS, self::VIEW_TASK_HISTORY, self::REVIEW_KYC, self::HANDLE_DISPUTES,
                 self::MANAGE_TASK_TEMPLATES, self::CREATE_TASKS, self::EDIT_TASKS, self::DELETE_TASKS,
                 self::MANAGE_CAMPAIGNS, self::POST_CAMPAIGNS,
                 self::REVIEW_SOCIAL_CHANNELS, self::VIEW_FRAUD,
             ],
             'admin' => [
-                self::REVIEW_SUBMISSIONS, self::REVIEW_KYC, self::HANDLE_DISPUTES, self::MANAGE_USERS,
+                self::REVIEW_SUBMISSIONS, self::VIEW_TASK_HISTORY, self::REVIEW_KYC, self::HANDLE_DISPUTES, self::MANAGE_USERS,
                 self::CREATE_BUSINESS_USERS,
                 self::MANAGE_CAMPAIGNS, self::POST_CAMPAIGNS, self::EDIT_CAMPAIGNS, self::DELETE_CAMPAIGNS,
                 self::MANAGE_TASK_TEMPLATES, self::CREATE_TASKS, self::EDIT_TASKS, self::DELETE_TASKS,
