@@ -17,8 +17,13 @@ class Kernel extends ConsoleKernel
         // to delete; this does not affect live sessions.
         $schedule->command('sanctum:prune-expired --hours=24')->daily();
 
-        // Task-reward retention: matured pending holds become available.
-        $schedule->command('retention:release')->daily();
+        // End of task duration: re-check Instagram posts, then release (or
+        // refund) pending rewards. Hourly so failed checks retry on time.
+        $schedule->command('retention:release')->hourly()->withoutOverlapping();
+
+        // Automatic proof check (AI + Instagram API) for anything not finished
+        // right after submit.
+        $schedule->command('submissions:auto-verify')->everyMinute()->withoutOverlapping();
 
         // Social robo: re-check every OAuth-connected social channel daily.
         $schedule->command('robo:verify-social-channels')->daily();

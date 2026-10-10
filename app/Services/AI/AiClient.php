@@ -72,6 +72,133 @@ class AiClient
     }
 
     /**
+     * Look at images and answer in JSON (proof screenshots, post images).
+     * $images: data URLs ("data:image/png;base64,…") or https URLs.
+     * Returns ['ok' => bool, 'json' => ?array, 'text' => ?string, 'error' => ?string].
+     *
+     * @param string[] $images
+     */
+    public function vision(string $system, string $prompt, array $images, int $maxTokens = 700): array
+    {
+        if (!$this->settings->ready()) {
+            return ['ok' => false, 'json' => null, 'text' => null, 'error' => 'not_configured'];
+        }
+
+        try {
+            $res = $this->settings->provider() === 'gemini'
+                ? $this->geminiVision($system, $prompt, $images, $maxTokens)
+                : $this->openAiVision($system, $prompt, $images, $maxTokens);
+        } catch (\Throwable $e) {
+            Log::warning('AI vision request failed', ['provider' => $this->settings->provider(), 'error' => $e->getMessage()]);
+
+            return ['ok' => false, 'json' => null, 'text' => null, 'error' => 'unavailable'];
+        }
+
+        if (!$res['ok']) {
+            return $res + ['json' => null];
+        }
+
+        $json = $this->decodeJson((string) $res['text']);
+
+        return $json === null
+            ? ['ok' => false, 'json' => null, 'text' => $res['text'], 'error' => 'unreadable_answer']
+            : ['ok' => true, 'json' => $json, 'text' => $res['text'], 'error' => null];
+    }
+
+    /** Provider + model actually used (stored with each AI verdict). */
+    public function describe(): string
+    {
+        return $this->settings->provider() . ':' . $this->settings->model();
+    }
+
+    private function openAiVision(string $system, string $prompt, array $images, int $maxTokens): array
+    {
+        $content = [['type' => 'text', 'text' => $prompt]];
+        foreach ($images as $url) {
+            $content[] = ['type' => 'image_url', 'image_url' => ['url' => $url, 'detail' => 'high']];
+        }
+
+        $res = Http::withToken($this->settings->apiKey())->timeout(60)->acceptJson()
+            ->post('https://api.openai.com/v1/chat/completions', [
+                'model' => $this->settings->model(),
+                'messages' => [
+                    ['role' => 'system', 'content' => $system],
+                    ['role' => 'user', 'content' => $content],
+                ],
+                'max_tokens' => $maxTokens,
+                'temperature' => 0,
+                'response_format' => ['type' => 'json_object'],
+            ]);
+
+        if (!$res->successful()) {
+            return ['ok' => false, 'text' => null, 'error' => $this->errorMessage($res->json(), $res->status())];
+        }
+
+        return ['ok' => true, 'text' => trim((string) $res->json('choices.0.message.content')), 'error' => null];
+    }
+
+    private function geminiVision(string $system, string $prompt, array $images, int $maxTokens): array
+    {
+        $parts = [['text' => $prompt]];
+        foreach ($images as $url) {
+            $inline = $this->inlineImage($url);
+            if ($inline) {
+                $parts[] = ['inline_data' => $inline];
+            }
+        }
+
+        $model = $this->settings->model();
+        $res = Http::withHeaders(['x-goog-api-key' => $this->settings->apiKey()])->timeout(60)->acceptJson()
+            ->post("https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent", [
+                'systemInstruction' => ['parts' => [['text' => $system]]],
+                'contents' => [['role' => 'user', 'parts' => $parts]],
+                'generationConfig' => ['temperature' => 0, 'maxOutputTokens' => max(2048, $maxTokens * 4), 'responseMimeType' => 'application/json'],
+            ]);
+
+        if (!$res->successful()) {
+            return ['ok' => false, 'text' => null, 'error' => $this->errorMessage($res->json(), $res->status())];
+        }
+        if ($this->geminiBlocked($res->json())) {
+            return ['ok' => false, 'text' => null, 'error' => 'blocked'];
+        }
+
+        return ['ok' => true, 'text' => $this->geminiText($res->json()), 'error' => null];
+    }
+
+    /** Gemini needs the bytes: data URLs are split, https URLs downloaded (max 8 MB). */
+    private function inlineImage(string $url): ?array
+    {
+        if (preg_match('#^data:(image/[\w.+-]+);base64,(.+)$#s', $url, $m)) {
+            return ['mime_type' => $m[1], 'data' => $m[2]];
+        }
+
+        $res = Http::timeout(20)->get($url);
+        if (!$res->successful() || strlen($res->body()) > 8 * 1024 * 1024) {
+            return null;
+        }
+        $mime = strtok((string) $res->header('Content-Type'), ';') ?: 'image/jpeg';
+
+        return str_starts_with($mime, 'image/') ? ['mime_type' => $mime, 'data' => base64_encode($res->body())] : null;
+    }
+
+    /** First JSON object in the answer (models sometimes wrap it in ```json fences). */
+    private function decodeJson(string $text): ?array
+    {
+        $text = trim(preg_replace('/^```(?:json)?|```$/m', '', $text));
+        $json = json_decode($text, true);
+        if (is_array($json)) {
+            return $json;
+        }
+        if (preg_match('/\{.*\}/s', $text, $m)) {
+            $json = json_decode($m[0], true);
+
+            return is_array($json) ? $json : null;
+        }
+
+        return null;
+    }
+
+    /**
      * Check text for offensive content. Returns readable reasons; empty =
      * clean or the service could not be reached (the blocked-word list in
      * ContentSafety still applies either way).

@@ -509,6 +509,11 @@ class TaskController extends Controller
         // always lands in the moderator queue with flags/scores attached.
         $aiResult = $this->verificationService->screenSubmission($submission);
 
+        // Real AI review of the screenshot, plus the Instagram API check for
+        // Instagram post links — runs right after this response is sent.
+        // Only an API-confirmed post can be approved automatically.
+        app(\App\Services\Verification\PostVerificationService::class)->queue($submission);
+
         return response()->json([
             'success' => true,
             'message' => 'Submission received and placed under review.',

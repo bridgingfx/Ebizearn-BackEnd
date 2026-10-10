@@ -17,8 +17,11 @@ class SocialChannel extends Model
         'rejection_reason', 'submitted_at', 'verified_at', 'reviewed_by',
         'connected_via', 'oauth_provider_user_id', 'oauth_username',
         'oauth_access_token', 'oauth_refresh_token', 'oauth_expires_at',
-        'last_robo_check_at', 'robo_check_note', 'robo_failures',
+        'last_robo_check_at', 'robo_check_note', 'robo_failures', 'oauth_scopes',
     ];
+
+    /** OAuth tokens never leave the server (they are also encrypted at rest). */
+    protected $hidden = ['oauth_access_token', 'oauth_refresh_token'];
 
     protected $casts = [
         'followers' => 'integer',

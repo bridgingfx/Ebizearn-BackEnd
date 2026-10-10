@@ -15,6 +15,7 @@ use App\Models\WalletTransaction;
 use App\Services\AI\AIProviderInterface;
 use App\Services\AI\ManualAIProvider;
 use App\Services\AI\MockAIProvider;
+use App\Services\AI\QueuedAIProvider;
 use App\Services\Audit\AuditLogger;
 use App\Services\Contributors\ContributorTierService;
 use App\Services\Fraud\FraudAnalysisService;
@@ -55,6 +56,8 @@ class VerificationService
             'missing_requirements',
             'multiple_accounts',
             'policy_violation',
+            // Final check: the post was deleted / changed before the duration ended.
+            'post_removed',
             'other',
         ],
         'action_required' => ['needs_better_proof', 'needs_clarification'],
@@ -83,6 +86,9 @@ class VerificationService
     {
         return match (config('verification.ai_provider', 'mock')) {
             'manual' => new ManualAIProvider(),
+            // Real AI (and the Instagram API) runs right after the response —
+            // PostVerificationService replaces this placeholder. No AI set up → manual.
+            'auto', 'ai' => app(\App\Services\AI\AiSettings::class)->ready() ? new QueuedAIProvider() : new ManualAIProvider(),
             // 'mock' (default) and any unknown value: the labelled placeholder.
             default => new MockAIProvider(),
         };
@@ -127,7 +133,7 @@ class VerificationService
                 'ai_simulated' => self::aiResultsAreSimulated(),
                 'ai_label' => self::aiResultsAreSimulated()
                     ? 'Simulated heuristic (pre-launch)'
-                    : 'Manual review — no AI analysis',
+                    : ($this->aiProvider instanceof QueuedAIProvider ? 'AI review running' : 'Manual review — no AI analysis'),
             ]
         );
     }
@@ -181,7 +187,7 @@ class VerificationService
      */
     public function recordDecision(
         TaskSubmission $submission,
-        User $reviewer,
+        ?User $reviewer, // null = the automatic verifier / scheduler
         string $decision, // 'approved', 'rejected', 'action_required'
         string $reasonCode,
         string $notes
@@ -232,7 +238,7 @@ class VerificationService
             $lockedSubmission->update([
                 'status' => $decision,
                 'verification_stage' => 'decided',
-                'reviewer_id' => $reviewer->id,
+                'reviewer_id' => $reviewer?->id,
                 'reviewed_at' => now(),
                 'review_reason_code' => $reasonCode,
                 'review_notes' => $notes,
@@ -328,8 +334,11 @@ class VerificationService
         // the direct-to-available behaviour.
         $retentionDays = (int) ($task->retention_days ?? $task->taskType?->retention_period_days ?? 0);
 
+        $holdTx = null;
+        $releaseAt = null;
         if ($retentionDays > 0) {
-            $this->walletService->hold(
+            $releaseAt = now()->addDays($retentionDays)->toIso8601String();
+            $holdTx = $this->walletService->hold(
                 $wallet,
                 $rewardCents,
                 'retention_hold',
@@ -337,12 +346,29 @@ class VerificationService
                 TaskSubmission::class,
                 $submission->id,
                 [
-                    'release_at' => now()->addDays($retentionDays)->toIso8601String(),
+                    'release_at' => $releaseAt,
                     'retention_days' => $retentionDays,
                 ],
                 "retention-hold-{$submission->id}"
             );
+
+            // The rank bonus waits for the same duration — nothing from this
+            // task is withdrawable before the final check.
+            if ($bonusCents > 0) {
+                $this->walletService->hold(
+                    $wallet,
+                    $bonusCents,
+                    'retention_hold',
+                    "Retention hold ({$retentionDays}d) — rank bonus, submission #{$submission->id}",
+                    TaskSubmission::class,
+                    $submission->id,
+                    ['release_at' => $releaseAt, 'retention_days' => $retentionDays, 'is_bonus' => true],
+                    "retention-hold-bonus-{$submission->id}"
+                );
+            }
         }
+
+        PostVerificationService::recordApproval($submission, $campaign, $holdTx, $releaseAt);
 
         // 2. Settle the business escrow hold for this reward. Soft-settle: on
         // campaigns launched before the funding gate, the hold may not cover
@@ -477,7 +503,7 @@ class VerificationService
      * roll back stats, and reverse the multi-level referral rewards if this
      * approval paid them (compensating ledger entries, never deletes).
      */
-    protected function reverseApproval(TaskSubmission $submission, User $reviewer, string $reasonCode, string $notes): TaskSubmission
+    protected function reverseApproval(TaskSubmission $submission, ?User $reviewer, string $reasonCode, string $notes): TaskSubmission
     {
         $beforeState = $submission->toArray();
         $task = $submission->task;
@@ -527,7 +553,8 @@ class VerificationService
                     if ($result->type === 'retention_hold_cancel') {
                         $retained = true;
 
-                        if ($result->wasRecentlyCreated) {
+                        // The rank bonus is platform-funded: it is cancelled, never sent to the business.
+                        if ($result->wasRecentlyCreated && empty($holdTx->metadata_json['is_bonus'])) {
                             $cancelledCents += (int) ($result->metadata_json['cancelled_amount_cents'] ?? 0);
                         }
                     }
@@ -537,6 +564,7 @@ class VerificationService
                     // Return the unwound funds to the campaign escrow pool
                     // (fresh cancellation only — cancelRetentionHold is
                     // idempotent, so a retried reversal adds nothing).
+                    $cancelledCents = min($cancelledCents, $rewardCents);
                     if ($cancelledCents > 0 && $campaign && $campaign->business) {
                         $businessWallet = Wallet::firstOrCreate(
                             ['user_id' => $campaign->business->owner_id],
@@ -655,13 +683,17 @@ class VerificationService
         $submission->update([
             'status' => 'rejected',
             'verification_stage' => 'decided',
-            'reviewer_id' => $reviewer->id,
+            'reviewer_id' => $reviewer?->id,
             'reviewed_at' => now(),
             'review_reason_code' => $reasonCode,
             'review_notes' => $notes,
             'triggered_referral_id' => null,
             'triggered_referral_reward_ids_json' => [],
         ]);
+        // A reward that never left the pending balance went back to its funder.
+        if (in_array($submission->reward_status, ['pending_duration', 'reverification_required'], true)) {
+            $submission->forceFill(['reward_status' => 'refunded'])->saveQuietly();
+        }
 
         if ($submission->assignment_id) {
             TaskAssignment::where('id', $submission->assignment_id)
@@ -699,14 +731,14 @@ class VerificationService
     }
 
     protected function auditDecision(
-        User $reviewer,
+        ?User $reviewer,
         TaskSubmission $submission,
         string $decision,
         array $beforeState,
         ?string $actionOverride = null
     ): void {
         AuditLog::create([
-            'actor_id' => $reviewer->id,
+            'actor_id' => $reviewer?->id,
             'action' => $actionOverride ?? "submission.{$decision}",
             'entity_type' => TaskSubmission::class,
             'entity_id' => $submission->id,

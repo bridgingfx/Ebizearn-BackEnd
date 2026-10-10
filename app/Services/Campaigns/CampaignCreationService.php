@@ -158,7 +158,11 @@ class CampaignCreationService
                             'title' => $camp->title,
                             'reward_cents' => $rewardPerTask,
                             'proof_required_json' => $type->proof_required_json,
-                            'retention_days' => $type->retention_period_days,
+                            // Task duration: what the creator picked (hours → days),
+                            // else the task type's default. Rewards stay pending this long.
+                            'retention_days' => !empty($validated['retention_hours'])
+                                ? (int) ceil(((int) $validated['retention_hours']) / 24)
+                                : $type->retention_period_days,
                             'estimated_minutes' => 5,
                             'difficulty' => 'easy',
                             'status' => 'available',

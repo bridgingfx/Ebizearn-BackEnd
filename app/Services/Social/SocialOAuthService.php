@@ -18,6 +18,8 @@ use Illuminate\Support\Str;
  */
 class SocialOAuthService
 {
+    public const INSTAGRAM_SCOPES = 'instagram_business_basic';
+
     public function __construct(private SocialConnectSettings $settings)
     {
     }
@@ -64,6 +66,13 @@ class SocialOAuthService
             'facebook' => 'https://www.facebook.com/v19.0/dialog/oauth?' . http_build_query([
                 'client_id' => $clientId, 'redirect_uri' => $redirect,
                 'state' => $this->makeState($userId, $platform), 'scope' => 'public_profile',
+            ]),
+            // Instagram API with Instagram Login (professional accounts). Read-only:
+            // instagram_business_basic = profile + the account's own posts.
+            'instagram' => 'https://www.instagram.com/oauth/authorize?' . http_build_query([
+                'enable_fb_login' => 0, 'force_reauth' => 'true',
+                'client_id' => $clientId, 'redirect_uri' => $redirect, 'response_type' => 'code',
+                'scope' => self::INSTAGRAM_SCOPES, 'state' => $this->makeState($userId, $platform),
             ]),
             'google' => 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query([
                 'client_id' => $clientId, 'redirect_uri' => $redirect, 'response_type' => 'code',
@@ -126,6 +135,7 @@ class SocialOAuthService
                 'client_id' => $id, 'client_secret' => $secret, 'code' => $code,
                 'grant_type' => 'authorization_code', 'redirect_uri' => $redirect,
             ])),
+            'instagram' => $this->instagramShortToken($id, $secret, $code, $redirect),
             default => abort(422, 'Unknown platform.'),
         };
 
@@ -144,10 +154,37 @@ class SocialOAuthService
             }
         }
 
+        // Instagram: trade the 1-hour token for a 60-day one (refreshable).
+        if ($platform === 'instagram') {
+            $long = $this->asJson(Http::get('https://graph.instagram.com/access_token', [
+                'grant_type' => 'ig_exchange_token', 'client_secret' => $secret, 'access_token' => $tokens['access_token'],
+            ]));
+            if (!empty($long['access_token'])) {
+                $tokens = $long + ['scopes' => $tokens['scopes'] ?? null];
+            }
+        }
+
         return [
             'access_token' => $tokens['access_token'],
             'refresh_token' => $tokens['refresh_token'] ?? null,
             'expires_in' => isset($tokens['expires_in']) ? (int) $tokens['expires_in'] : null,
+            'scopes' => $tokens['scopes'] ?? null,
+        ];
+    }
+
+    /** Instagram's token endpoint answers either flat or as {data: [ … ]}. */
+    private function instagramShortToken(string $id, string $secret, string $code, string $redirect): array
+    {
+        $json = $this->asJson(Http::asForm()->post('https://api.instagram.com/oauth/access_token', [
+            'client_id' => $id, 'client_secret' => $secret, 'grant_type' => 'authorization_code',
+            'redirect_uri' => $redirect, 'code' => $code,
+        ]));
+        $row = $json['data'][0] ?? $json;
+        $permissions = $row['permissions'] ?? null;
+
+        return [
+            'access_token' => $row['access_token'] ?? null,
+            'scopes' => is_array($permissions) ? implode(',', $permissions) : ($permissions ?: self::INSTAGRAM_SCOPES),
         ];
     }
 
@@ -171,6 +208,10 @@ class SocialOAuthService
             'google' => $this->asJson(Http::asForm()->post('https://oauth2.googleapis.com/token', [
                 'client_id' => $id, 'client_secret' => $secret,
                 'grant_type' => 'refresh_token', 'refresh_token' => $refreshToken,
+            ])),
+            // Instagram: the long-lived token itself is the refresh credential.
+            'instagram' => $this->asJson(Http::get('https://graph.instagram.com/refresh_access_token', [
+                'grant_type' => 'ig_refresh_token', 'access_token' => $refreshToken,
             ])),
             default => null, // facebook long-lived tokens are not refreshable
         };
@@ -197,8 +238,24 @@ class SocialOAuthService
             'x' => $this->xProfile($accessToken),
             'facebook' => $this->facebookProfile($accessToken),
             'google' => $this->youtubeProfile($accessToken),
+            'instagram' => $this->instagramProfile($accessToken),
             default => abort(422, 'Unknown platform.'),
         };
+    }
+
+    private function instagramProfile(string $token): array
+    {
+        $u = $this->asJson(Http::get('https://graph.instagram.com/' . config('verification.instagram.graph_version', 'v21.0') . '/me', [
+            'fields' => 'user_id,username,account_type,followers_count', 'access_token' => $token,
+        ]));
+        abort_unless(!empty($u['user_id'] ?? $u['id'] ?? null), 422, 'Instagram did not return a profile. Use an Instagram professional (Business or Creator) account.');
+
+        return [
+            'provider_user_id' => (string) ($u['user_id'] ?? $u['id']),
+            'username' => (string) ($u['username'] ?? ''),
+            'followers' => isset($u['followers_count']) ? (int) $u['followers_count'] : null,
+            'profile_url' => !empty($u['username']) ? 'https://www.instagram.com/' . $u['username'] . '/' : null,
+        ];
     }
 
     private function tiktokProfile(string $token): array

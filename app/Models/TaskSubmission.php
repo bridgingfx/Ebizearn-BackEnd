@@ -44,6 +44,12 @@ class TaskSubmission extends Model
         'reviewed_at' => 'datetime',
         'business_reviewed_at' => 'datetime',
         'triggered_referral_reward_ids_json' => 'array',
+        // Post verification + reward lifecycle (set with forceFill — never mass-assigned).
+        'auto_verified_at' => 'datetime',
+        'platform_posted_at' => 'datetime',
+        'final_check_due_at' => 'datetime',
+        'final_checked_at' => 'datetime',
+        'final_check_attempts' => 'integer',
     ];
 
     protected static function booted(): void
@@ -53,6 +59,12 @@ class TaskSubmission extends Model
                 $sub->uuid = (string) Str::uuid();
             }
         });
+    }
+
+    /** Every automatic / final / manual verification of this proof, oldest first. */
+    public function postVerifications(): HasMany
+    {
+        return $this->hasMany(PostVerification::class, 'submission_id')->orderBy('id');
     }
 
     public function task(): BelongsTo

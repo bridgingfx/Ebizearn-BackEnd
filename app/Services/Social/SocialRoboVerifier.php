@@ -57,8 +57,12 @@ class SocialRoboVerifier
             $accessToken = $this->token($channel);
 
             // Refresh tokens that expire within the hour (where refresh is supported).
-            if ($channel->oauth_expires_at && $channel->oauth_expires_at->lt(now()->addHour()) && $channel->oauth_refresh_token) {
-                $fresh = $this->oauth->refreshToken($channel->platform, Crypt::decryptString($channel->oauth_refresh_token));
+            // Instagram has no separate refresh token: its long-lived token refreshes
+            // itself, so renew it a week ahead. Others renew within the hour.
+            $isInstagram = $channel->platform === 'instagram';
+            $window = $isInstagram ? now()->addDays(7) : now()->addHour();
+            if ($channel->oauth_expires_at && $channel->oauth_expires_at->lt($window) && ($channel->oauth_refresh_token || $isInstagram)) {
+                $fresh = $this->oauth->refreshToken($channel->platform, $isInstagram ? $accessToken : Crypt::decryptString($channel->oauth_refresh_token));
                 if ($fresh) {
                     $channel->oauth_access_token = Crypt::encryptString($fresh['access_token']);
                     if (!empty($fresh['refresh_token'])) {

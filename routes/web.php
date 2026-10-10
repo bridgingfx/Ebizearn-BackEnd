@@ -11,5 +11,5 @@ Route::get('/', fn () => response()->json([
 // "Connect with …" OAuth: the platform sends the contributor back here after
 // login. No session needed — the encrypted state binds it to their account.
 Route::get('/oauth/social/{platform}/callback', [SocialConnectController::class, 'callback'])
-    ->whereIn('platform', ['tiktok', 'x', 'facebook', 'google'])
+    ->whereIn('platform', ['tiktok', 'x', 'facebook', 'google', 'instagram'])
     ->middleware('throttle:30,1');

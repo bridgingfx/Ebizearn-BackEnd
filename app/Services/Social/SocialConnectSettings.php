@@ -9,8 +9,9 @@ use Illuminate\Support\Facades\Crypt;
  * "Connect with …" OAuth apps for contributor social channels, managed by
  * Super Admin in Admin → Settings → Social connect.
  *
- * Platforms: tiktok, x, facebook, google (YouTube channel). Instagram has no
- * OAuth for personal accounts, so it stays on the manual bio-code flow.
+ * Platforms: tiktok, x, facebook, google (YouTube channel), instagram
+ * (Instagram API with Instagram Login — professional accounts only; personal
+ * accounts keep the manual bio-code flow).
  *
  * Client secrets are encrypted with the app key before they are stored — the
  * settings table never holds a usable secret in plain text. We never ask for
@@ -18,11 +19,11 @@ use Illuminate\Support\Facades\Crypt;
  */
 class SocialConnectSettings
 {
-    public const PLATFORMS = ['tiktok', 'x', 'facebook', 'google'];
+    public const PLATFORMS = ['tiktok', 'x', 'facebook', 'google', 'instagram'];
 
     public static function labels(): array
     {
-        return ['tiktok' => 'TikTok', 'x' => 'X (Twitter)', 'facebook' => 'Facebook', 'google' => 'YouTube (Google)'];
+        return ['tiktok' => 'TikTok', 'x' => 'X (Twitter)', 'facebook' => 'Facebook', 'google' => 'YouTube (Google)', 'instagram' => 'Instagram (Professional)'];
     }
 
     public function clientId(string $platform): string

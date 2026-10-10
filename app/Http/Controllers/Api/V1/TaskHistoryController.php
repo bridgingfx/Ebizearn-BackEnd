@@ -6,6 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
 use App\Models\TaskAssignment;
 use App\Models\TaskSubmission;
+use App\Models\SocialChannel;
+use App\Models\User;
+use App\Models\Wallet;
+use App\Models\WalletTransaction;
+use App\Services\Verification\PostVerificationService;
 use App\Services\Staff\StaffScope;
 use App\Services\Verification\VerificationService;
 use Illuminate\Database\Eloquent\Builder;
@@ -29,6 +34,11 @@ class TaskHistoryController extends Controller
         'approved' => ['submission' => ['approved']],
         'rejected' => ['submission' => ['rejected']],
         'expired' => ['assignment' => ['expired', 'cancelled']],
+        // Reward lifecycle after approval.
+        'pending_duration' => ['reward' => ['pending_duration']],
+        'reverification_required' => ['reward' => ['reverification_required']],
+        'released' => ['reward' => ['released']],
+        'refunded' => ['reward' => ['refunded']],
     ];
 
     /** Decisions staff can take from each submission status (mirrors VerificationService). */
@@ -53,7 +63,7 @@ class TaskHistoryController extends Controller
                 'task.campaign.business:id,uuid,company_name',
                 'user:id,uuid,name,email,role,status',
                 'user.profile:id,user_id,country_code,avatar_url',
-                'submission:id,uuid,assignment_id,status,created_at,reviewed_at,proof_data_json,bonus_cents',
+                'submission:id,uuid,assignment_id,status,created_at,reviewed_at,proof_data_json,bonus_cents,reward_status,final_check_due_at,auto_verify_status',
                 'submission.files:id,submission_id,file_type,file_url,mime_type',
             ]);
 
@@ -87,6 +97,19 @@ class TaskHistoryController extends Controller
         }
         $counts['all'] = (clone $base)->count();
 
+        // Money held / paid / returned (task rewards, cents).
+        $scopeIds = StaffScope::userIds($request->user());
+        $money = fn (array $statuses) => (int) TaskSubmission::query()
+            ->join('tasks', 'tasks.id', '=', 'task_submissions.task_id')
+            ->whereIn('task_submissions.reward_status', $statuses)
+            ->when($scopeIds !== null, fn ($q) => $q->whereIn('task_submissions.user_id', $scopeIds))
+            ->sum('tasks.reward_cents');
+        $totals = [
+            'pending_cents' => $money(['pending_duration', 'reverification_required']),
+            'released_cents' => $money(['released']),
+            'refunded_cents' => $money(['refunded']),
+        ];
+
         return response()->json([
             'success' => true,
             'data' => collect($page->items())->map(fn (TaskAssignment $a) => $this->row($a)),
@@ -96,6 +119,7 @@ class TaskHistoryController extends Controller
                 'per_page' => $page->perPage(),
                 'total' => $page->total(),
                 'counts' => $counts,
+                'totals' => $totals,
             ],
         ]);
     }
@@ -115,7 +139,7 @@ class TaskHistoryController extends Controller
             ->whereKey($id)
             ->firstOrFail();
 
-        $submission = TaskSubmission::with(['files', 'aiResult', 'reviewer:id,name,role', 'businessReviewer:id,name'])
+        $submission = TaskSubmission::with(['files', 'aiResult', 'reviewer:id,name,role', 'businessReviewer:id,name', 'postVerifications.actor:id,name,role'])
             ->where('assignment_id', $assignment->id)
             ->first();
 
@@ -142,8 +166,104 @@ class TaskHistoryController extends Controller
                 'next_decisions' => $submission ? (self::NEXT_DECISIONS[$submission->status] ?? []) : [],
                 'reason_codes' => VerificationService::REASON_CODES,
                 'timeline' => $timeline,
+                'reward_actions' => $this->rewardActions($submission),
+                'funding' => $submission && $submission->funding_user_id ? [
+                    'type' => $submission->funding_type,
+                    'user' => User::find($submission->funding_user_id, ['id', 'name', 'email', 'role']),
+                    'wallet_id' => $submission->funding_wallet_id,
+                    'reference' => $submission->funding_reference,
+                ] : null,
+                'ledger' => $submission ? WalletTransaction::where('reference_type', TaskSubmission::class)
+                    ->where('reference_id', $submission->id)
+                    ->orderBy('id')
+                    ->get(['id', 'wallet_id', 'type', 'amount_cents', 'description', 'created_at'])
+                    ->map(fn ($t) => $t->toArray() + ['wallet_owner' => Wallet::find($t->wallet_id)?->user?->only(['id', 'name', 'role'])]) : [],
+                'instagram' => $this->instagramStatus($assignment->user_id),
             ],
         ]);
+    }
+
+    /**
+     * POST /staff/task-history/{id}/reward { action: release|refund|recheck|verify, note }
+     * Manual control of the reward after approval (review_submissions):
+     * release now, refund to the funder, re-run the final post check, or
+     * re-run the automatic proof check.
+     */
+    public function reward(Request $request, int $id, PostVerificationService $posts): JsonResponse
+    {
+        $data = $request->validate([
+            'action' => 'required|in:release,refund,recheck,verify',
+            'note' => 'required_if:action,release,refund|nullable|string|min:3|max:500',
+        ], ['note.required_if' => 'Add a short reason (kept in the audit log).']);
+
+        $assignment = $this->scoped($request)->whereKey($id)->firstOrFail();
+        $submission = TaskSubmission::where('assignment_id', $assignment->id)->firstOrFail();
+        abort_unless(in_array($data['action'], $this->rewardActions($submission), true), 422, 'That action is not available for this task right now.');
+
+        $actor = $request->user();
+        $message = match ($data['action']) {
+            'release' => $posts->releaseReward($submission, $actor, 'Released by staff: ' . $data['note']) ? 'Reward released to the contributor.' : '',
+            'refund' => $posts->refundReward($submission, $actor, 'Refunded by staff: ' . $data['note']) ? 'Reward refunded to the funding account.' : '',
+            'recheck' => match ($posts->finalCheck($submission, $actor)) {
+                'verified' => 'Post is still live — reward released.',
+                'refunded' => 'Post is gone — reward refunded to the business.',
+                'manual_review' => 'Still could not confirm the post — waiting for a manual decision.',
+                'retry' => 'Could not confirm the post right now — it will be retried automatically.',
+                default => 'Nothing to check.',
+            },
+            'verify' => $this->rerunInitial($submission, $posts),
+        };
+
+        return response()->json(['success' => true, 'message' => $message]);
+    }
+
+    private function rerunInitial(TaskSubmission $submission, PostVerificationService $posts): string
+    {
+        $submission->forceFill(['auto_verify_status' => 'pending'])->saveQuietly();
+        $record = $posts->verifyInitial($submission);
+
+        return 'Automatic check finished: ' . ($record?->outcome ?? 'skipped') . ($record?->reason ? ' — ' . $record->reason : '');
+    }
+
+    /** What staff can do with the reward right now. */
+    private function rewardActions(?TaskSubmission $submission): array
+    {
+        if (!$submission) {
+            return [];
+        }
+        $actions = [];
+        if (in_array($submission->status, ['submitted', 'checking', 'under_review', 'action_required'], true)) {
+            $actions[] = 'verify';
+        }
+        if ($submission->status === 'approved' && in_array($submission->reward_status, ['pending_duration', 'reverification_required'], true)) {
+            $actions[] = 'release';
+            $actions[] = 'refund';
+            if ($submission->platform_media_id) {
+                $actions[] = 'recheck';
+            }
+        }
+
+        return $actions;
+    }
+
+    /** The contributor's Instagram connection (never the token). */
+    private function instagramStatus(int $userId): ?array
+    {
+        $channel = SocialChannel::where('user_id', $userId)->where('platform', 'instagram')->first();
+        if (!$channel) {
+            return null;
+        }
+
+        return [
+            'handle' => $channel->oauth_username ?: $channel->handle,
+            'connected_via' => $channel->connected_via,
+            'status' => $channel->status,
+            'scopes' => $channel->oauth_scopes,
+            'expires_at' => $channel->oauth_expires_at,
+            'token_expired' => $channel->oauth_expires_at ? $channel->oauth_expires_at->isPast() : false,
+            'last_check_at' => $channel->last_robo_check_at,
+            'note' => $channel->robo_check_note,
+        ];
     }
 
     private function scoped(Request $request): Builder
@@ -156,6 +276,9 @@ class TaskHistoryController extends Controller
 
     private function applyStatus(Builder $query, array $filter): Builder
     {
+        if (isset($filter['reward'])) {
+            return $query->whereHas('submission', fn ($s) => $s->whereIn('reward_status', $filter['reward']));
+        }
         if (isset($filter['submission'])) {
             return $query->whereHas('submission', fn ($s) => $s->whereIn('status', $filter['submission']));
         }
@@ -192,6 +315,9 @@ class TaskHistoryController extends Controller
                 'business' => $a->task->campaign?->business?->company_name ?: $a->task->campaign?->company_name,
             ] : null,
             'submission_id' => $s?->id,
+            'reward_status' => $s?->reward_status,
+            'final_check_due_at' => $s?->final_check_due_at,
+            'auto_verify_status' => $s?->auto_verify_status,
             'proof' => [
                 'has_link' => !empty($proof['url']),
                 'images' => $files->filter(fn ($f) => str_starts_with((string) $f->mime_type, 'image/'))->count(),

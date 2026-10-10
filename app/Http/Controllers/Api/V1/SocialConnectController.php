@@ -104,6 +104,7 @@ class SocialConnectController extends Controller
                     'oauth_access_token' => Crypt::encryptString($tokens['access_token']),
                     'oauth_refresh_token' => $tokens['refresh_token'] ? Crypt::encryptString($tokens['refresh_token']) : null,
                     'oauth_expires_at' => $tokens['expires_in'] ? now()->addSeconds($tokens['expires_in']) : null,
+                    'oauth_scopes' => $tokens['scopes'] ?? null,
                     'verification_code' => null,
                     'rejection_reason' => null,
                     'submitted_at' => now(),

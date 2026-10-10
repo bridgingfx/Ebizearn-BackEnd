@@ -186,7 +186,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('/social-channels/{id}', [SocialChannelController::class, 'destroy'])->whereNumber('id');
             // …and "Connect with …" OAuth (the robo verifies these automatically).
             Route::get('/social-connect/{platform}/redirect', [SocialConnectController::class, 'redirect'])
-                ->whereIn('platform', ['tiktok', 'x', 'facebook', 'google'])->middleware('throttle:20,1');
+                ->whereIn('platform', ['tiktok', 'x', 'facebook', 'google', 'instagram'])->middleware('throttle:20,1');
 
             // Phase 8: affiliate endpoints (real ledger-backed data only)
             Route::middleware('permission:use_referrals')->group(function () {
@@ -552,6 +552,9 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['role:moderator,admin,superadmin', 'permission:view_task_history'])->prefix('staff/task-history')->group(function () {
             Route::get('/', [TaskHistoryController::class, 'index']);
             Route::get('/{id}', [TaskHistoryController::class, 'show'])->whereNumber('id');
+            // Release / refund / re-check a pending reward, or re-run the automatic proof check.
+            Route::post('/{id}/reward', [TaskHistoryController::class, 'reward'])->whereNumber('id')
+                ->middleware(['permission:review_submissions', 'throttle:30,1']);
         });
 
         // Task Library: staff read (visibility per template), and template
