@@ -36,6 +36,7 @@ use App\Http\Controllers\Api\V1\UserNotificationController;
 use App\Http\Controllers\Api\V1\CampaignMediaController;
 use App\Http\Controllers\Api\V1\SocialConnectController;
 use App\Http\Controllers\Api\V1\TaskHistoryController;
+use App\Http\Controllers\Api\V1\ContributorTaskHistoryController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
 use App\Http\Controllers\Api\V1\StaffNotificationController;
@@ -178,6 +179,9 @@ Route::prefix('v1')->group(function () {
             // Round 2: dashboard data is gated on email verification.
             Route::get('/dashboard', [TaskController::class, 'contributorDashboard'])->middleware('email.verified');
             Route::get('/my-tasks', [TaskController::class, 'myTasks']);
+            // Task History: own tasks only, with a step-by-step timeline.
+            Route::get('/task-history', [ContributorTaskHistoryController::class, 'index']);
+            Route::get('/task-history/{id}', [ContributorTaskHistoryController::class, 'show'])->whereNumber('id');
 
             // Social channels: manual bio-code flow…
             Route::get('/social-channels', [SocialChannelController::class, 'index']);

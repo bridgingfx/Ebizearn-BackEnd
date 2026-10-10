@@ -29,6 +29,15 @@ use Illuminate\Support\Str;
 
 class DatabaseSeeder extends Seeder
 {
+    /**
+     * Seed demo campaigns, tasks, a demo proof and a fake wallet history?
+     * Only for automated tests, or when SEED_DEMO_DATA=true (local demos).
+     */
+    private function demoData(): bool
+    {
+        return app()->environment('testing') || filter_var(env('SEED_DEMO_DATA', false), FILTER_VALIDATE_BOOLEAN);
+    }
+
     public function run(): void
     {
         // 1. Task Categories
@@ -80,6 +89,14 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
+        // Demo data (fake stats, wallet history, campaigns, a demo proof) is
+        // only seeded for automated tests / local demos — never on a real
+        // server, where a re-seed would overwrite genuine balances.
+        // Remove leftovers with: php artisan cleanup:demo-data --force
+        if (!$this->demoData()) {
+            Profile::firstOrCreate(['user_id' => $sarah->id], ['country_code' => 'GE', 'language' => 'en']);
+            Wallet::firstOrCreate(['user_id' => $sarah->id], ['currency' => 'USD']);
+        } else {
         Profile::updateOrCreate(
             ['user_id' => $sarah->id],
             [
@@ -124,6 +141,7 @@ class DatabaseSeeder extends Seeder
                 array_merge($tx, ['currency' => 'USD', 'wallet_id' => $sarahWallet->id])
             );
         }
+        } // end demo data
 
         // 5. Business User & Company: eBizEarn
         $businessUser = User::updateOrCreate(
@@ -164,7 +182,8 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        // 7. Realistic Campaigns & Tasks
+        // 7. Demo Campaigns & Tasks (tests / local demos only — see demoData()).
+        if ($this->demoData()) {
         $campaignData = [
             [
                 'business_id' => $company->id,
@@ -381,6 +400,8 @@ class DatabaseSeeder extends Seeder
                 ]
             );
         }
+
+        } // end demo campaigns
 
         // 5. Phase 2/8/13 seeds (safe additive: updateOrCreate / firstOrCreate only)
         $this->seedRolesAndPermissions();
