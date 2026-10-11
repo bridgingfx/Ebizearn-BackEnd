@@ -553,7 +553,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('/{id}/content-image', [CampaignContentImageController::class, 'staffRemove'])->middleware('permission:edit_campaigns');
             // Photos & videos for contributors (gallery on the task page).
             Route::get('/{id}/media', [CampaignMediaController::class, 'index']);
-            Route::post('/{id}/media', [CampaignMediaController::class, 'store'])->middleware(['permission:edit_campaigns', 'throttle:30,1']);
+            Route::post('/{id}/media', [CampaignMediaController::class, 'store'])->middleware(['permission.any:edit_campaigns,post_campaigns', 'throttle:30,1']);
             Route::delete('/{id}/media/{mediaId}', [CampaignMediaController::class, 'destroy'])->whereNumber('mediaId')->middleware('permission:edit_campaigns');
             Route::post('/{id}/content/decision', [StaffCampaignController::class, 'contentDecision']);
             Route::patch('/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');
