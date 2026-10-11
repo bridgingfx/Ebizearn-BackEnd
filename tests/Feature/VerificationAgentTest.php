@@ -238,13 +238,21 @@ class VerificationAgentTest extends TestCase
         $this->assertTrue($detail->json('data.can_appeal'));
         $this->postJson("/api/v1/contributor/task-history/{$sub->assignment_id}/appeal", ['reason' => 'short'])->assertStatus(422);
         $this->postJson("/api/v1/contributor/task-history/{$sub->assignment_id}/appeal", ['reason' => 'The follow is visible in the top right corner.'])->assertCreated();
+<<<<<<< Updated upstream
         $this->postJson("/api/v1/contributor/task-history/{$sub->assignment_id}/appeal", ['reason' => 'Trying a second time here.'])->assertStatus(409);
+=======
+        $this->postJson("/api/v1/contributor/task-history/{$sub->assignment_id}/appeal", ['reason' => 'Trying a second time here.'])->assertStatus(422);
+>>>>>>> Stashed changes
 
         Sanctum::actingAs($admin);
         $list = $this->getJson('/api/v1/admin/submission-appeals?status=open')->assertOk()->assertJsonCount(1, 'data');
         $appealId = $list->json('data.0.id');
         $this->postJson("/api/v1/admin/submission-appeals/{$appealId}/decision", ['decision' => 'uphold', 'notes' => 'Second look'])->assertOk();
+<<<<<<< Updated upstream
         $this->postJson("/api/v1/admin/submission-appeals/{$appealId}/decision", ['decision' => 'deny'])->assertStatus(409);
+=======
+        $this->postJson("/api/v1/admin/submission-appeals/{$appealId}/decision", ['decision' => 'deny'])->assertStatus(422);
+>>>>>>> Stashed changes
 
         $sub->refresh();
         $this->assertSame('under_review', $sub->status, 'upholding never approves by itself');

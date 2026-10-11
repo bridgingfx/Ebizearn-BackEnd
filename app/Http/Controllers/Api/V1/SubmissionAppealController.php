@@ -3,16 +3,24 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+<<<<<<< Updated upstream
 use App\Models\AuditLog;
+=======
+>>>>>>> Stashed changes
 use App\Models\SubmissionAppeal;
 use App\Models\TaskAssignment;
 use App\Models\TaskSubmission;
 use App\Models\WalletTransaction;
 use App\Notifications\TaskRewardNotice;
+<<<<<<< Updated upstream
+=======
+use App\Services\Audit\AuditLogger;
+>>>>>>> Stashed changes
 use App\Services\Staff\StaffScope;
 use App\Services\Verification\VerificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+<<<<<<< Updated upstream
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -30,21 +38,38 @@ use Illuminate\Support\Facades\DB;
  *   the campaign pool again so a later approval is funded.
  * - One appeal per submission, within 30 days of the rejection, and never
  *   for a reward that was already paid once and reversed.
+=======
+
+/**
+ * Appeals: a contributor contests a rejected proof once (within 30 days).
+ * Staff uphold it — the proof goes back to the review queue, where the
+ * normal approve / reject decision pays or not — or deny it (the rejection
+ * stands). An appeal never approves or pays anything by itself.
+>>>>>>> Stashed changes
  */
 class SubmissionAppealController extends Controller
 {
     public const WINDOW_DAYS = 30;
 
+<<<<<<< Updated upstream
     /** Can this rejected submission still be appealed? */
+=======
+    /** Can this rejected proof still be appealed? */
+>>>>>>> Stashed changes
     public static function canAppeal(?TaskSubmission $s): bool
     {
         return $s
             && $s->status === 'rejected'
+<<<<<<< Updated upstream
             && !SubmissionAppeal::where('submission_id', $s->id)->exists()
+=======
+            && !$s->appeal()->exists()
+>>>>>>> Stashed changes
             && (!$s->reviewed_at || $s->reviewed_at->gte(now()->subDays(self::WINDOW_DAYS)))
             && !WalletTransaction::where('reference_type', TaskSubmission::class)->where('reference_id', $s->id)->where('type', 'task_reward')->exists();
     }
 
+<<<<<<< Updated upstream
     /**
      * Contributor files an appeal on their rejected submission.
      * POST /api/v1/task-history/{assignmentId}/appeal
@@ -222,5 +247,107 @@ class SubmissionAppealController extends Controller
         }
 
         return $response;
+=======
+    /** POST /contributor/task-history/{id}/appeal { reason } — own task only. */
+    public function store(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate(['reason' => 'required|string|min:10|max:2000'], [
+            'reason.min' => 'Explain why the decision is wrong (at least 10 characters).',
+        ]);
+
+        $assignment = TaskAssignment::where('user_id', $request->user()->id)->whereKey($id)->firstOrFail();
+        $submission = TaskSubmission::where('assignment_id', $assignment->id)->firstOrFail();
+        abort_unless(self::canAppeal($submission), 422, $submission->appeal()->exists()
+            ? 'You have already appealed this decision.'
+            : 'This task can no longer be appealed.');
+
+        $appeal = SubmissionAppeal::create(['submission_id' => $submission->id, 'user_id' => $request->user()->id, 'reason' => $data['reason']]);
+        AuditLogger::log($request->user(), 'submission.appeal_opened', TaskSubmission::class, $submission->id, ['appeal_id' => $appeal->id]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Appeal sent. Our review team will look at it again.',
+            'data' => ['id' => $appeal->id, 'status' => $appeal->status ?? 'open'],
+        ], 201);
+    }
+
+    /** GET /admin/submission-appeals?status=open|upheld|denied */
+    public function index(Request $request): JsonResponse
+    {
+        $status = in_array($request->input('status'), ['open', 'upheld', 'denied'], true) ? $request->input('status') : 'open';
+
+        $query = SubmissionAppeal::query()
+            ->with(['submission:id,task_id,assignment_id,status', 'submission.task:id,title', 'user:id,name', 'user.profile:id,user_id'])
+            ->where('status', $status);
+        StaffScope::apply($query, $request->user(), 'submission_appeals.user_id');
+
+        $page = $query->latest('id')->paginate(30);
+
+        return response()->json([
+            'success' => true,
+            'data' => collect($page->items())->map(fn (SubmissionAppeal $a) => [
+                'id' => $a->id,
+                'uuid' => $a->uuid,
+                'submission_id' => $a->submission_id,
+                'assignment_id' => $a->submission?->assignment_id,
+                'reason' => $a->reason,
+                'status' => $a->status,
+                'created_at' => $a->created_at,
+                'decided_at' => $a->decided_at,
+                'review_notes' => $a->review_notes,
+                'submission' => $a->submission ? ['id' => $a->submission->id, 'status' => $a->submission->status, 'task' => ['title' => $a->submission->task?->title]] : null,
+                'user' => $a->user ? ['name' => $a->user->name] : null,
+            ]),
+            'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total()],
+        ]);
+    }
+
+    /** POST /admin/submission-appeals/{id}/decision { decision: uphold|deny, notes } */
+    public function decide(Request $request, int $id, VerificationService $verification): JsonResponse
+    {
+        $data = $request->validate([
+            'decision' => 'required|in:uphold,deny',
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        $appeal = SubmissionAppeal::with('submission.task')->findOrFail($id);
+        if (!StaffScope::allowsUser($request->user(), $appeal->user_id)) {
+            return StaffScope::notFound();
+        }
+        abort_unless($appeal->status === 'open', 422, 'This appeal was already decided.');
+
+        $uphold = $data['decision'] === 'uphold';
+        $notes = trim((string) ($data['notes'] ?? '')) ?: ($uphold ? 'Sent back for a second review.' : 'The original decision stands.');
+
+        if ($uphold) {
+            try {
+                $verification->reopenOnAppeal($appeal->submission, $request->user(), $notes);
+            } catch (\Exception $e) {
+                return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            }
+        }
+
+        $appeal->forceFill([
+            'status' => $uphold ? 'upheld' : 'denied',
+            'review_notes' => $notes,
+            'decided_by' => $request->user()->id,
+            'decided_at' => now(),
+        ])->save();
+        AuditLogger::log($request->user(), $uphold ? 'submission.appeal_upheld' : 'submission.appeal_denied', TaskSubmission::class, $appeal->submission_id, ['notes' => $notes]);
+
+        $title = (string) $appeal->submission?->task?->title;
+        $appeal->user?->notify(new TaskRewardNotice(
+            $uphold ? 'appeal_upheld' : 'appeal_denied',
+            $uphold ? 'Appeal accepted — second review' : 'Appeal not accepted',
+            $uphold ? "Your proof for \"{$title}\" is being reviewed again. {$notes}" : "The rejection of \"{$title}\" stands: {$notes}",
+            '/app/task-history/' . $appeal->submission?->assignment_id
+        ));
+
+        return response()->json([
+            'success' => true,
+            'message' => $uphold ? 'Appeal upheld — the proof is back in the review queue.' : 'Appeal denied — the rejection stands.',
+            'data' => ['id' => $appeal->id, 'status' => $appeal->status],
+        ]);
+>>>>>>> Stashed changes
     }
 }

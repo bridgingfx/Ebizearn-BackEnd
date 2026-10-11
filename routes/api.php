@@ -38,6 +38,7 @@ use App\Http\Controllers\Api\V1\CampaignMediaController;
 use App\Http\Controllers\Api\V1\SocialConnectController;
 use App\Http\Controllers\Api\V1\TaskHistoryController;
 use App\Http\Controllers\Api\V1\ContributorTaskHistoryController;
+use App\Http\Controllers\Api\V1\SubmissionAppealController;
 use App\Http\Controllers\Api\V1\StaffCampaignController;
 use App\Http\Controllers\Api\V1\StaffKycController;
 use App\Http\Controllers\Api\V1\StaffNotificationController;
@@ -183,7 +184,11 @@ Route::prefix('v1')->group(function () {
             // Task History: own tasks only, with a step-by-step timeline.
             Route::get('/task-history', [ContributorTaskHistoryController::class, 'index']);
             Route::get('/task-history/{id}', [ContributorTaskHistoryController::class, 'show'])->whereNumber('id');
+<<<<<<< Updated upstream
             // Appeals: challenge a rejected submission for a second human review.
+=======
+            // Contest a rejected proof (once, within 30 days).
+>>>>>>> Stashed changes
             Route::post('/task-history/{id}/appeal', [SubmissionAppealController::class, 'store'])->whereNumber('id')->middleware('throttle:10,1');
 
             // Social channels: manual bio-code flow…
@@ -390,7 +395,11 @@ Route::prefix('v1')->group(function () {
                 Route::get('/verification-queue', [AdminVerificationController::class, 'verificationQueue']);
                 Route::get('/submissions/{id}', [AdminVerificationController::class, 'submissionDetail']);
                 Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
+<<<<<<< Updated upstream
                 // Submission appeals: second human review for rejected submissions.
+=======
+                // Appeals: uphold (back to the review queue) or deny.
+>>>>>>> Stashed changes
                 Route::get('/submission-appeals', [SubmissionAppealController::class, 'index']);
                 Route::post('/submission-appeals/{id}/decision', [SubmissionAppealController::class, 'decide'])->whereNumber('id')->middleware('throttle:30,1');
             });

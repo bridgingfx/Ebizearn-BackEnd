@@ -141,7 +141,11 @@ class TaskHistoryController extends Controller
             ->whereKey($id)
             ->firstOrFail();
 
+<<<<<<< Updated upstream
         $submission = TaskSubmission::with(['files', 'aiResult', 'reviewer:id,name,role', 'businessReviewer:id,name', 'postVerifications.actor:id,name,role', 'appeal.reviewer:id,name'])
+=======
+        $submission = TaskSubmission::with(['files', 'aiResult', 'reviewer:id,name,role', 'businessReviewer:id,name', 'postVerifications.actor:id,name,role', 'appeal.decider:id,name'])
+>>>>>>> Stashed changes
             ->where('assignment_id', $assignment->id)
             ->first();
 
