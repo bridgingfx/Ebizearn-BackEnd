@@ -134,11 +134,7 @@ class ContributorTaskHistoryController extends Controller
                     'reason' => $submission->appeal->reason,
                     'review_notes' => $submission->appeal->review_notes,
                     'created_at' => $submission->appeal->created_at,
-<<<<<<< Updated upstream
                     'decided_at' => $submission->appeal->reviewed_at,
-=======
-                    'decided_at' => $submission->appeal->decided_at,
->>>>>>> Stashed changes
                 ] : null,
                 'can_appeal' => SubmissionAppealController::canAppeal($submission),
                 'appeal_window_days' => SubmissionAppealController::WINDOW_DAYS,
@@ -220,13 +216,8 @@ class ContributorTaskHistoryController extends Controller
 
         if ($s->appeal) {
             $add($s->appeal->created_at, 'appeal', 'You appealed the decision', $s->appeal->reason, 'info');
-<<<<<<< Updated upstream
             if ($s->appeal->reviewed_at && $s->appeal->status === 'denied') {
                 $add($s->appeal->reviewed_at, 'appeal', 'Appeal not accepted — the rejection stands', $s->appeal->review_notes, 'danger');
-=======
-            if ($s->appeal->decided_at && $s->appeal->status === 'denied') {
-                $add($s->appeal->decided_at, 'appeal', 'Appeal not accepted — the rejection stands', $s->appeal->review_notes, 'danger');
->>>>>>> Stashed changes
             }
         }
 
