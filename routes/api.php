@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\AdminReferralController;
 use App\Http\Controllers\Api\V1\AdminSystemController;
 use App\Http\Controllers\Api\V1\AdminTaskController;
 use App\Http\Controllers\Api\V1\AdminVerificationController;
+use App\Http\Controllers\Api\V1\SubmissionAppealController;
 use App\Http\Controllers\Api\V1\TrafficAnalyticsController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AuthProviderSettingsController;
@@ -182,6 +183,8 @@ Route::prefix('v1')->group(function () {
             // Task History: own tasks only, with a step-by-step timeline.
             Route::get('/task-history', [ContributorTaskHistoryController::class, 'index']);
             Route::get('/task-history/{id}', [ContributorTaskHistoryController::class, 'show'])->whereNumber('id');
+            // Appeals: challenge a rejected submission for a second human review.
+            Route::post('/task-history/{id}/appeal', [SubmissionAppealController::class, 'store'])->whereNumber('id')->middleware('throttle:10,1');
 
             // Social channels: manual bio-code flow…
             Route::get('/social-channels', [SocialChannelController::class, 'index']);
@@ -387,6 +390,9 @@ Route::prefix('v1')->group(function () {
                 Route::get('/verification-queue', [AdminVerificationController::class, 'verificationQueue']);
                 Route::get('/submissions/{id}', [AdminVerificationController::class, 'submissionDetail']);
                 Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
+                // Submission appeals: second human review for rejected submissions.
+                Route::get('/submission-appeals', [SubmissionAppealController::class, 'index']);
+                Route::post('/submission-appeals/{id}/decision', [SubmissionAppealController::class, 'decide'])->whereNumber('id');
             });
             Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts'])->middleware('permission:view_fraud');
 
@@ -466,6 +472,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/submissions/{id}', [AdminVerificationController::class, 'submissionDetail']);
             Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
             Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts']);
+            Route::get('/submission-appeals', [SubmissionAppealController::class, 'index']);
+            Route::post('/submission-appeals/{id}/decision', [SubmissionAppealController::class, 'decide'])->whereNumber('id');
         });
 
         // Support desk: the shared ticket queue (handle_disputes).
