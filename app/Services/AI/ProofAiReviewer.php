@@ -23,8 +23,8 @@ You check proof screenshots for eBizEarn, a platform that pays people to complet
 You receive the task requirements, optionally the data the platform's official API returned for the post, and one or more screenshots the person uploaded.
 Decide whether the screenshot genuinely shows the required task completed. Be strict: if the screenshot is unclear, cropped, unrelated, shows a different account or post, or looks edited, say so.
 Answer with JSON only, exactly these keys:
-{"is_proof_of_task": true|false, "confidence": 0-100, "platform_seen": string|null, "account_handle_seen": string|null, "post_text_seen": string|null, "matches_api_post": true|false|null, "looks_edited_or_fake": true|false, "requirements_met": [string], "issues": [string], "summary": string}
-"confidence" is how sure you are about "is_proof_of_task". "matches_api_post" is null when no API data was given. Keep "summary" under 400 characters.
+{"is_proof_of_task": true|false, "confidence": 0-100, "platform_seen": string|null, "account_handle_seen": string|null, "post_text_seen": string|null, "url_seen": string|null, "visible_action": "posted"|"followed"|"subscribed"|"liked"|"commented"|"shared"|"reviewed"|"other"|"none", "cropped_or_incomplete": true|false, "manipulation_signs": [string], "matches_api_post": true|false|null, "looks_edited_or_fake": true|false, "requirements_met": [string], "issues": [string], "summary": string}
+"confidence" is how sure you are about "is_proof_of_task". "visible_action" is the action the screenshot actually shows (e.g. a "Following" / "Subscribed" button state, a published post). "cropped_or_incomplete" is true when key parts (account name, timestamp, the action itself) are cut off. "manipulation_signs" lists concrete signs of editing (mismatched fonts, misaligned UI, inconsistent timestamps, pasted elements); empty when none. "matches_api_post" is null when no API data was given. Your findings support a human reviewer — they are evidence, not a final decision. Keep "summary" under 400 characters.
 TXT;
 
     public function __construct(private AiClient $ai)
@@ -74,11 +74,20 @@ TXT;
             'is_proof' => isset($j['is_proof_of_task']) ? (bool) $j['is_proof_of_task'] : null,
             'confidence' => max(0, min(100, (int) ($j['confidence'] ?? 0))),
             'matches_api_post' => array_key_exists('matches_api_post', $j) && $j['matches_api_post'] !== null ? (bool) $j['matches_api_post'] : null,
-            'looks_fake' => (bool) ($j['looks_edited_or_fake'] ?? false),
+            'looks_fake' => (bool) ($j['looks_edited_or_fake'] ?? false) || !empty($j['manipulation_signs']),
             'issues' => array_values(array_map('strval', array_slice((array) ($j['issues'] ?? []), 0, 10))),
             'requirements_met' => array_values(array_map('strval', array_slice((array) ($j['requirements_met'] ?? []), 0, 10))),
             'summary' => Str::limit((string) ($j['summary'] ?? ''), 500),
             'raw' => array_intersect_key($j, array_flip(['platform_seen', 'account_handle_seen', 'post_text_seen'])),
+            // What the screenshot shows — supporting evidence for the reviewer.
+            'evidence' => [
+                'account_seen' => $j['account_handle_seen'] ?? null,
+                'url_seen' => $j['url_seen'] ?? null,
+                'platform_seen' => $j['platform_seen'] ?? null,
+                'visible_action' => $j['visible_action'] ?? null,
+                'cropped' => (bool) ($j['cropped_or_incomplete'] ?? false),
+                'manipulation_signs' => array_values(array_map('strval', array_slice((array) ($j['manipulation_signs'] ?? []), 0, 8))),
+            ],
         ];
     }
 

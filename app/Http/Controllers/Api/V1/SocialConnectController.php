@@ -85,7 +85,9 @@ class SocialConnectController extends Controller
             $profile = $this->oauth->fetchProfile($platform, $tokens['access_token']);
 
             // One platform account → one eBizEarn account.
-            $taken = SocialChannel::where('platform', $platform)
+            // YouTube is saved as the 'youtube' channel (its OAuth provider is Google).
+            $channelPlatform = SocialConnectSettings::channelPlatform($platform);
+            $taken = SocialChannel::where('platform', $channelPlatform)
                 ->where('oauth_provider_user_id', $profile['provider_user_id'])
                 ->where('user_id', '!=', $user->id)
                 ->exists();
@@ -94,7 +96,7 @@ class SocialConnectController extends Controller
             }
 
             $channel = $user->socialChannels()->updateOrCreate(
-                ['platform' => $platform],
+                ['platform' => $channelPlatform],
                 [
                     'handle' => $profile['username'] !== '' ? $profile['username'] : ('user-' . substr($profile['provider_user_id'], -6)),
                     'profile_url' => $profile['profile_url'] ?? 'https://example.invalid',

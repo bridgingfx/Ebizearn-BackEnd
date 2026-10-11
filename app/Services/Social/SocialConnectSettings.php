@@ -26,6 +26,18 @@ class SocialConnectSettings
         return ['tiktok' => 'TikTok', 'x' => 'X (Twitter)', 'facebook' => 'Facebook', 'google' => 'YouTube (Google)', 'instagram' => 'Instagram (Professional)'];
     }
 
+    /** OAuth provider key → social channel platform (Google login = the YouTube channel). */
+    public static function channelPlatform(string $provider): string
+    {
+        return $provider === 'google' ? 'youtube' : $provider;
+    }
+
+    /** Social channel platform → OAuth provider key. */
+    public static function providerFor(string $platform): string
+    {
+        return $platform === 'youtube' ? 'google' : $platform;
+    }
+
     public function clientId(string $platform): string
     {
         return trim((string) SystemSetting::get("social_connect_{$platform}_client_id", ''));

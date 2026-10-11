@@ -67,6 +67,12 @@ class TaskSubmission extends Model
         return $this->hasMany(PostVerification::class, 'submission_id')->orderBy('id');
     }
 
+    /** The latest appeal of this submission (if any). */
+    public function appeal(): HasOne
+    {
+        return $this->hasOne(SubmissionAppeal::class, 'submission_id')->latestOfMany();
+    }
+
     public function task(): BelongsTo
     {
         return $this->belongsTo(Task::class);

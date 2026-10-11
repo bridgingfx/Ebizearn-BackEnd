@@ -392,7 +392,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
                 // Submission appeals: second human review for rejected submissions.
                 Route::get('/submission-appeals', [SubmissionAppealController::class, 'index']);
-                Route::post('/submission-appeals/{id}/decision', [SubmissionAppealController::class, 'decide'])->whereNumber('id');
+                Route::post('/submission-appeals/{id}/decision', [SubmissionAppealController::class, 'decide'])->whereNumber('id')->middleware('throttle:30,1');
             });
             Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts'])->middleware('permission:view_fraud');
 

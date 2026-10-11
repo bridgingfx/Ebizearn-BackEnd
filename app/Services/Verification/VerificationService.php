@@ -270,6 +270,56 @@ class VerificationService
     }
 
     /**
+     * Appeal upheld: a rejected proof goes back to the review queue
+     * (rejected → under_review). It is NOT approved or paid here — the
+     * normal approve / reject decision does that. The rejection returned
+     * the slot's reward to the campaign pool, so it is reserved again,
+     * keeping a later approval funded. Only for proofs that were never
+     * paid (a paid-and-reversed reward needs a manual wallet adjustment).
+     */
+    public function reopenOnAppeal(TaskSubmission $submission, User $reviewer, string $notes): TaskSubmission
+    {
+        return DB::transaction(function () use ($submission, $reviewer, $notes) {
+            $locked = TaskSubmission::where('id', $submission->id)->lockForUpdate()->firstOrFail();
+            if ($locked->status !== 'rejected') {
+                throw new Exception('Only rejected proofs can be reopened on appeal.');
+            }
+            $paidBefore = WalletTransaction::where('reference_type', TaskSubmission::class)
+                ->where('reference_id', $locked->id)->where('type', 'task_reward')->exists();
+            if ($paidBefore) {
+                throw new Exception('This proof was paid once and reversed — use a manual wallet adjustment instead.');
+            }
+
+            $task = $locked->task;
+            $reward = (int) $task->reward_cents;
+            $campaign = $task->campaign_id ? Campaign::where('id', $task->campaign_id)->lockForUpdate()->first() : null;
+            if ($campaign) {
+                if ((int) $campaign->remaining_budget_cents < $reward) {
+                    throw new Exception('Campaign budget exhausted — the business must fund the campaign before this proof can be reviewed again.');
+                }
+                $campaign->decrement('remaining_budget_cents', $reward);
+                $campaign->increment('reserved_budget_cents', $reward);
+            }
+
+            $before = $locked->toArray();
+            $locked->forceFill([
+                'status' => 'under_review',
+                'verification_stage' => 'moderator_review',
+                'review_notes' => 'Appeal upheld — second review: ' . $notes,
+                'reward_status' => null,
+            ])->save();
+
+            if ($locked->assignment_id) {
+                TaskAssignment::where('id', $locked->assignment_id)->update(['status' => 'submitted', 'completed_at' => null]);
+            }
+
+            $this->auditDecision($reviewer, $locked, 'under_review', $before, 'submission.reopened_on_appeal');
+
+            return $locked->fresh();
+        });
+    }
+
+    /**
      * Approve path: credit the contributor, settle the business escrow hold,
      * convert the slot reservation into spend, and check referral qualification.
      * The campaign budget row is locked first so concurrent approvals cannot

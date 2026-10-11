@@ -33,7 +33,7 @@ class SocialRoboVerifier
      */
     public function verifyNow(SocialChannel $channel): array
     {
-        $profile = $this->oauth->fetchProfile($channel->platform, $this->token($channel));
+        $profile = $this->oauth->fetchProfile(SocialConnectSettings::providerFor($channel->platform), $this->token($channel));
 
         $channel->update([
             'oauth_username' => $profile['username'],
@@ -44,7 +44,7 @@ class SocialRoboVerifier
             'verified_at' => now(),
             'last_robo_check_at' => now(),
             'robo_failures' => 0,
-            'robo_check_note' => 'Verified automatically via ' . $this->settings::labels()[$channel->platform] . ' login.',
+            'robo_check_note' => 'Verified automatically via ' . $this->settings::labels()[SocialConnectSettings::providerFor($channel->platform)] . ' login.',
         ]);
 
         return ['username' => $profile['username'], 'followers' => $profile['followers']];
@@ -62,7 +62,7 @@ class SocialRoboVerifier
             $isInstagram = $channel->platform === 'instagram';
             $window = $isInstagram ? now()->addDays(7) : now()->addHour();
             if ($channel->oauth_expires_at && $channel->oauth_expires_at->lt($window) && ($channel->oauth_refresh_token || $isInstagram)) {
-                $fresh = $this->oauth->refreshToken($channel->platform, $isInstagram ? $accessToken : Crypt::decryptString($channel->oauth_refresh_token));
+                $fresh = $this->oauth->refreshToken(SocialConnectSettings::providerFor($channel->platform), $isInstagram ? $accessToken : Crypt::decryptString($channel->oauth_refresh_token));
                 if ($fresh) {
                     $channel->oauth_access_token = Crypt::encryptString($fresh['access_token']);
                     if (!empty($fresh['refresh_token'])) {
@@ -73,7 +73,7 @@ class SocialRoboVerifier
                 }
             }
 
-            $profile = $this->oauth->fetchProfile($channel->platform, $accessToken);
+            $profile = $this->oauth->fetchProfile(SocialConnectSettings::providerFor($channel->platform), $accessToken);
 
             $channel->update([
                 'oauth_username' => $profile['username'],

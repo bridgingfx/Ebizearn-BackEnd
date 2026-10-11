@@ -31,6 +31,31 @@ class SocialChannel extends Model
         'last_robo_check_at' => 'datetime',
     ];
 
+    protected $appends = ['connection_health'];
+
+    /**
+     * Health of an official (OAuth) connection: connected | expiring (within
+     * 7 days) | expired (token past, or the robo failed repeatedly) — or
+     * "manual" for bio-code channels.
+     */
+    public function getConnectionHealthAttribute(): string
+    {
+        if ($this->connected_via !== 'oauth') {
+            return 'manual';
+        }
+        if (empty($this->attributes['oauth_access_token'])
+            || ($this->oauth_expires_at && $this->oauth_expires_at->isPast() && empty($this->attributes['oauth_refresh_token']) && $this->platform !== 'instagram')
+            || ($this->oauth_expires_at && $this->oauth_expires_at->isPast() && $this->platform === 'instagram')
+            || (int) ($this->attributes['robo_failures'] ?? 0) >= 3) {
+            return 'expired';
+        }
+        if ($this->oauth_expires_at && $this->oauth_expires_at->lt(now()->addDays(7)) && empty($this->attributes['oauth_refresh_token']) && $this->platform !== 'instagram') {
+            return 'expiring';
+        }
+
+        return 'connected';
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

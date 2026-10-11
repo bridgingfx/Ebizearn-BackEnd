@@ -7,6 +7,10 @@ use App\Models\AuditLog;
 use App\Models\SubmissionAppeal;
 use App\Models\TaskAssignment;
 use App\Models\TaskSubmission;
+use App\Models\WalletTransaction;
+use App\Notifications\TaskRewardNotice;
+use App\Services\Staff\StaffScope;
+use App\Services\Verification\VerificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,12 +24,27 @@ use Illuminate\Support\Facades\DB;
  * Safety rules:
  * - Only the submission owner can appeal, only when status is 'rejected',
  *   and only one open appeal per submission.
- * - An upheld appeal moves rejected -> under_review with a full audit trail.
- *   It never auto-approves and never touches the wallet — the normal review
- *   path (VerificationService::recordDecision) still decides and pays.
+ * - An upheld appeal moves rejected -> under_review with a full audit trail
+ *   (VerificationService::reopenOnAppeal). It never auto-approves or pays —
+ *   the normal review path still decides. The slot's reward is reserved in
+ *   the campaign pool again so a later approval is funded.
+ * - One appeal per submission, within 30 days of the rejection, and never
+ *   for a reward that was already paid once and reversed.
  */
 class SubmissionAppealController extends Controller
 {
+    public const WINDOW_DAYS = 30;
+
+    /** Can this rejected submission still be appealed? */
+    public static function canAppeal(?TaskSubmission $s): bool
+    {
+        return $s
+            && $s->status === 'rejected'
+            && !SubmissionAppeal::where('submission_id', $s->id)->exists()
+            && (!$s->reviewed_at || $s->reviewed_at->gte(now()->subDays(self::WINDOW_DAYS)))
+            && !WalletTransaction::where('reference_type', TaskSubmission::class)->where('reference_id', $s->id)->where('type', 'task_reward')->exists();
+    }
+
     /**
      * Contributor files an appeal on their rejected submission.
      * POST /api/v1/task-history/{assignmentId}/appeal
@@ -50,16 +69,20 @@ class SubmissionAppealController extends Controller
             ], 422);
         }
 
-        $alreadyOpen = SubmissionAppeal::where('submission_id', $submission->id)
-            ->where('status', SubmissionAppeal::STATUS_OPEN)
-            ->exists();
-
-        if ($alreadyOpen) {
+        if (SubmissionAppeal::where('submission_id', $submission->id)->exists()) {
             return response()->json([
                 'success' => false,
-                'code' => 'appeal_open',
-                'message' => 'You already have an open appeal for this submission.',
+                'code' => 'appeal_exists',
+                'message' => 'You have already appealed this decision.',
             ], 409);
+        }
+
+        if (!self::canAppeal($submission)) {
+            return response()->json([
+                'success' => false,
+                'code' => 'appeal_closed',
+                'message' => 'This task can no longer be appealed.',
+            ], 422);
         }
 
         $appeal = SubmissionAppeal::create([
@@ -92,6 +115,8 @@ class SubmissionAppealController extends Controller
         $status = $request->input('status', 'open');
         $query = SubmissionAppeal::with(['submission.task', 'user.profile', 'reviewer:id,name'])
             ->latest();
+        // Staff assigned to specific users only see their appeals.
+        StaffScope::apply($query, $request->user(), 'submission_appeals.user_id');
 
         if (in_array($status, [SubmissionAppeal::STATUS_OPEN, SubmissionAppeal::STATUS_UPHELD, SubmissionAppeal::STATUS_DENIED], true)) {
             $query->where('status', $status);
@@ -101,7 +126,8 @@ class SubmissionAppealController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $appeals->items(),
+            // assignment_id links the appeal to Task History (proof, AI evidence, risk flags).
+            'data' => collect($appeals->items())->map(fn (SubmissionAppeal $a) => $a->toArray() + ['assignment_id' => $a->submission?->assignment_id]),
             'meta' => [
                 'current_page' => $appeals->currentPage(),
                 'last_page' => $appeals->lastPage(),
@@ -115,14 +141,19 @@ class SubmissionAppealController extends Controller
      * POST /api/v1/admin/submission-appeals/{id}/decision
      * { decision: 'uphold' | 'deny', notes?: string }
      */
-    public function decide(Request $request, int $id): JsonResponse
+    public function decide(Request $request, int $id, VerificationService $verification): JsonResponse
     {
         $data = $request->validate([
             'decision' => ['required', 'in:uphold,deny'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        return DB::transaction(function () use ($request, $id, $data) {
+        $scopeCheck = SubmissionAppeal::findOrFail($id);
+        if (!StaffScope::allowsUser($request->user(), $scopeCheck->user_id)) {
+            return StaffScope::notFound();
+        }
+
+        $response = DB::transaction(function () use ($request, $id, $data, $verification) {
             $appeal = SubmissionAppeal::whereKey($id)->lockForUpdate()->firstOrFail();
 
             if (!$appeal->isOpen()) {
@@ -140,13 +171,13 @@ class SubmissionAppealController extends Controller
             if ($data['decision'] === 'uphold') {
                 // Second chance: back to the moderator queue. The reviewer
                 // still decides approve/reject through the normal path —
-                // nothing is auto-approved and no wallet moves here.
-                $submission->update([
-                    'status' => 'under_review',
-                    'verification_stage' => 'moderator_review',
-                    'reviewer_id' => null,
-                    'reviewed_at' => null,
-                ]);
+                // nothing is auto-approved and no wallet moves here. The slot's
+                // reward is reserved in the campaign pool again.
+                try {
+                    $verification->reopenOnAppeal($submission, $reviewer, $data['notes'] ?? 'Sent back for a second review.');
+                } catch (\Exception $e) {
+                    return response()->json(['success' => false, 'code' => 'cannot_reopen', 'message' => $e->getMessage()], 422);
+                }
                 $appeal->update([
                     'status' => SubmissionAppeal::STATUS_UPHELD,
                     'reviewer_id' => $reviewer->id,
@@ -176,5 +207,20 @@ class SubmissionAppealController extends Controller
 
             return response()->json(['success' => true, 'data' => $appeal->fresh()]);
         });
+
+        // Tell the contributor (in-app).
+        if ($response->getStatusCode() === 200) {
+            $appeal = SubmissionAppeal::with('submission.task', 'user')->find($id);
+            $title = (string) $appeal?->submission?->task?->title;
+            $upheld = $appeal?->status === SubmissionAppeal::STATUS_UPHELD;
+            $appeal?->user?->notify(new TaskRewardNotice(
+                $upheld ? 'appeal_upheld' : 'appeal_denied',
+                $upheld ? 'Appeal accepted — second review' : 'Appeal not accepted',
+                $upheld ? "Your proof for \"{$title}\" is being reviewed again." : "The rejection of \"{$title}\" stands." . ($appeal->review_notes ? ' ' . $appeal->review_notes : ''),
+                '/app/task-history/' . $appeal?->submission?->assignment_id
+            ));
+        }
+
+        return $response;
     }
 }

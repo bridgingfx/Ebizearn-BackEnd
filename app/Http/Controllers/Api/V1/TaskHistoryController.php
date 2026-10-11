@@ -39,6 +39,8 @@ class TaskHistoryController extends Controller
         'reverification_required' => ['reward' => ['reverification_required']],
         'released' => ['reward' => ['released']],
         'refunded' => ['reward' => ['refunded']],
+        // Contributors contesting a rejection.
+        'appeals' => ['appeal' => ['open']],
     ];
 
     /** Decisions staff can take from each submission status (mirrors VerificationService). */
@@ -139,7 +141,7 @@ class TaskHistoryController extends Controller
             ->whereKey($id)
             ->firstOrFail();
 
-        $submission = TaskSubmission::with(['files', 'aiResult', 'reviewer:id,name,role', 'businessReviewer:id,name', 'postVerifications.actor:id,name,role'])
+        $submission = TaskSubmission::with(['files', 'aiResult', 'reviewer:id,name,role', 'businessReviewer:id,name', 'postVerifications.actor:id,name,role', 'appeal.reviewer:id,name'])
             ->where('assignment_id', $assignment->id)
             ->first();
 
@@ -276,6 +278,9 @@ class TaskHistoryController extends Controller
 
     private function applyStatus(Builder $query, array $filter): Builder
     {
+        if (isset($filter['appeal'])) {
+            return $query->whereHas('submission.appeal', fn ($a) => $a->whereIn('status', $filter['appeal']));
+        }
         if (isset($filter['reward'])) {
             return $query->whereHas('submission', fn ($s) => $s->whereIn('reward_status', $filter['reward']));
         }

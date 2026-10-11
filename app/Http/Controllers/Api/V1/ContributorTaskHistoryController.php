@@ -12,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
+use App\Http\Controllers\Api\V1\SubmissionAppealController;
 
 /**
  * Contributor CRM → Task History: every task the signed-in contributor took,
@@ -85,7 +86,7 @@ class ContributorTaskHistoryController extends Controller
             ])
             ->firstOrFail();
 
-        $submission = TaskSubmission::with(['files', 'aiResult', 'postVerifications'])->where('assignment_id', $assignment->id)->first();
+        $submission = TaskSubmission::with(['files', 'aiResult', 'postVerifications', 'appeal'])->where('assignment_id', $assignment->id)->first();
         $task = $assignment->task;
         $campaign = $task?->campaign;
         $ledger = $submission
@@ -128,6 +129,15 @@ class ContributorTaskHistoryController extends Controller
                     'final_check_due_at' => $submission->final_check_due_at,
                     'post_url' => $submission->platform_post_url,
                 ] : null,
+                'appeal' => $submission?->appeal ? [
+                    'status' => $submission->appeal->status,
+                    'reason' => $submission->appeal->reason,
+                    'review_notes' => $submission->appeal->review_notes,
+                    'created_at' => $submission->appeal->created_at,
+                    'decided_at' => $submission->appeal->reviewed_at,
+                ] : null,
+                'can_appeal' => SubmissionAppealController::canAppeal($submission),
+                'appeal_window_days' => SubmissionAppealController::WINDOW_DAYS,
                 'ledger' => $ledger->map(fn ($t) => ['type' => $t->type, 'amount_cents' => (int) $t->amount_cents, 'description' => $t->description, 'created_at' => $t->created_at]),
                 'timeline' => $this->timeline($assignment, $submission, $ledger),
             ],
@@ -187,13 +197,14 @@ class ContributorTaskHistoryController extends Controller
 
         // Review decisions from the audit trail (each one, in order).
         $decisions = AuditLog::where('entity_type', TaskSubmission::class)->where('entity_id', $s->id)
-            ->whereIn('action', ['submission.approved', 'submission.rejected', 'submission.action_required', 'submission.rejected_after_approval_reversed'])
+            ->whereIn('action', ['submission.approved', 'submission.rejected', 'submission.action_required', 'submission.rejected_after_approval_reversed', 'submission.reopened_on_appeal'])
             ->orderBy('created_at')->orderBy('id')->get(['action', 'actor_id', 'after_state_json', 'created_at']);
         foreach ($decisions as $d) {
             $note = $d->after_state_json['review_notes'] ?? null;
             $who = $d->actor_id ? 'by the eBizEarn review team' : 'automatically';
             [$title, $tone] = match ($d->action) {
                 'submission.approved' => ['Approved ' . $who, 'success'],
+                'submission.reopened_on_appeal' => ['Appeal accepted — sent back for a second review', 'info'],
                 'submission.action_required' => ['Changes requested ' . $who, 'warning'],
                 default => ['Rejected ' . $who, 'danger'],
             };
@@ -201,6 +212,13 @@ class ContributorTaskHistoryController extends Controller
         }
         if ($decisions->isEmpty() && $s->reviewed_at && in_array($s->status, ['approved', 'rejected', 'action_required'], true)) {
             $add($s->reviewed_at, 'decision', ucfirst(str_replace('_', ' ', $s->status)), $s->review_notes, $s->status === 'approved' ? 'success' : ($s->status === 'rejected' ? 'danger' : 'warning'));
+        }
+
+        if ($s->appeal) {
+            $add($s->appeal->created_at, 'appeal', 'You appealed the decision', $s->appeal->reason, 'info');
+            if ($s->appeal->reviewed_at && $s->appeal->status === 'denied') {
+                $add($s->appeal->reviewed_at, 'appeal', 'Appeal not accepted — the rejection stands', $s->appeal->review_notes, 'danger');
+            }
         }
 
         // Money.
