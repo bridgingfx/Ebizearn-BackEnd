@@ -378,7 +378,12 @@ Route::prefix('v1')->group(function () {
         // permission, so Super Admin (or an admin, within their own access)
         // decides per role / per account — moderators included.
         Route::middleware('role:admin,superadmin,moderator')->prefix('admin')->group(function () {
-            Route::get('/dashboard', [AdminVerificationController::class, 'dashboard'])->middleware('role:admin,superadmin');
+            // The dashboard is the staff landing page: the group above already
+            // admits moderators, but this route re-gated to admin/superadmin
+            // only, so moderators landed on "Could not load admin dashboard —
+            // You are not authorized". Moderators are staff; they see the
+            // same overview (queues, revenue, recent signups).
+            Route::get('/dashboard', [AdminVerificationController::class, 'dashboard'])->middleware('role:admin,superadmin,moderator');
             // One permission per sidebar section (Roles & Permissions).
             Route::get('/health', [AdminSystemController::class, 'health'])->middleware('permission:view_system_health');
             Route::middleware('permission:view_traffic')->group(function () {
