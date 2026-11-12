@@ -333,6 +333,8 @@ class AuthController extends Controller
             'email' => 'nullable|email|max:255',
             // Which sign-in / sign-up page the button was on.
             'portal' => 'nullable|in:contributor,business,moderator,superadmin',
+            // Affiliate link (?ref=CODE) — see the fresh-account branch below.
+            'referral_code' => 'nullable|string|max:32',
         ]);
 
         if ($validator->fails()) {
@@ -421,6 +423,14 @@ class AuthController extends Controller
                     ], 403);
                 }
 
+                // Affiliate link (?ref=CODE): a Google/Apple signup from a
+                // referral link attributes the new account to the referrer,
+                // exactly like the email signup does (register()).
+                $referrer = null;
+                if (!empty($request->input('referral_code'))) {
+                    $referrer = User::where('referral_code', strtoupper((string) $request->input('referral_code')))->first();
+                }
+
                 if ($email && User::where('email', $email)->exists()) {
                     $email = $this->placeholderEmail($provider, $claims['sub']);
                 }
@@ -432,6 +442,7 @@ class AuthController extends Controller
                     'uuid' => (string) Str::uuid(),
                     'name' => $displayName,
                     'email' => $email ?? $this->placeholderEmail($provider, $claims['sub']),
+                    'referrer_id' => $referrer?->id,
                     // No usable password: social-only account. A random
                     // 40-char secret means password login is impossible.
                     'password' => Hash::make(Str::random(40)),
@@ -474,6 +485,16 @@ class AuthController extends Controller
                         'company_name' => $user->name . ' Co',
                         'status' => 'active',
                     ]);
+                }
+
+                // Affiliate: resolve the multi-level chain for the new
+                // account, and pay it at once when the provider already
+                // verified the email (a verified join earns the commission
+                // — see ReferralService::payOnVerifiedJoin). The first-task
+                // trigger stays as a backstop for accounts that verify later.
+                if ($referrer) {
+                    app(\App\Services\Referral\ReferralService::class)->buildChain($user->load('referrer'));
+                    \App\Services\Referral\ReferralService::payOnVerifiedJoin($user->fresh());
                 }
 
                 $isNewUser = true;

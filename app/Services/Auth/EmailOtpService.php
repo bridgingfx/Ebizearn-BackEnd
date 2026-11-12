@@ -236,6 +236,11 @@ class EmailOtpService
             'status' => $activating ? 'active' : $user->status,
         ], $this->consentStamp($user, $activating, $now, $ip)))->save();
 
+        // Affiliate: a verified join earns the referrer's commission at
+        // once (see ReferralService::payOnVerifiedJoin). It never throws,
+        // so a payout failure cannot fail the verification itself.
+        \App\Services\Referral\ReferralService::payOnVerifiedJoin($user->fresh());
+
         return $user->fresh();
     }
 

@@ -67,6 +67,11 @@ class EmailVerificationService
             'status' => $user->status === 'pending_verification' ? 'active' : $user->status,
         ])->save();
 
+        // Affiliate: a verified join earns the referrer's commission at
+        // once (see ReferralService::payOnVerifiedJoin). It never throws,
+        // so a payout failure cannot fail the verification itself.
+        \App\Services\Referral\ReferralService::payOnVerifiedJoin($user->fresh());
+
         return $user->fresh();
     }
 
