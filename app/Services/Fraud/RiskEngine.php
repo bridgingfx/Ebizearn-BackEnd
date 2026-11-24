@@ -49,34 +49,56 @@ class RiskEngine
         'coordinated_abuse' => 45,
     ];
 
+    /** Confidence per flag code (Bug 12): perceptual matches are low. */
+    private const CONFIDENCE = [
+        'reused_image' => 'low',
+        'reused_own_image' => 'medium',
+        'account_switching' => 'medium',
+        'many_accounts_in_proofs' => 'low',
+        'coordinated_abuse' => 'medium',
+    ];
+
     /** Score at or above which the agent never approves automatically. */
     public const BLOCK_AUTO_APPROVE = 50;
 
     /**
-     * @return array{score: int, level: string, flags: array<int, array{code: string, label: string, detail: ?string}>, blocks_auto_approval: bool}
+     * @return array{score: int, level: string, flags: array<int, array{code: string, label: string, detail: ?string, confidence: string}>, blocks_auto_approval: bool}
      */
     public function assess(TaskSubmission $submission): array
     {
         $submission->loadMissing(['files', 'task.campaign', 'aiResult']);
         $flags = [];
+        $confidences = [];
 
         // Submit-time screens (already scored by FraudAnalysisService).
         $earlier = $submission->aiResult?->raw_payload_json['fraud_analysis'] ?? null;
         $score = (int) ($earlier['fraud_score'] ?? 0);
+        $earlierConfidence = collect((array) ($earlier['flag_details'] ?? []))
+            ->mapWithKeys(fn ($d) => [$d['code'] => $d['confidence'] ?? null])
+            ->all();
         foreach ((array) ($earlier['flags'] ?? []) as $code) {
+            // Older ai_result rows store flags as plain code strings.
+            $code = is_array($code) ? ($code['code'] ?? null) : $code;
+            if (!$code) {
+                continue;
+            }
             $flags[$code] = null;
+            $confidences[$code] = $earlierConfidence[$code] ?? FraudAnalysisService::confidenceFor($code);
         }
 
         foreach ($this->imageFlags($submission) as $code => $detail) {
             $flags[$code] = $detail;
+            $confidences[$code] = self::CONFIDENCE[$code] ?? 'low';
             $score += self::WEIGHTS[$code];
         }
         foreach ($this->accountFlags($submission) as $code => $detail) {
             $flags[$code] = $detail;
+            $confidences[$code] = self::CONFIDENCE[$code] ?? 'low';
             $score += self::WEIGHTS[$code];
         }
         if ($detail = $this->coordinatedAbuse($submission)) {
             $flags['coordinated_abuse'] = $detail;
+            $confidences['coordinated_abuse'] = self::CONFIDENCE['coordinated_abuse'];
             $score += self::WEIGHTS['coordinated_abuse'];
         }
 
@@ -103,7 +125,7 @@ class RiskEngine
         return [
             'score' => $score,
             'level' => $level,
-            'flags' => collect($flags)->map(fn ($detail, $code) => ['code' => $code, 'label' => self::LABELS[$code] ?? str_replace('_', ' ', $code), 'detail' => $detail])->values()->all(),
+            'flags' => collect($flags)->map(fn ($detail, $code) => ['code' => $code, 'label' => self::LABELS[$code] ?? str_replace('_', ' ', $code), 'detail' => $detail, 'confidence' => $confidences[$code] ?? 'low'])->values()->all(),
             'blocks_auto_approval' => $score >= self::BLOCK_AUTO_APPROVE || isset($flags['reused_image']) || isset($flags['coordinated_abuse']),
         ];
     }
@@ -124,13 +146,21 @@ class RiskEngine
 
             $matches = SubmissionFile::query()
                 ->join('task_submissions', 'task_submissions.id', '=', 'submission_files.submission_id')
+                ->join('tasks', 'tasks.id', '=', 'task_submissions.task_id')
                 ->whereNotNull('submission_files.phash')
                 ->where('submission_files.submission_id', '!=', $submission->id)
                 ->where('submission_files.created_at', '>=', now()->subDays(180))
                 ->limit(20000)
-                ->get(['submission_files.phash', 'task_submissions.user_id', 'task_submissions.id as sid']);
+                ->get(['submission_files.phash', 'task_submissions.user_id', 'task_submissions.id as sid', 'tasks.campaign_id']);
 
             foreach ($matches as $m) {
+                // Bug 12: matches on the SAME campaign are usually the
+                // campaign's own shared asset (the poster/content image
+                // every contributor posts) — only a match on a DIFFERENT
+                // campaign is a reuse signal.
+                if ($submission->task?->campaign_id && (int) $m->campaign_id === (int) $submission->task->campaign_id) {
+                    continue;
+                }
                 if (ImageFingerprint::distance($file->phash, $m->phash) > ImageFingerprint::SAME_IMAGE_DISTANCE) {
                     continue;
                 }

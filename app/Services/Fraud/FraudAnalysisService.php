@@ -53,10 +53,12 @@ class FraudAnalysisService
      * Hard screens that run BEFORE a submission row is created.
      *
      * @param array{url?: ?string, screenshot?: ?string, text_answer?: ?string} $proof
+     * @param int|null $excludeSubmissionId Bug 5: on resubmit, the row being
+     *                                      resubmitted must not match its own previous proof hash.
      *
      * @throws FraudRejectionException
      */
-    public function screenProofOrReject(Task $task, array $proof, Request $request): array
+    public function screenProofOrReject(Task $task, array $proof, Request $request, ?int $excludeSubmissionId = null): array
     {
         $taskType = $task->taskType;
         $required = $task->proof_required_json
@@ -109,6 +111,7 @@ class FraudAnalysisService
 
         if ($hash && $task->campaign_id) {
             $dupe = TaskSubmission::where('proof_hash', $hash)
+                ->when($excludeSubmissionId, fn ($q) => $q->where('id', '!=', $excludeSubmissionId))
                 ->whereHas('task', fn ($q) => $q->where('campaign_id', $task->campaign_id))
                 ->exists();
 
@@ -163,6 +166,23 @@ class FraudAnalysisService
     }
 
     /**
+     * Confidence per flag code (Bug 12): exact matches are high, rough
+     * heuristics are low, so moderators can separate signals from proof.
+     */
+    public const FLAG_CONFIDENCE = [
+        'suspicious_rapid_completion' => 'low',
+        'duplicate_url_reused' => 'high',
+        'elevated_user_historical_risk' => 'low',
+        'shared_device_multiple_accounts' => 'high',
+        'velocity_anomaly' => 'low',
+    ];
+
+    public static function confidenceFor(string $code): string
+    {
+        return self::FLAG_CONFIDENCE[$code] ?? 'low';
+    }
+
+    /**
      * @throws FraudRejectionException
      */
     public function assertUrlMatchesPlatform(string $url, Task $task): void
@@ -205,7 +225,7 @@ class FraudAnalysisService
     /**
      * Evaluate fraud risk for a submission.
      *
-     * @return array{risk_level: string, fraud_score: int, flags: array<string>}
+     * @return array{risk_level: string, fraud_score: int, flags: array<string>, flag_details: array<int, array{code: string, confidence: string}>}
      */
     public function evaluateSubmission(TaskSubmission $submission): array
     {
@@ -218,16 +238,20 @@ class FraudAnalysisService
             $durationSeconds = $started ? $submission->created_at->diffInSeconds($started) : 60;
             $minEstimatedSeconds = ($submission->task->estimated_minutes ?? 5) * 60;
 
-            // Inhumanly fast completion (e.g. less than 15% of expected time)
-            if ($durationSeconds < max(10, $minEstimatedSeconds * 0.15)) {
+            // Inhumanly fast completion. Bug 12: the old floor (10s / 15%
+            // of estimate) tripped legitimately fast completions — 30s and
+            // 25% of the estimate.
+            if ($durationSeconds < max(30, $minEstimatedSeconds * 0.25)) {
                 $flags[] = 'suspicious_rapid_completion';
                 $score += 35;
             }
         }
 
-        // 2. Check duplicate URL submissions
+        // 2. Check duplicate URL submissions — but never the task's own
+        // target URL: the frontend pre-fills it, so every proof against it
+        // would flag by design (Bug 12).
         $submittedUrl = $submission->proof_data_json['url'] ?? null;
-        if (!empty($submittedUrl)) {
+        if (!empty($submittedUrl) && !$this->isTaskTargetUrl($submission, $submittedUrl)) {
             $duplicateCount = TaskSubmission::where('id', '!=', $submission->id)
                 ->whereJsonContains('proof_data_json->url', $submittedUrl)
                 ->count();
@@ -280,6 +304,14 @@ class FraudAnalysisService
             default => 'low',
         };
 
+        // Bug 12: every flag carries a confidence (high|medium|low). `flags`
+        // stays a plain code list for existing consumers; `flag_details`
+        // carries the code + confidence pairs.
+        $flagDetails = array_map(
+            fn ($code) => ['code' => $code, 'confidence' => self::confidenceFor($code)],
+            $flags
+        );
+
         // Log fraud event if medium or higher
         if (in_array($level, ['medium', 'high', 'critical'], true)) {
             FraudEvent::create([
@@ -289,6 +321,7 @@ class FraudAnalysisService
                 'severity' => $level,
                 'details_json' => [
                     'flags' => $flags,
+                    'flag_details' => $flagDetails,
                     'calculated_score' => $score,
                     'duration_seconds' => $durationSeconds ?? null,
                 ],
@@ -302,6 +335,42 @@ class FraudAnalysisService
             'risk_level' => $level,
             'fraud_score' => min(100, $score),
             'flags' => $flags,
+            'flag_details' => $flagDetails,
         ];
+    }
+
+    /**
+     * Bug 12: the task's own target URL (campaign.target_url) is the
+     * platform's shared link, not fraud — every contributor submits proof
+     * against it by design. Compared normalised (scheme/host lowercased,
+     * trailing slash stripped).
+     */
+    protected function isTaskTargetUrl(TaskSubmission $submission, string $url): bool
+    {
+        $target = $submission->task?->campaign?->target_url;
+        if (empty($target)) {
+            return false;
+        }
+
+        return self::normalizeUrl($url) === self::normalizeUrl($target);
+    }
+
+    public static function normalizeUrl(string $url): string
+    {
+        $url = trim($url);
+        $parts = parse_url($url);
+        if ($parts === false || empty($parts['host'])) {
+            return strtolower(rtrim($url, '/'));
+        }
+        $normalized = strtolower($parts['scheme'] ?? 'https') . '://' . strtolower($parts['host']);
+        if (!empty($parts['port'])) {
+            $normalized .= ':' . $parts['port'];
+        }
+        $normalized .= rtrim($parts['path'] ?? '', '/');
+        if (!empty($parts['query'])) {
+            $normalized .= '?' . $parts['query'];
+        }
+
+        return $normalized;
     }
 }
