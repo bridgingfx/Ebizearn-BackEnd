@@ -46,29 +46,26 @@ class ModeratorWorkflowTest extends TestCase
             'name' => 'Mod One',
             'email' => 'mod1@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
-            'role' => 'moderator',
-            'status' => 'active',
-            'email_verified_at' => now(),
         ]);
+        // role/status/email_verified_at are NOT fillable — set explicitly,
+        // or User::create silently drops them and the user stays a
+        // contributor (every decision test 403s).
+        $this->moderator->forceFill(['role' => 'moderator', 'status' => 'active', 'email_verified_at' => now()])->save();
 
         $this->contributor = User::create([
             'name' => 'Contrib One',
             'email' => 'contrib1@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
-            'role' => 'contributor',
-            'status' => 'active',
-            'email_verified_at' => now(),
         ]);
+        $this->contributor->forceFill(['role' => 'contributor', 'status' => 'active', 'email_verified_at' => now()])->save();
         Wallet::create(['user_id' => $this->contributor->id, 'currency' => 'USD']);
 
         $bizUser = User::create([
             'name' => 'Biz One',
             'email' => 'biz1@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
-            'role' => 'business',
-            'status' => 'active',
-            'email_verified_at' => now(),
         ]);
+        $bizUser->forceFill(['role' => 'business', 'status' => 'active', 'email_verified_at' => now()])->save();
         $business = Business::create(['owner_id' => $bizUser->id, 'company_name' => 'Co One', 'status' => 'active']);
         Wallet::create(['user_id' => $bizUser->id, 'currency' => 'USD', 'available_balance_cents' => 100000]);
 
