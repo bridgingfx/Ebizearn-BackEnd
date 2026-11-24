@@ -7,8 +7,10 @@ use App\Models\Business;
 use App\Models\FraudEvent;
 use App\Models\Profile;
 use App\Models\SocialAccount;
+use App\Models\SystemSetting;
 use App\Models\User;
 use App\Models\Wallet;
+use App\Rules\NoEmailTypo;
 use App\Rules\PhoneCountryCode;
 use App\Rules\StrongPassword;
 use App\Exceptions\EmailOtpException;
@@ -59,7 +61,11 @@ class AuthController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
+            // Bug 9: strict RFC syntax + a typo check (gmail.vom ->
+            // "Did you mean gmail.com?"). No `dns` rule: a live DNS lookup
+            // rejects test domains (example.com has no MX) and depends on
+            // resolver availability.
+            'email' => ['required', 'email:rfc', 'max:255', 'unique:users,email', new NoEmailTypo()],
             // Round 2: strong password policy (min 10 chars, mixed classes).
             'password' => ['required', 'string', new StrongPassword()],
             'role' => 'required|in:contributor,business',
@@ -773,6 +779,27 @@ class AuthController extends Controller
     }
 
     /**
+     * Rotate the current Sanctum token (Bug 8): the frontend calls this
+     * before expiry so a moderator session survives long posting runs.
+     * Returns the same payload shape as login; the old token is revoked.
+     */
+    public function refresh(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $request->user()->currentAccessToken()->delete();
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Token refreshed',
+            'data' => [
+                'user' => $user->load(['profile', 'wallet', 'business'])->withClientPermissions(),
+                'token' => $token,
+            ],
+        ]);
+    }
+
+    /**
      * Get current authenticated user profile.
      */
     public function me(Request $request): JsonResponse
@@ -789,32 +816,51 @@ class AuthController extends Controller
      * Phase 2 / Priority 7 — device/IP risk logging on login.
      *
      * Every successful login writes a FraudEvent row (routine logins are
-     * `reviewed`/low so they stay out of the flagged queue). A device
-     * fingerprint never seen for this user is recorded as `flagged`/medium
-     * for moderator review. This is honest telemetry — it never blocks the
-     * login and never claims automated fraud verdicts.
+     * `reviewed`/low so they stay out of the flagged queue). A login is
+     * flagged as a new device only when NEITHER the device NOR the IP was
+     * seen for this user before (Bug 14: the old fingerprint hashed the
+     * IP + the FULL user agent, so any browser update re-triggered a
+     * "first seen" alert for a known IP). The device fingerprint is
+     * coarse — browser family + OS, versions stripped. IPs listed in the
+     * `trusted_ips` SystemSetting (JSON array or comma-separated) never
+     * raise the alert, but the login is still logged. This is honest
+     * telemetry — it never blocks the login.
      */
     protected function logLoginRisk(Request $request, User $user): void
     {
         $ip = $request->ip();
         $userAgent = (string) $request->userAgent();
-        $fingerprint = hash('sha256', ($ip ?? 'unknown') . '|' . $userAgent);
 
-        $seenBefore = FraudEvent::where('user_id', $user->id)
-            ->whereIn('event_type', ['login', 'new_device_login', 'registration'])
-            ->where('details_json->fingerprint', $fingerprint)
+        $device = self::coarseDevice($userAgent);
+        $deviceFingerprint = hash('sha256', $device['browser'] . '|' . $device['os']);
+
+        // The IP check reads the ip_address column, so logins recorded
+        // before this change still count as "seen". Only login events
+        // count — a registration from an IP must not make a first login
+        // from a new device look "known".
+        $ipSeen = FraudEvent::where('user_id', $user->id)
+            ->whereIn('event_type', ['login', 'new_device_login'])
+            ->where('ip_address', $ip)
             ->exists();
 
-        $isNewDevice = !$seenBefore;
+        $deviceSeen = $this->deviceSeenBefore($user, $deviceFingerprint, $device);
+
+        $trustedIp = in_array($ip, self::trustedIps(), true);
+
+        $isNewDevice = !$ipSeen && !$deviceSeen && !$trustedIp;
 
         FraudEvent::create([
             'user_id' => $user->id,
             'event_type' => $isNewDevice ? 'new_device_login' : 'login',
             'severity' => $isNewDevice ? 'medium' : 'low',
             'details_json' => [
-                'fingerprint' => $fingerprint,
+                'device_fingerprint' => $deviceFingerprint,
+                'device' => $device['browser'] . ' / ' . $device['os'],
                 'ip' => $ip,
+                'first_seen_ip' => !$ipSeen,
+                'first_seen_device' => !$deviceSeen,
                 'first_seen_for_user' => $isNewDevice,
+                'trusted_ip' => $trustedIp,
                 // Login country for the traffic dashboard (real GeoIP).
                 'country_code' => $this->resolveLoginCountry($request, $ip),
             ],
@@ -850,6 +896,97 @@ class AuthController extends Controller
                 'status' => 'flagged',
             ]);
         }
+    }
+
+    /**
+     * Coarse device identity: browser family + OS, versions stripped, so
+     * a browser update does not look like a new device (Bug 14). Order
+     * matters: Edge/Opera/Samsung UAs also contain "Chrome", and Chrome
+     * UAs contain "Safari".
+     *
+     * @return array{browser: string, os: string}
+     */
+    protected static function coarseDevice(string $userAgent): array
+    {
+        $ua = strtolower($userAgent);
+        $browser = match (true) {
+            str_contains($ua, 'edg/') || str_contains($ua, 'edge/') => 'edge',
+            str_contains($ua, 'opr/') || str_contains($ua, 'opera') => 'opera',
+            str_contains($ua, 'samsungbrowser') => 'samsung',
+            str_contains($ua, 'firefox') || str_contains($ua, 'fxios') => 'firefox',
+            str_contains($ua, 'chrome') || str_contains($ua, 'crios') => 'chrome',
+            str_contains($ua, 'safari') => 'safari',
+            default => 'other',
+        };
+        $os = match (true) {
+            str_contains($ua, 'iphone') || str_contains($ua, 'ipad') => 'ios',
+            str_contains($ua, 'android') => 'android',
+            str_contains($ua, 'windows') => 'windows',
+            str_contains($ua, 'mac os') || str_contains($ua, 'macintosh') => 'macos',
+            str_contains($ua, 'linux') => 'linux',
+            default => 'other',
+        };
+
+        return ['browser' => $browser, 'os' => $os];
+    }
+
+    /**
+     * Was this coarse device seen for the user before? New rows carry
+     * details_json->device_fingerprint; legacy rows (pre-Bug-14) stored
+     * only the full user agent, parsed the same coarse way so a known
+     * device is not re-flagged once after the deploy.
+     */
+    protected function deviceSeenBefore(User $user, string $deviceFingerprint, array $device): bool
+    {
+        $seen = FraudEvent::where('user_id', $user->id)
+            ->whereIn('event_type', ['login', 'new_device_login'])
+            ->where('details_json->device_fingerprint', $deviceFingerprint)
+            ->exists();
+        if ($seen) {
+            return true;
+        }
+
+        $agents = FraudEvent::where('user_id', $user->id)
+            ->whereIn('event_type', ['login', 'new_device_login'])
+            ->whereNotNull('user_agent')
+            ->orderByDesc('id')
+            ->limit(200)
+            ->pluck('user_agent');
+
+        foreach ($agents as $agent) {
+            $old = self::coarseDevice((string) $agent);
+            if ($old['browser'] === $device['browser'] && $old['os'] === $device['os']) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Staff/office IPs that never raise a new-device alert (Bug 14).
+     * Super Admin sets the `trusted_ips` SystemSetting as a JSON array
+     * (["91.73.15.62"]) or a comma-separated list. Logins from these IPs
+     * are still recorded, only the alert is suppressed.
+     *
+     * @return string[]
+     */
+    protected static function trustedIps(): array
+    {
+        $raw = SystemSetting::get('trusted_ips', '');
+        if (is_array($raw)) {
+            return array_values(array_filter(array_map('trim', $raw)));
+        }
+        $raw = trim((string) $raw);
+        if ($raw === '') {
+            return [];
+        }
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            return array_values(array_filter(array_map('trim', $decoded)));
+        }
+
+        return array_values(array_filter(array_map('trim', explode(',', $raw))));
     }
 
     /**
