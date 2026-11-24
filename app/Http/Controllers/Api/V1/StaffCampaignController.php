@@ -42,10 +42,6 @@ class StaffCampaignController extends Controller
             ->latest();
         StaffScope::applyToCampaigns($query, $request->user());
 
-        if ($request->filled('status')) {
-            $query->where('status', $request->input('status'));
-        }
-
         if ($request->filled('business_id')) {
             $query->where('business_id', $request->input('business_id'));
         }
@@ -54,9 +50,45 @@ class StaffCampaignController extends Controller
             $query->where('title', 'like', '%' . $request->input('search') . '%');
         }
 
+        // Bug 4: totals over the whole scoped/filtered set (search +
+        // business_id), NOT just the page — and NOT the status filter, so
+        // the tab counts always cover every status. Count keys match the
+        // frontend Campaigns page tabs exactly. Built on a fresh query (no
+        // withCount) so the GROUP BY stays valid under strict MySQL.
+        $totalsQuery = Campaign::query();
+        StaffScope::applyToCampaigns($totalsQuery, $request->user());
+        if ($request->filled('business_id')) {
+            $totalsQuery->where('business_id', $request->input('business_id'));
+        }
+        if ($request->filled('search')) {
+            $totalsQuery->where('title', 'like', '%' . $request->input('search') . '%');
+        }
+        $statusCounts = (clone $totalsQuery)
+            ->selectRaw('status, COUNT(*) as c')
+            ->groupBy('status')
+            ->pluck('c', 'status');
+        $counts = [
+            'active' => (int) ($statusCounts['active'] ?? 0),
+            'pending_review' => (int) ($statusCounts['pending_review'] ?? 0),
+            'draft' => (int) ($statusCounts['draft'] ?? 0),
+            'paused' => (int) ($statusCounts['paused'] ?? 0),
+            'cancelled' => (int) ($statusCounts['cancelled'] ?? 0),
+        ];
+        $counts['all'] = (int) (clone $totalsQuery)->count();
+        $totals = [
+            'counts' => $counts,
+            'total_budget_cents' => (int) (clone $totalsQuery)->sum('total_budget_cents'),
+            'total_campaigns' => $counts['all'],
+        ];
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->input('status'));
+        }
+
         return response()->json([
             'success' => true,
             'data' => $query->paginate(max(1, min(100, (int) $request->input('per_page', 20)))),
+            'totals' => $totals,
         ]);
     }
 
