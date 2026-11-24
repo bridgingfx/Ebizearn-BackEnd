@@ -53,10 +53,19 @@ class TaskHistoryController extends Controller
         'rejected' => [],
     ];
 
-    /** GET /staff/task-history?status=&search=&platform=&from=&to=&page= */
+    /** GET /staff/task-history?status=&search=&platform=&from=&to=&user_id=&business_id=&page= */
     public function index(Request $request): JsonResponse
     {
         $base = $this->scoped($request);
+
+        // Bug 11: contributor / business filters. Applied to the base query
+        // so the status counts in meta describe the filtered set too.
+        if ($request->filled('user_id')) {
+            $base->where('task_assignments.user_id', (int) $request->input('user_id'));
+        }
+        if ($request->filled('business_id')) {
+            $base->whereHas('task.campaign', fn ($c) => $c->where('business_id', (int) $request->input('business_id')));
+        }
 
         $query = (clone $base)
             ->with([
@@ -317,6 +326,7 @@ class TaskHistoryController extends Controller
                 'title' => $a->task->title,
                 'platform' => $a->task->platform ?: $a->task->campaign?->platform,
                 'reward_cents' => (int) $a->task->reward_cents,
+                'business_id' => $a->task->campaign?->business_id,
                 'business' => $a->task->campaign?->business?->company_name ?: $a->task->campaign?->company_name,
             ] : null,
             'submission_id' => $s?->id,
