@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\Campaign;
+use App\Models\CountryChangeRequest;
 use App\Models\FraudEvent;
+use App\Models\Profile;
 use App\Models\Task;
 use App\Models\TaskSubmission;
 use App\Models\User;
@@ -17,6 +19,7 @@ use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class AdminVerificationController extends Controller
@@ -37,6 +40,10 @@ class AdminVerificationController extends Controller
         $pendingVerification = TaskSubmission::where('status', 'under_review')->count();
         $pendingPayouts = WithdrawalRequest::whereIn('status', ['requested', 'compliance_check', 'processing'])->count();
         $fraudAlertsCount = FraudEvent::where('status', 'flagged')->count();
+        // Bug 10: pending KYC = identity documents + country-change requests
+        // (same queries as StaffKycController / StaffCountryChangeController).
+        $pendingKycTotal = Profile::where('kyc_status', 'pending')->count()
+            + CountryChangeRequest::where('status', 'pending')->count();
 
         // Revenue: platform fees collected (non-refundable, taken at launch)
         $totalRevenueCents = Campaign::whereIn('status', ['active', 'paused', 'completed'])
@@ -113,6 +120,7 @@ class AdminVerificationController extends Controller
                     'pending_verification' => $pendingVerification,
                     'pending_payouts' => $pendingPayouts,
                     'fraud_alerts_count' => $fraudAlertsCount,
+                    'pending_kyc_total' => $pendingKycTotal,
                     'total_revenue_cents' => (int) $totalRevenueCents,
                     'today_revenue_cents' => (int) $todayRevenueCents,
                     'pending_deposits' => $pendingDeposits,
@@ -153,6 +161,16 @@ class AdminVerificationController extends Controller
 
         $submissions = $query->latest()->paginate(15);
 
+        // Also observed (a): total value of the FULL queue (not just this
+        // page). Summed per submission, so two submissions for the same task
+        // count twice — a join-free lookup keeps the scoped/filtered query
+        // intact (no ambiguous `status`/`created_at` columns).
+        $queueTaskIds = (clone $query)->pluck('task_submissions.task_id');
+        $rewards = $queueTaskIds->isEmpty()
+            ? collect()
+            : Task::whereIn('id', $queueTaskIds->unique())->pluck('reward_cents', 'id');
+        $totalValueCents = (int) $queueTaskIds->sum(fn ($taskId) => (int) ($rewards[$taskId] ?? 0));
+
         return response()->json([
             'success' => true,
             'data' => $submissions->items(),
@@ -160,6 +178,7 @@ class AdminVerificationController extends Controller
                 'current_page' => $submissions->currentPage(),
                 'last_page' => $submissions->lastPage(),
                 'total' => $submissions->total(),
+                'total_value_cents' => $totalValueCents,
             ],
         ]);
     }
@@ -240,19 +259,29 @@ class AdminVerificationController extends Controller
             );
 
             // Tell the contributor (once, only when the status actually changed).
+            // Bug 1: the decision is already committed at this point — an
+            // SMTP failure must not report failure for an applied decision.
             if ($previousStatus !== $updated->status && in_array($updated->status, ['approved', 'rejected'], true)) {
-                $contributor = $updated->user;
-                $task = $updated->task;
-                app(\App\Services\Email\EmailService::class)->sendEvent(
-                    $updated->status === 'approved' ? 'task_approved' : 'task_rejected',
-                    $contributor->email,
-                    [
-                        'user_name' => $contributor->name,
-                        'task_title' => (string) $task?->title,
-                        'amount' => 'USD ' . number_format(((int) $task?->reward_cents) / 100, 2),
-                        'reason' => (string) $request->input('notes'),
-                    ],
-                );
+                try {
+                    $contributor = $updated->user;
+                    $task = $updated->task;
+                    app(\App\Services\Email\EmailService::class)->sendEvent(
+                        $updated->status === 'approved' ? 'task_approved' : 'task_rejected',
+                        $contributor->email,
+                        [
+                            'user_name' => $contributor->name,
+                            'task_title' => (string) $task?->title,
+                            'amount' => 'USD ' . number_format(((int) $task?->reward_cents) / 100, 2),
+                            'reason' => (string) $request->input('notes'),
+                        ],
+                    );
+                } catch (Exception $mailError) {
+                    Log::warning('Decision email failed (decision still applied)', [
+                        'submission_id' => $updated->id,
+                        'decision' => $decision,
+                        'error' => $mailError->getMessage(),
+                    ]);
+                }
             }
 
             return response()->json([
@@ -265,21 +294,41 @@ class AdminVerificationController extends Controller
                 'data' => $updated->load(['task', 'user.wallet', 'reviewer', 'aiResult']),
             ]);
         } catch (Exception $e) {
+            // Bug 1: log the real failure server-side (the rank_bonus enum
+            // fault surfaced only as a raw SQL message before); the API
+            // answers with a stable code, never a driver message.
+            Log::error('Verification decision failed', [
+                'submission_id' => $submission->id,
+                'decision' => $decision,
+                'reviewer_id' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'error_code' => 'decision_failed',
+                'message' => 'Could not record the decision. Nothing was applied.',
             ], 400);
         }
     }
 
     /**
-     * Fraud alerts list.
+     * Fraud alerts list (Bug 3: status filter + pagination + open count).
+     * Default status is 'flagged' (open only); 'all' returns every status.
      */
     public function fraudAlerts(Request $request): JsonResponse
     {
-        $alerts = StaffScope::apply(FraudEvent::with(['user.profile', 'submission.task']), $request->user())
-            ->latest()
-            ->paginate(20);
+        $status = $request->input('status', 'flagged');
+        if (!in_array($status, ['flagged', 'reviewed', 'dismissed', 'confirmed_fraud', 'all'], true)) {
+            $status = 'flagged';
+        }
+
+        $query = StaffScope::apply(FraudEvent::with(['user.profile', 'submission.task']), $request->user());
+        if ($status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        $alerts = $query->latest()->paginate(max(1, min(100, (int) $request->input('per_page', 20))));
 
         return response()->json([
             'success' => true,
@@ -287,7 +336,10 @@ class AdminVerificationController extends Controller
             'meta' => [
                 'current_page' => $alerts->currentPage(),
                 'last_page' => $alerts->lastPage(),
+                'per_page' => $alerts->perPage(),
                 'total' => $alerts->total(),
+                // Open alerts (flagged only), matching the dashboard count.
+                'open_count' => FraudEvent::where('status', 'flagged')->count(),
             ],
         ]);
     }
