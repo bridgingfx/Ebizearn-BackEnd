@@ -14,7 +14,7 @@ class CampaignMedia extends Model
 {
     protected $table = 'campaign_media';
 
-    protected $fillable = ['campaign_id', 'type', 'path', 'mime_type', 'size_bytes', 'original_name', 'sort_order', 'uploaded_by'];
+    protected $fillable = ['campaign_id', 'type', 'path', 'content_hash', 'mime_type', 'size_bytes', 'original_name', 'sort_order', 'uploaded_by'];
 
     protected $casts = ['size_bytes' => 'integer', 'sort_order' => 'integer'];
 

@@ -32,6 +32,9 @@ class CampaignMediaController extends Controller
     /**
      * POST /staff/campaigns/{id}/media (multipart: files[])
      * Images up to 10 MB, videos up to 100 MB; at most 12 items per campaign.
+     * Bug 7: idempotent attach — re-uploading identical bytes for the same
+     * campaign returns the existing record (no duplicate row, no extra
+     * storage); duplicates don't consume the 12-item cap.
      */
     public function store(Request $request, string $id): JsonResponse
     {
@@ -46,12 +49,27 @@ class CampaignMediaController extends Controller
             'files.*.max' => 'Each file must be 100 MB or smaller.',
         ]);
 
+        // Hash every file first; bytes already attached to this campaign
+        // (in the DB, or earlier in this same batch) are skipped.
+        $files = $request->file('files');
+        $knownHashes = $campaign->media()->whereNotNull('content_hash')->pluck('content_hash')->all();
+        $seen = [];
+        $newFiles = [];
+        foreach ($files as $file) {
+            $hash = hash_file('sha256', $file->getRealPath());
+            if (in_array($hash, $knownHashes, true) || isset($seen[$hash])) {
+                continue;
+            }
+            $seen[$hash] = true;
+            $newFiles[] = [$file, $hash];
+        }
+
         $existing = $campaign->media()->count();
-        abort_if($existing + count($request->file('files')) > self::MAX_ITEMS, 422, 'A campaign can have up to ' . self::MAX_ITEMS . ' photos and videos.');
+        abort_if($existing + count($newFiles) > self::MAX_ITEMS, 422, 'A campaign can have up to ' . self::MAX_ITEMS . ' photos and videos.');
 
         $order = (int) $campaign->media()->max('sort_order');
         $created = [];
-        foreach ($request->file('files') as $file) {
+        foreach ($newFiles as [$file, $hash]) {
             $ext = strtolower($file->getClientOriginalExtension() ?: $file->extension());
             $isVideo = in_array($ext, self::VIDEO_MIMES, true) || str_starts_with((string) $file->getMimeType(), 'video/');
             abort_if(!$isVideo && $file->getSize() > 10 * 1024 * 1024, 422, 'Photos must be 10 MB or smaller.');
@@ -60,6 +78,7 @@ class CampaignMediaController extends Controller
                 'campaign_id' => $campaign->id,
                 'type' => $isVideo ? 'video' : 'image',
                 'path' => $file->store('campaign-media/' . $campaign->id, 'public'),
+                'content_hash' => $hash,
                 'mime_type' => $file->getMimeType(),
                 'size_bytes' => $file->getSize(),
                 'original_name' => mb_substr($file->getClientOriginalName(), 0, 200),
@@ -68,13 +87,22 @@ class CampaignMediaController extends Controller
             ]);
         }
 
-        AuditLogger::log($request->user(), 'campaign.media_uploaded', Campaign::class, $campaign->id, ['count' => count($created)]);
+        $duplicates = count($files) - count($newFiles);
+        AuditLogger::log($request->user(), 'campaign.media_uploaded', Campaign::class, $campaign->id, ['count' => count($created), 'duplicates_skipped' => $duplicates]);
+
+        $message = match (true) {
+            count($created) === 0 => 'Already attached — no new files added.',
+            count($created) === 1 && $duplicates === 0 => 'File uploaded.',
+            $duplicates > 0 => count($created) . ' file(s) uploaded, ' . $duplicates . ' duplicate(s) skipped.',
+            default => count($created) . ' files uploaded.',
+        };
 
         return response()->json([
             'success' => true,
-            'message' => count($created) === 1 ? 'File uploaded.' : count($created) . ' files uploaded.',
+            'message' => $message,
             'data' => $campaign->media()->get(),
-        ], 201);
+            'duplicates_skipped' => $duplicates,
+        ], count($created) === 0 ? 200 : 201);
     }
 
     /** DELETE /staff/campaigns/{id}/media/{mediaId} */
