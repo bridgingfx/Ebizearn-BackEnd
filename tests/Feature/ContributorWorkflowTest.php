@@ -45,11 +45,10 @@ class ContributorWorkflowTest extends TestCase
             'name' => 'Workflow Biz',
             'email' => 'workflow-biz@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
-            'role' => 'business',
             "phone" => "+971501234567",
-            'status' => 'active',
-            'email_verified_at' => now(),
         ]);
+        // role/status/email_verified_at are NOT fillable — set explicitly.
+        $bizUser->forceFill(['role' => 'business', 'status' => 'active', 'email_verified_at' => now()])->save();
         $business = Business::create([
             'uuid' => (string) Str::uuid(),
             'owner_id' => $bizUser->id,
@@ -171,10 +170,10 @@ class ContributorWorkflowTest extends TestCase
             'name' => 'Mod',
             'email' => 'workflow-mod@example.com',
             'password' => Hash::make('V3r1fy!Strong'),
-            'role' => 'moderator',
-            'status' => 'active',
-            'email_verified_at' => now(),
         ]);
+        // role/status/email_verified_at are NOT fillable — set explicitly,
+        // or the moderator stays a contributor and the decision 403s.
+        $moderator->forceFill(['role' => 'moderator', 'status' => 'active', 'email_verified_at' => now()])->save();
         \Laravel\Sanctum\Sanctum::actingAs($moderator);
 
         $decision = $this->postJson("/api/v1/moderator/submissions/{$submission->id}/decision", [
@@ -280,9 +279,10 @@ class ContributorWorkflowTest extends TestCase
 
         $bizUser = User::create([
             'name' => 'Biz', 'email' => 'bizproof@example.com',
-            'password' => Hash::make('V3r1fy!Strong'), 'role' => 'business',
-            'status' => 'active', 'email_verified_at' => now(),
+            'password' => Hash::make('V3r1fy!Strong'),
         ]);
+        // role/status/email_verified_at are NOT fillable — set explicitly.
+        $bizUser->forceFill(['role' => 'business', 'status' => 'active', 'email_verified_at' => now()])->save();
         $business = Business::create(['owner_id' => $bizUser->id, 'company_name' => 'Co', 'status' => 'active']);
         $campaign = Campaign::create([
             'uuid' => (string) Str::uuid(),
