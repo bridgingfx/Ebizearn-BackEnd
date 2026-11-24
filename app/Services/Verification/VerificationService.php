@@ -40,7 +40,9 @@ class VerificationService
         'submitted' => ['checking', 'rejected'],
         'checking' => ['under_review', 'rejected'],
         'under_review' => ['approved', 'rejected', 'action_required'],
-        'action_required' => ['approved', 'rejected'],
+        // Bug 5: the contributor resubmits new proof (action_required ->
+        // under_review via the screening stage in TaskController::resubmit).
+        'action_required' => ['approved', 'rejected', 'under_review'],
     ];
 
     /**

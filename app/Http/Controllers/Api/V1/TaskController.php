@@ -462,32 +462,7 @@ class TaskController extends Controller
                 ]);
 
                 // Save screenshot file entry if provided.
-                // Priority 3 — proof persistence: base64 data is decoded and
-                // written to storage (not just a path string); URLs are kept as-is.
-                $screenshot = $request->input('proof_screenshot');
-                if (!empty($screenshot)) {
-                    $filePath = 'proofs/' . $sub->uuid . '.png';
-                    $fileUrl = $screenshot;
-                    $fileSize = 1024 * 512;
-                    $mimeType = 'image/png';
-
-                    if ($this->isBase64Image($screenshot)) {
-                        $binary = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $screenshot));
-                        Storage::disk('public')->put($filePath, $binary);
-                        $fileUrl = Storage::disk('public')->url($filePath);
-                        $fileSize = strlen($binary);
-                        $mimeType = $this->detectImageMime($binary) ?? 'image/png';
-                    }
-
-                    SubmissionFile::create([
-                        'submission_id' => $sub->id,
-                        'file_type' => 'screenshot',
-                        'file_path' => $filePath,
-                        'file_url' => $fileUrl,
-                        'file_size_bytes' => $fileSize,
-                        'mime_type' => $mimeType,
-                    ]);
-                }
+                $this->saveScreenshotFile($sub, $request->input('proof_screenshot'));
 
                 return $sub;
             });
@@ -529,6 +504,174 @@ class TaskController extends Controller
                 ],
             ],
         ], 201);
+    }
+
+    /**
+     * Resubmit proof for an ACTION_REQUIRED submission (Bug 5).
+     *
+     * Updates the EXISTING submission row in place — the unique
+     * (task_id, user_id) constraint forbids a second row — with new proof
+     * + files, then re-runs the screening stage (submitted -> checking ->
+     * under_review) with fresh AI + fraud screens. Only the owning
+     * contributor may resubmit their own action_required submission.
+     * The task's own status is deliberately NOT checked: the slot is
+     * already reserved, and a paused/closed task must not strand a
+     * contributor who was asked to resubmit.
+     */
+    public function resubmit(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+
+        // KYC lock: cannot resubmit without valid new-country KYC.
+        if ($lock = $this->kycLockResponse($user)) {
+            return response()->json($lock, 403);
+        }
+
+        $task = Task::whereKeyOrUuid($id)->firstOrFail();
+
+        $submission = TaskSubmission::where('task_id', $task->id)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$submission) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No submission exists for this task — submit proof first.',
+            ], 404);
+        }
+
+        if ($submission->status !== 'action_required') {
+            return response()->json([
+                'success' => false,
+                'message' => 'This submission is not awaiting resubmission.',
+            ], 409);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'proof_url' => 'nullable|required_without_all:proof_screenshot,text_answer|url|max:2000',
+            'proof_screenshot' => 'nullable|required_without_all:proof_url,text_answer|string|max:10485760',
+            'text_answer' => 'nullable|required_without_all:proof_url,proof_screenshot|string|max:5000',
+            'note' => 'nullable|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $task->load('taskType');
+
+        try {
+            $screens = $this->fraudService->screenProofOrReject($task, [
+                'url' => $request->input('proof_url'),
+                'screenshot' => $request->input('proof_screenshot'),
+                'text_answer' => $request->input('text_answer'),
+            ], $request, $submission->id);
+        } catch (FraudRejectionException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'reason_code' => $e->reasonCode,
+            ], $e->httpStatus);
+        }
+
+        $proofData = [
+            'url' => $request->input('proof_url'),
+            'text_answer' => $request->input('text_answer'),
+            'note' => $request->input('note'),
+            'submitted_ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ];
+
+        DB::transaction(function () use ($submission, $proofData, $screens, $request) {
+            // Replace the old proof files with the new ones.
+            foreach ($submission->files as $file) {
+                Storage::disk('public')->delete($file->getAttributes()['path']);
+                $file->delete();
+            }
+
+            $submission->update([
+                'status' => 'submitted',
+                'verification_stage' => 'received',
+                'proof_hash' => $screens['proof_hash'],
+                'device_fingerprint' => $screens['device_fingerprint'],
+                'proof_data_json' => $proofData,
+                'reviewer_id' => null,
+                'reviewed_at' => null,
+                'review_reason_code' => null,
+                'review_notes' => null,
+            ]);
+            // auto_verify_status is a system field (forceFill only): reset
+            // so the post-verification worker checks the new proof.
+            $submission->forceFill(['auto_verify_status' => 'pending'])->saveQuietly();
+
+            if ($submission->assignment_id) {
+                TaskAssignment::where('id', $submission->assignment_id)
+                    ->update(['status' => 'submitted', 'completed_at' => now()]);
+            }
+
+            $this->saveScreenshotFile($submission, $request->input('proof_screenshot'));
+        });
+
+        // Re-run the screening stage (submitted -> checking -> under_review)
+        // with fresh AI + fraud screens, exactly like a first submission.
+        $aiResult = $this->verificationService->screenSubmission($submission->fresh());
+
+        // Real AI review of the screenshot, plus the Instagram API check —
+        // runs right after this response is sent.
+        app(\App\Services\Verification\PostVerificationService::class)->queue($submission->fresh());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Proof resubmitted and placed under review.',
+            'data' => [
+                'submission' => $submission->fresh()->load(['task.campaign', 'files', 'aiResult']),
+                'ai_precheck' => [
+                    'confidence_score' => $aiResult->confidence_score,
+                    'suggested_decision' => $aiResult->suggested_decision,
+                    'summary' => $aiResult->analysis_summary,
+                    'ai_simulated' => (bool) $aiResult->ai_simulated,
+                    'ai_label' => $aiResult->ai_label,
+                ],
+            ],
+        ], 200);
+    }
+
+    /**
+     * Persist a proof screenshot for a submission. Priority 3 — proof
+     * persistence: base64 data is decoded and written to storage (not just
+     * a path string); URLs are kept as-is. Shared by submit() and resubmit().
+     */
+    protected function saveScreenshotFile(TaskSubmission $sub, ?string $screenshot): void
+    {
+        if (empty($screenshot)) {
+            return;
+        }
+
+        $filePath = 'proofs/' . $sub->uuid . '.png';
+        $fileUrl = $screenshot;
+        $fileSize = 1024 * 512;
+        $mimeType = 'image/png';
+
+        if ($this->isBase64Image($screenshot)) {
+            $binary = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $screenshot));
+            Storage::disk('public')->put($filePath, $binary);
+            $fileUrl = Storage::disk('public')->url($filePath);
+            $fileSize = strlen($binary);
+            $mimeType = $this->detectImageMime($binary) ?? 'image/png';
+        }
+
+        SubmissionFile::create([
+            'submission_id' => $sub->id,
+            'file_type' => 'screenshot',
+            'file_path' => $filePath,
+            'file_url' => $fileUrl,
+            'file_size_bytes' => $fileSize,
+            'mime_type' => $mimeType,
+        ]);
     }
 
     /**
