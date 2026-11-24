@@ -125,6 +125,8 @@ Route::prefix('v1')->group(function () {
 
         // Auth management
         Route::post('/auth/logout', [AuthController::class, 'logout']);
+        // Bug 8: rotate the Sanctum token before it expires.
+        Route::post('/auth/refresh', [AuthController::class, 'refresh']);
         Route::get('/auth/me', [AuthController::class, 'me']);
         // Round 2: verification-email resend (authenticated, 3/min).
         Route::post('/auth/email/resend', [AuthController::class, 'resendVerificationEmail'])
@@ -208,6 +210,8 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['role:contributor', 'email.verified', 'permission:perform_tasks'])->group(function () {
             Route::post('/tasks/{id}/start', [TaskController::class, 'start']);
             Route::post('/tasks/{id}/submit', [TaskController::class, 'submit']);
+            // Bug 5: resubmit proof for an ACTION_REQUIRED submission.
+            Route::post('/tasks/{id}/resubmit', [TaskController::class, 'resubmit']);
             // The post text this contributor copies (own AI version in auto mode).
             Route::get('/tasks/{id}/content', [TaskController::class, 'content'])->middleware('throttle:30,1');
         });
@@ -566,7 +570,7 @@ Route::prefix('v1')->group(function () {
             // Photos & videos for contributors (gallery on the task page).
             Route::get('/{id}/media', [CampaignMediaController::class, 'index']);
             Route::post('/{id}/media', [CampaignMediaController::class, 'store'])->middleware(['permission.any:edit_campaigns,post_campaigns', 'throttle:30,1']);
-            Route::delete('/{id}/media/{mediaId}', [CampaignMediaController::class, 'destroy'])->whereNumber('mediaId')->middleware('permission:edit_campaigns');
+            Route::delete('/{id}/media/{mediaId}', [CampaignMediaController::class, 'destroy'])->whereNumber('mediaId')->middleware('permission.any:edit_campaigns,post_campaigns');
             Route::post('/{id}/content/decision', [StaffCampaignController::class, 'contentDecision']);
             Route::patch('/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');
             Route::delete('/{id}', [StaffCampaignController::class, 'destroy'])->middleware('permission:delete_campaigns');
