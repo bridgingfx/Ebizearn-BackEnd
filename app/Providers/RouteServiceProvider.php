@@ -38,7 +38,15 @@ class RouteServiceProvider extends ServiceProvider
     protected function configureRateLimiting(): void
     {
         RateLimiter::for('api', function (Request $request) {
-            return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+            // Bug 15: staff posting campaigns hit the 60/min ceiling during
+            // normal work — moderators/admins/superadmins get 120/min.
+            // user('sanctum') resolves the Bearer token lazily: the
+            // throttle middleware runs before auth:sanctum, so the
+            // default guard would always be null here.
+            $user = $request->user('sanctum');
+            $limit = $user && in_array($user->role, ['moderator', 'admin', 'superadmin'], true) ? 120 : 60;
+
+            return Limit::perMinute($limit)->by($user?->id ?: $request->ip());
         });
 
         // Brute-force protection: 5 attempts/min per email+IP. Keyed on the
