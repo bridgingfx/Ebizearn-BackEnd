@@ -14,7 +14,9 @@ use App\Notifications\TaskRewardNotice;
 use App\Services\AI\ProofAiReviewer;
 use App\Services\Audit\AuditLogger;
 use App\Services\Email\EmailService;
+use App\Services\Fraud\RiskEngine;
 use App\Services\Social\InstagramGraphClient;
+use App\Services\Social\YouTubeActionClient;
 use App\Services\Wallet\WalletLedgerService;
 use Exception;
 use Illuminate\Support\Carbon;
@@ -49,6 +51,8 @@ class PostVerificationService
         private InstagramGraphClient $instagram,
         private ProofAiReviewer $ai,
         private WalletLedgerService $ledger,
+        private RiskEngine $risk,
+        private YouTubeActionClient $youtube,
     ) {
     }
 
@@ -59,7 +63,20 @@ class PostVerificationService
     /** Is there anything to check automatically for this submission? */
     public function shouldAutoVerify(TaskSubmission $submission): bool
     {
-        return $this->instagramUrl($submission) !== null || $this->aiEnabled();
+        // The agent's risk engine runs for every proof; the platform API and
+        // the AI join in when they apply / are set up.
+        return true;
+    }
+
+    /** Target channel link when the task is "subscribe to this YouTube channel". */
+    public function youtubeSubscribeTarget(TaskSubmission $submission): ?string
+    {
+        $task = $submission->task;
+        $platform = strtolower((string) ($task?->platform ?: $task?->campaign?->platform));
+        $text = strtolower(($task?->title ?? '') . ' ' . ($task?->taskType?->key ?? '') . ' ' . ($task?->campaign?->title ?? ''));
+        $url = (string) ($task?->campaign?->target_url ?? '');
+
+        return $platform === 'youtube' && str_contains($text, 'subscrib') && preg_match('#youtube\.com/(channel/UC|@)#i', $url) ? $url : null;
     }
 
     /** Real AI review is on (provider auto / ai) and an AI account is set up. */
@@ -124,15 +141,29 @@ class PostVerificationService
         try {
             $submission = TaskSubmission::with(['task.campaign.business', 'assignment', 'files', 'user'])->findOrFail($submission->id);
 
+            // 1. Fraud & risk (reused images, account switching, coordinated abuse…)
+            $risk = $this->risk->assess($submission);
+
+            // 2. Platform API: Instagram post, or YouTube subscription.
             $igUrl = $this->instagramUrl($submission);
-            $api = $igUrl ? $this->checkInstagramPost($submission, $igUrl) : null;
+            $ytTarget = $igUrl ? null : $this->youtubeSubscribeTarget($submission);
+            $api = $igUrl ? $this->checkInstagramPost($submission, $igUrl) : ($ytTarget ? $this->checkYouTubeSubscribe($submission, $ytTarget) : null);
             $ai = $this->aiEnabled()
                 ? $this->ai->review($submission, $api['post'] ?? null)
                 : ['available' => false, 'error' => 'disabled', 'model' => null, 'is_proof' => null, 'confidence' => 0, 'matches_api_post' => null,
                     'looks_fake' => false, 'issues' => [], 'requirements_met' => [], 'summary' => 'AI review is off (AI_VERIFICATION_PROVIDER).', 'raw' => null];
-            $this->storeAiResult($submission, $ai, $api);
+            $this->storeAiResult($submission, $ai, $api, $risk);
 
-            [$outcome, $reason, $approve] = $this->decide($submission, $api, $ai);
+            [$outcome, $reason, $approve] = $this->decide($submission, $api, $ai, $risk);
+
+            // A confirmed subscription is checked again at the end of the duration.
+            if (($api['kind'] ?? null) === 'youtube_subscribe' && $api['outcome'] === 'ok') {
+                $submission->forceFill([
+                    'platform_media_id' => 'yt-sub:' . $api['target_channel_id'],
+                    'platform_post_url' => $ytTarget,
+                    'platform_posted_at' => $api['subscribed_at'] ? Carbon::parse($api['subscribed_at']) : null,
+                ])->saveQuietly();
+            }
 
             if (!empty($api['post'])) {
                 $submission->forceFill([
@@ -142,11 +173,11 @@ class PostVerificationService
                 ])->saveQuietly();
             }
 
-            $record = $this->record($submission, 'initial', $outcome, $reason, $api, $ai);
+            $record = $this->record($submission, 'initial', $outcome, $reason, $api, $ai, null, $risk);
 
             if ($approve && in_array($submission->fresh()->status, ['under_review', 'submitted'], true)) {
                 $this->autoApprove($submission, $reason);
-            } elseif ($igUrl) {
+            } elseif ($api || $risk['blocks_auto_approval']) {
                 AuditLogger::log(null, 'submission.sent_to_manual_review', TaskSubmission::class, $submission->id, ['reason' => $reason]);
             }
 
@@ -185,6 +216,39 @@ class PostVerificationService
             'error' => $found['error'], 'account' => $channel->oauth_username ?: $channel->handle];
     }
 
+    /**
+     * Official YouTube API: is the contributor's connected channel subscribed to the target?
+     * @return array{kind: string, outcome: string, connected: bool, post: null, checks: array, error: ?string, account: ?string, target_channel_id: ?string, subscribed_at: ?string}
+     */
+    private function checkYouTubeSubscribe(TaskSubmission $submission, string $targetUrl): array
+    {
+        $channel = $this->youtube->channelFor($submission->user_id);
+        if (!$channel) {
+            return ['kind' => 'youtube_subscribe', 'outcome' => 'not_connected', 'connected' => false, 'post' => null, 'checks' => ['account_connected' => false],
+                'error' => 'The contributor has not connected YouTube.', 'account' => null, 'target_channel_id' => null, 'subscribed_at' => null];
+        }
+
+        $res = $this->youtube->checkSubscribed($channel, $targetUrl);
+        $startedAt = $submission->assignment?->started_at ?? $submission->assignment?->created_at;
+
+        return [
+            'kind' => 'youtube_subscribe',
+            'outcome' => $res['outcome'],
+            'connected' => true,
+            'post' => null,
+            'checks' => [
+                'account_connected' => true,
+                'subscribed' => $res['outcome'] === 'ok',
+                // Subscribed after taking the task (an older subscription isn't new work).
+                'subscribed_after_start' => $res['subscribed_at'] && $startedAt ? Carbon::parse($res['subscribed_at'])->gte(Carbon::parse($startedAt)->subMinutes(10)) : null,
+            ],
+            'error' => $res['error'],
+            'account' => $channel->oauth_username ?: $channel->handle,
+            'target_channel_id' => $res['target_channel_id'],
+            'subscribed_at' => $res['subscribed_at'],
+        ];
+    }
+
     /** Account identity, publish time and caption vs. the task. */
     private function postChecks(TaskSubmission $submission, SocialChannel $channel, array $post): array
     {
@@ -207,26 +271,40 @@ class PostVerificationService
     /**
      * @return array{0: string, 1: string, 2: bool} outcome, reason, auto-approve?
      */
-    private function decide(TaskSubmission $submission, ?array $api, array $ai): array
+    private function decide(TaskSubmission $submission, ?array $api, array $ai, ?array $risk = null): array
     {
+        $riskNote = $risk && $risk['flags'] ? ' Risk ' . $risk['level'] . ' (' . $risk['score'] . '): ' . collect($risk['flags'])->pluck('label')->implode('; ') . '.' : '';
         $cfg = config('verification.instagram');
         $minAi = (int) ($cfg['min_ai_confidence'] ?? 80);
         $aiOk = $ai['available'] && $ai['is_proof'] === true && !$ai['looks_fake']
-            && $ai['confidence'] >= $minAi && $ai['matches_api_post'] !== false;
+            && $ai['confidence'] >= $minAi && $ai['matches_api_post'] !== false && empty($ai['evidence']['cropped']);
         $aiNo = $ai['available'] && $ai['is_proof'] === false && $ai['confidence'] >= $minAi;
 
         // Not an Instagram post task: the AI only advises the reviewer.
         if ($api === null) {
             if (!$ai['available']) {
-                return ['skipped', $ai['summary'] ?: 'No automatic check for this task — manual review.', false];
+                return [$risk && $risk['blocks_auto_approval'] ? 'inconclusive' : 'skipped', ($ai['summary'] ?: 'No automatic check for this task — manual review.') . $riskNote, false];
             }
 
-            return [$aiOk ? 'verified' : ($aiNo ? 'failed' : 'inconclusive'), 'AI: ' . $ai['summary'] . ' — a reviewer makes the decision.', false];
+            return [$aiOk && !($risk['blocks_auto_approval'] ?? false) ? 'verified' : ($aiNo ? 'failed' : 'inconclusive'), 'AI: ' . $ai['summary'] . ' — a reviewer makes the decision.' . $riskNote, false];
         }
 
         $checks = $api['checks'];
         $problems = [];
-        if (!$api['connected']) {
+        $isYouTube = ($api['kind'] ?? null) === 'youtube_subscribe';
+        if ($isYouTube) {
+            if (!$api['connected']) {
+                $problems[] = 'YouTube account not connected';
+            } elseif ($api['outcome'] === 'token_invalid') {
+                $problems[] = 'YouTube connection expired — the contributor must reconnect';
+            } elseif ($api['outcome'] === 'unavailable') {
+                $problems[] = 'YouTube API: ' . ($api['error'] ?? 'unavailable');
+            } elseif (empty($checks['subscribed'])) {
+                $problems[] = 'the connected channel is not subscribed to the target channel';
+            } elseif (($checks['subscribed_after_start'] ?? null) === false) {
+                $problems[] = 'the subscription is older than the task (not new)';
+            }
+        } elseif (!$api['connected']) {
             $problems[] = 'Instagram account not connected';
         } elseif ($api['outcome'] === 'token_invalid') {
             $problems[] = 'Instagram connection expired — the contributor must reconnect';
@@ -250,9 +328,15 @@ class PostVerificationService
         if ($apiOk && !$aiOk) {
             $problems[] = $ai['available'] ? 'AI is not sure the screenshot matches (' . $ai['confidence'] . '%)' : 'AI review unavailable';
         }
+        if ($risk && $risk['blocks_auto_approval']) {
+            $problems[] = 'risk ' . $risk['level'] . ': ' . collect($risk['flags'])->pluck('label')->implode(', ');
+        }
 
-        if ($apiOk && ($aiOk || empty($cfg['require_ai']))) {
-            $reason = 'Instagram API confirmed the post on @' . $api['account'] . ($aiOk ? ' and the AI matched the screenshot (' . $ai['confidence'] . '%)' : '') . '.';
+        if ($apiOk && ($aiOk || empty($cfg['require_ai'])) && !($risk['blocks_auto_approval'] ?? false)) {
+            $reason = $isYouTube
+                ? 'YouTube API confirmed @' . $api['account'] . ' subscribed to the channel'
+                : 'Instagram API confirmed the post on @' . $api['account'];
+            $reason .= ($aiOk ? ' and the AI matched the screenshot (' . $ai['confidence'] . '%)' : '') . '.';
 
             return ['verified', $reason, (bool) ($cfg['auto_approve'] ?? true)];
         }
@@ -275,8 +359,16 @@ class PostVerificationService
         ]);
     }
 
-    private function storeAiResult(TaskSubmission $submission, array $ai, ?array $api): void
+    private function storeAiResult(TaskSubmission $submission, array $ai, ?array $api, ?array $risk = null): void
     {
+        // Keep the submit-time fraud screens next to the agent's risk result.
+        $previous = AiVerificationResult::where('submission_id', $submission->id)->value('raw_payload_json');
+        $previous = is_array($previous) ? $previous : (json_decode((string) $previous, true) ?: []);
+        if ($risk) {
+            AiVerificationResult::where('submission_id', $submission->id)->update([
+                'raw_payload_json' => json_encode(array_merge($previous, ['risk' => $risk])),
+            ]);
+        }
         if (!$ai['available']) {
             // No AI verdict — keep the pre-check row; the Instagram result is
             // in post_verifications (shown next to it in Task History).
@@ -285,14 +377,14 @@ class PostVerificationService
 
         $conf = $ai['available'] ? $ai['confidence'] : 0;
         $match = $ai['is_proof'] === true ? $conf : ($ai['is_proof'] === false ? 100 - $conf : 0);
-        $risk = $ai['looks_fake'] ? 85 : ($ai['is_proof'] === false ? max(60, $conf) : max(0, 100 - $conf));
+        $riskScore = max((int) ($risk['score'] ?? 0), $ai['looks_fake'] ? 85 : ($ai['is_proof'] === false ? max(60, $conf) : max(0, 100 - $conf)));
         $suggest = !$ai['available'] ? 'flag'
             : ($ai['is_proof'] && !$ai['looks_fake'] && $conf >= (int) config('verification.instagram.min_ai_confidence', 80) ? 'approve'
                 : ($ai['is_proof'] === false && $conf >= 80 ? 'reject' : 'flag'));
 
         AiVerificationResult::updateOrCreate(['submission_id' => $submission->id], [
             'confidence_score' => $conf,
-            'risk_score' => $risk,
+            'risk_score' => $riskScore,
             'duplicate_risk' => 0,
             'proof_quality' => $ai['available'] ? ($ai['looks_fake'] ? 20 : 80) : 0,
             'content_match' => $match,
@@ -300,6 +392,8 @@ class PostVerificationService
             'suggested_decision' => $suggest,
             'analysis_summary' => trim($ai['summary'] . ($api ? ' · Instagram API: ' . ($api['error'] ?? 'post confirmed') : '')),
             'raw_payload_json' => [
+                'fraud_analysis' => $previous['fraud_analysis'] ?? null,
+                'risk' => $risk,
                 'provider' => $ai['model'] ?? 'none',
                 'issues' => $ai['issues'],
                 'requirements_met' => $ai['requirements_met'],
@@ -348,6 +442,10 @@ class PostVerificationService
             return 'skipped';
         }
 
+        if (str_starts_with((string) $submission->platform_media_id, 'yt-sub:')) {
+            return $this->finalYouTubeCheck($submission, $actor);
+        }
+
         $channel = $this->instagram->channelFor($submission->user_id);
         $api = ['outcome' => 'not_connected', 'post' => null, 'checks' => ['account_connected' => (bool) $channel], 'error' => 'Instagram account disconnected.'];
 
@@ -384,7 +482,39 @@ class PostVerificationService
             return 'refunded';
         }
 
-        // Couldn't confirm either way: never assume deletion — retry, then a person decides.
+        return $this->retryOrEscalate($submission, $api, $actor);
+    }
+
+    /** End of duration for a subscribe task: still subscribed → pay; unsubscribed → refund. */
+    private function finalYouTubeCheck(TaskSubmission $submission, ?User $actor): string
+    {
+        $channel = $this->youtube->channelFor($submission->user_id);
+        $api = ['kind' => 'youtube_subscribe', 'outcome' => 'not_connected', 'post' => null, 'checks' => ['account_connected' => (bool) $channel], 'error' => 'YouTube account disconnected.'];
+        if ($channel) {
+            $res = $this->youtube->checkSubscribed($channel, (string) $submission->platform_post_url);
+            $api = ['kind' => 'youtube_subscribe', 'outcome' => $res['outcome'], 'post' => null, 'checks' => ['account_connected' => true, 'subscribed' => $res['outcome'] === 'ok'], 'error' => $res['error']];
+        }
+
+        if ($api['outcome'] === 'ok') {
+            $this->record($submission, 'final', 'verified', 'Still subscribed at the end of the task duration.', $api, null, $actor);
+            $this->releaseReward($submission, $actor, 'Final check passed — still subscribed.');
+
+            return 'verified';
+        }
+        if ($api['outcome'] === 'not_found') {
+            $why = 'Unsubscribed from the channel before the end of the task duration.';
+            $this->record($submission, 'final', 'failed', $why, $api, null, $actor);
+            $this->refundReward($submission, $actor, $why);
+
+            return 'refunded';
+        }
+
+        return $this->retryOrEscalate($submission, $api, $actor);
+    }
+
+    /** Couldn't confirm either way: never assume the worst — retry, then a person decides. */
+    private function retryOrEscalate(TaskSubmission $submission, array $api, ?User $actor): string
+    {
         $attempts = $submission->final_check_attempts + 1;
         $max = (int) config('verification.instagram.final_check_max_attempts', 5);
         $why = 'Could not confirm the post (' . ($api['error'] ?? $api['outcome']) . ') — attempt ' . $attempts . ' of ' . $max . '.';
@@ -394,7 +524,7 @@ class PostVerificationService
             $submission->forceFill(['final_check_attempts' => $attempts, 'reward_status' => 'reverification_required'])->saveQuietly();
             AuditLogger::log($actor, 'submission.reverification_required', TaskSubmission::class, $submission->id, ['reason' => $why]);
             $submission->user?->notify(new TaskRewardNotice('reward_review', 'Reward check needs attention',
-                'We could not confirm your Instagram post for "' . $submission->task?->title . '". Reconnect Instagram in your profile — our team will review it.', '/app/profile?tab=socials'));
+                'We could not confirm your task "' . $submission->task?->title . '" automatically. Check your social account connection in your profile — our team will review it.', '/app/profile?tab=socials'));
 
             return 'manual_review';
         }
@@ -590,7 +720,7 @@ class PostVerificationService
         return (int) round(100 * count(array_filter($want, fn ($w) => isset($have[$w]))) / count($want));
     }
 
-    private function record(TaskSubmission $submission, string $stage, string $outcome, string $reason, ?array $api, ?array $ai, ?User $actor = null): PostVerification
+    private function record(TaskSubmission $submission, string $stage, string $outcome, string $reason, ?array $api, ?array $ai, ?User $actor = null, ?array $risk = null): PostVerification
     {
         $post = $api['post'] ?? null;
 
@@ -600,11 +730,12 @@ class PostVerificationService
             'outcome' => $outcome,
             'reason' => mb_substr($reason, 0, 500),
             'api_checks_json' => $api ? ['outcome' => $api['outcome'], 'error' => $api['error'] ?? null] + ($api['checks'] ?? []) : null,
-            'ai_json' => $ai ? array_intersect_key($ai, array_flip(['available', 'model', 'is_proof', 'confidence', 'matches_api_post', 'looks_fake', 'issues', 'requirements_met', 'summary', 'error'])) : null,
+            'ai_json' => $ai ? array_intersect_key($ai, array_flip(['available', 'model', 'is_proof', 'confidence', 'matches_api_post', 'looks_fake', 'issues', 'requirements_met', 'summary', 'error', 'evidence'])) : null,
             // Post facts only — never tokens or raw API envelopes.
             'api_meta_json' => $post ? array_intersect_key($post, array_flip(['id', 'permalink', 'timestamp', 'username', 'media_type', 'caption'])) : null,
             'actor_id' => $actor?->id,
             'checked_at' => now(),
+            'risk_json' => $risk,
         ]);
     }
 }

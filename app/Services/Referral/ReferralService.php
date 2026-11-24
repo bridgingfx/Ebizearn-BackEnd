@@ -87,6 +87,36 @@ class ReferralService
     }
 
     /**
+     * Pay a referee's pending referral levels on a VERIFIED join (email
+     * OTP, email link, or provider-verified social signup). Owner rule
+     * (2026-11-12): whoever joins through an affiliate link earns the
+     * referrer their commission — the payout no longer waits for the
+     * referee's first approved task. The first-task trigger stays as a
+     * backstop (qualifyAndReward is idempotent: already-paid rows pay
+     * nothing new). Never throws: verification and signup must never
+     * fail because a payout did — failures are logged instead.
+     */
+    public static function payOnVerifiedJoin(User $referee): void
+    {
+        if (!config('referrals.pay_on_email_verified', true)) {
+            return;
+        }
+
+        if (!$referee->referrer_id) {
+            return;
+        }
+
+        try {
+            (new static())->qualifyAndReward($referee->fresh(), 'email_verified');
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Referral payout failed on verified join', [
+                'user_id' => $referee->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
      * Qualify the referee and pay every pending level. Called by the
      * task-approval flow (Worker C wiring) when a referee's first task is
      * approved. Returns the rewards paid (or already paid) in this call.

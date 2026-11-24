@@ -577,7 +577,9 @@ class TaskController extends Controller
                 });
             })
             ->latest()
-            ->take(5)
+            // Dashboard shows every open task (owner order 2026-11-12):
+            // the old cap of 5 hid tasks from contributors.
+            ->take(50)
             ->get();
 
         return response()->json([

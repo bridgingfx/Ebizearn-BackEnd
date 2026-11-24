@@ -12,12 +12,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class PostVerification extends Model
 {
-    protected $fillable = ['submission_id', 'stage', 'outcome', 'reason', 'api_checks_json', 'ai_json', 'api_meta_json', 'actor_id', 'checked_at'];
+    protected $fillable = ['submission_id', 'stage', 'outcome', 'reason', 'api_checks_json', 'ai_json', 'api_meta_json', 'actor_id', 'checked_at', 'risk_json'];
 
     protected $casts = [
         'api_checks_json' => 'array',
         'ai_json' => 'array',
         'api_meta_json' => 'array',
+        'risk_json' => 'array',
         'checked_at' => 'datetime',
     ];
 

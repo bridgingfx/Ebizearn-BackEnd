@@ -397,7 +397,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('/submissions/{id}/decision', [AdminVerificationController::class, 'recordDecision']);
                 // Submission appeals: second human review for rejected submissions.
                 Route::get('/submission-appeals', [SubmissionAppealController::class, 'index']);
-                Route::post('/submission-appeals/{id}/decision', [SubmissionAppealController::class, 'decide'])->whereNumber('id');
+                Route::post('/submission-appeals/{id}/decision', [SubmissionAppealController::class, 'decide'])->whereNumber('id')->middleware('throttle:30,1');
             });
             Route::get('/fraud-alerts', [AdminVerificationController::class, 'fraudAlerts'])->middleware('permission:view_fraud');
 
@@ -446,6 +446,13 @@ Route::prefix('v1')->group(function () {
             // Create a business user account (ready to sign in, business role only).
             Route::post('/businesses', [AdminSystemController::class, 'createBusinessUser'])
                 ->middleware(['permission:create_business_users', 'throttle:30,1']);
+            // Create a user of any role from Users & KYC. Super Admin creates
+            // every role (incl. admin / super admin); staff granted
+            // create_users create only roles below their own.
+            Route::post('/users', [AdminSystemController::class, 'createUser'])
+                ->middleware(['permission:create_users', 'throttle:30,1']);
+            Route::get('/users/create-options', [AdminSystemController::class, 'createUserOptions'])
+                ->middleware('permission:create_users');
 
             // The user list feeds Users & KYC, Businesses and Wallets; the
             // controller narrows it to businesses for a Businesses-only admin.
@@ -558,7 +565,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('/{id}/content-image', [CampaignContentImageController::class, 'staffRemove'])->middleware('permission:edit_campaigns');
             // Photos & videos for contributors (gallery on the task page).
             Route::get('/{id}/media', [CampaignMediaController::class, 'index']);
-            Route::post('/{id}/media', [CampaignMediaController::class, 'store'])->middleware(['permission:edit_campaigns', 'throttle:30,1']);
+            Route::post('/{id}/media', [CampaignMediaController::class, 'store'])->middleware(['permission.any:edit_campaigns,post_campaigns', 'throttle:30,1']);
             Route::delete('/{id}/media/{mediaId}', [CampaignMediaController::class, 'destroy'])->whereNumber('mediaId')->middleware('permission:edit_campaigns');
             Route::post('/{id}/content/decision', [StaffCampaignController::class, 'contentDecision']);
             Route::patch('/{id}', [StaffCampaignController::class, 'update'])->middleware('permission:edit_campaigns');

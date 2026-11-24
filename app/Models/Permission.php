@@ -30,6 +30,12 @@ class Permission extends Model
     public const POST_CAMPAIGNS = 'post_campaigns';
     /** Create business user accounts from the admin panel. */
     public const CREATE_BUSINESS_USERS = 'create_business_users';
+    /**
+     * Create user accounts of any role from Users & KYC. Super Admin only by
+     * default; staff it is granted to can create only roles below their own
+     * (admin and super admin accounts are created by Super Admin alone).
+     */
+    public const CREATE_USERS = 'create_users';
     public const VIEW_REPORTS = 'view_reports';
     public const REVIEW_KYC = 'review_kyc';
     /** Approve a user's KYC from their user page without documents. Super Admin only by default. */
@@ -116,6 +122,7 @@ class Permission extends Model
             self::HANDLE_DISPUTES => ['Handle support tickets and disputes', 'staff'],
             self::MANAGE_USERS => ['Manage users (view, suspend, reactivate)', 'staff'],
             self::CREATE_BUSINESS_USERS => ['Create business user accounts', 'staff'],
+            self::CREATE_USERS => ['Create user accounts from Users & KYC (roles below own)', 'staff'],
             self::MANAGE_CAMPAIGNS => ['Access campaigns (view, pause / resume, approve)', 'staff'],
             self::POST_CAMPAIGNS => ['Create campaigns for a business', 'staff'],
             self::MANAGE_TASK_TEMPLATES => ['Access tasks (view the task list)', 'staff'],

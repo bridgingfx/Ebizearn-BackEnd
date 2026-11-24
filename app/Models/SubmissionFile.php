@@ -17,6 +17,8 @@ class SubmissionFile extends Model
         'file_url',
         'file_size_bytes',
         'mime_type',
+        // Perceptual fingerprint (RiskEngine) — finds the same picture re-used.
+        'phash',
     ];
 
     public function submission(): BelongsTo

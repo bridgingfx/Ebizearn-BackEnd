@@ -153,4 +153,25 @@ class TaskHistoryAndMediaTest extends TestCase
         $this->actAs($this->makeUser('superadmin'));
         $this->deleteJson("/api/v1/staff/campaigns/{$task->campaign_id}/media/{$mediaId}")->assertOk()->assertJsonCount(1, 'data');
     }
+
+    public function test_admin_who_posts_campaigns_can_upload_and_the_business_sees_the_media(): void
+    {
+        $task = $this->makeTask();
+
+        // An admin allowed to post campaigns but not to edit them can still add media.
+        $admin = $this->makeUser('admin');
+        $editId = \Illuminate\Support\Facades\DB::table('permissions')->where('name', 'edit_campaigns')->value('id');
+        \Illuminate\Support\Facades\DB::table('permission_user')->insert(['user_id' => $admin->id, 'permission_id' => $editId, 'is_denied' => true, 'created_at' => now(), 'updated_at' => now()]);
+        $this->actAs($admin);
+        $this->post("/api/v1/staff/campaigns/{$task->campaign_id}/media", [
+            'files' => [UploadedFile::fake()->image('flyer.jpg', 600, 600)],
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        // The business sees it on its campaign page.
+        $owner = User::find(Campaign::find($task->campaign_id)->business->owner_id);
+        $this->actAs($owner);
+        $this->getJson("/api/v1/business/campaigns/{$task->campaign_id}")->assertOk()
+            ->assertJsonCount(1, 'data.campaign.media')
+            ->assertJsonPath('data.campaign.media.0.type', 'image');
+    }
 }

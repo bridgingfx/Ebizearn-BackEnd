@@ -15,8 +15,10 @@ return [
     | Credit rules (enforced by ReferralService):
     |  - the chain is resolved at registration from the referee's referrer
     |    chain, up to `levels` deep;
-    |  - a level is credited only when the referee satisfies the qualification
-    |    rules below — never on registration alone;
+    |  - a level is credited when the referee's email is verified (a
+    |    verified join — OTP, verification link, or provider-verified
+    |    social signup); the first approved task stays as a backstop for
+    |    referees verified before this rule shipped;
     |  - every payout is a ledger-backed wallet transaction of type
     |    referral_reward, guarded by unique(referrer_id, referred_user_id,
     |    level) so a level can never double-pay, even on retry.
@@ -46,4 +48,10 @@ return [
     // this off would credit on registration instead — NOT recommended and
     // kept here only so the rule stays explicit.
     'require_first_task_approved' => (bool) env('REFERRALS_REQUIRE_FIRST_TASK_APPROVED', true),
+
+    // Pay-on-verified-join (owner order 2026-11-12): the commission is
+    // credited when the referee's email is verified — the referrer no
+    // longer waits for the referee's first approved task. Turning this
+    // off restores the old first-task-only payout.
+    'pay_on_email_verified' => (bool) env('REFERRALS_PAY_ON_EMAIL_VERIFIED', true),
 ];
