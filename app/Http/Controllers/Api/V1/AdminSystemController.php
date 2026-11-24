@@ -103,6 +103,18 @@ class AdminSystemController extends Controller
         $key = $validator->validated()['key'];
         $value = $validator->validated()['value'] ?? null;
 
+        if ($key === 'trusted_ips') {
+            $ips = json_decode($value ?? '');
+            if (!is_array($ips) || !array_is_list($ips) ||
+                array_filter($ips, fn ($ip) => !is_string($ip) || filter_var($ip, FILTER_VALIDATE_IP) === false)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Trusted IPs must be a JSON array of valid IPv4 or IPv6 addresses.',
+                ], 422);
+            }
+            $value = json_encode(array_values(array_unique($ips)));
+        }
+
         if (str_starts_with($key, 'ai_')) {
             return response()->json(['success' => false, 'message' => 'AI settings are managed by Super Admin under AI content generator.'], 403);
         }
